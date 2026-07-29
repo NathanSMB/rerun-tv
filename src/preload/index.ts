@@ -48,6 +48,8 @@ const api: RerunApi = {
       ipcRenderer.invoke(IPC.channels.removeShow, channelId, showId),
     setMode: (channelId, showId, mode) =>
       ipcRenderer.invoke(IPC.channels.setMode, channelId, showId, mode),
+    setSeasonMode: (channelId, showId, season, mode) =>
+      ipcRenderer.invoke(IPC.channels.setSeasonMode, channelId, showId, season, mode),
     setWeight: (channelId, showId, weight) =>
       ipcRenderer.invoke(IPC.channels.setWeight, channelId, showId, weight),
     resetProgress: (channelId, showId) =>

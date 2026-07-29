@@ -26,7 +26,8 @@ import {
   getChannel,
   getShowState,
   listChannels,
-  listChannelShows
+  listChannelShows,
+  listChannelShowSeasonModes
 } from '../db/repositories/channels.js'
 import { peekNext } from '../scheduler/scheduler.js'
 import { buildUnits } from '../scheduler/units.js'
@@ -125,9 +126,30 @@ export function getChannelDetail(db: Db, channelId: number): ChannelDetail | nul
     const units = buildUnits(db, entry.showId)
     const arcs = units.filter((u) => u.kind === 'arc')
     const state = getShowState(db, channelId, entry.showId)
+    const overrides = new Map(
+      listChannelShowSeasonModes(db, channelId, entry.showId).map((item) => [
+        item.season,
+        item.mode
+      ])
+    )
+    const seasons = (
+      db
+        .prepare(
+          `SELECT season, COUNT(*) AS episodeCount
+             FROM episodes
+            WHERE show_id = ?
+            GROUP BY season
+            ORDER BY season`
+        )
+        .all(entry.showId) as { season: number; episodeCount: number }[]
+    ).map((season) => ({
+      ...season,
+      modeOverride: overrides.get(season.season) ?? null,
+      effectiveMode: overrides.get(season.season) ?? entry.mode
+    }))
 
     let progress: LineupProgress
-    if (entry.mode === 'sequential') {
+    if (seasons.every((season) => season.effectiveMode === 'sequential')) {
       const cursor =
         state.cursorUnitIndex >= 0 && state.cursorUnitIndex < units.length
           ? state.cursorUnitIndex
@@ -154,6 +176,7 @@ export function getChannelDetail(db: Db, channelId: number): ChannelDetail | nul
       unitCount: units.length,
       arcCount: arcs.length,
       arcSummary: summarizeArcs(arcs),
+      seasons,
       progress
     }
   })

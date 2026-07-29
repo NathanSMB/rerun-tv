@@ -18,6 +18,7 @@
 import type {
   Channel,
   ChannelShow,
+  ChannelShowSeasonMode,
   ChannelShowState,
   PlayMode,
   UpdateChannelInput
@@ -46,6 +47,13 @@ interface ChannelShowStateRow {
   show_id: number
   cursor_unit_index: number
   shuffle_bag: string
+}
+
+interface ChannelShowSeasonModeRow {
+  channel_id: number
+  show_id: number
+  season: number
+  mode: PlayMode
 }
 
 function toChannel(row: ChannelRow): Channel {
@@ -240,18 +248,92 @@ export function removeChannelShow(db: Db, channelId: number, showId: number): vo
   })()
 }
 
-/** `sequential` keeps a cursor, `shuffle` deals a bag. Progress is left intact. */
+/**
+ * `sequential` keeps a cursor, `shuffle` deals a bag. Ordinary progress is
+ * left intact. A mixed-mode bag is cleared because inherited seasons have just
+ * changed behavior and its old ordering is no longer valid.
+ */
 export function setChannelShowMode(
   db: Db,
   channelId: number,
   showId: number,
   mode: PlayMode
 ): void {
-  db.prepare(`UPDATE channel_shows SET mode = ? WHERE channel_id = ? AND show_id = ?`).run(
-    mode,
-    channelId,
-    showId
-  )
+  db.transaction(() => {
+    db.prepare(`UPDATE channel_shows SET mode = ? WHERE channel_id = ? AND show_id = ?`).run(
+      mode,
+      channelId,
+      showId
+    )
+    const hasOverrides = db
+      .prepare(
+        `SELECT 1 FROM channel_show_season_modes
+          WHERE channel_id = ? AND show_id = ?
+          LIMIT 1`
+      )
+      .get(channelId, showId)
+    if (hasOverrides) {
+      db.prepare(
+        `UPDATE channel_show_state SET shuffle_bag = '[]'
+          WHERE channel_id = ? AND show_id = ?`
+      ).run(channelId, showId)
+    }
+  })()
+}
+
+/** Explicit season modes only; absent seasons inherit the channel/show mode. */
+export function listChannelShowSeasonModes(
+  db: Db,
+  channelId: number,
+  showId: number
+): ChannelShowSeasonMode[] {
+  const rows = db
+    .prepare(
+      `SELECT channel_id, show_id, season, mode
+         FROM channel_show_season_modes
+        WHERE channel_id = ? AND show_id = ?
+        ORDER BY season`
+    )
+    .all(channelId, showId) as ChannelShowSeasonModeRow[]
+  return rows.map((row) => ({
+    channelId: row.channel_id,
+    showId: row.show_id,
+    season: row.season,
+    mode: row.mode
+  }))
+}
+
+/**
+ * Set an explicit season mode, or pass null to inherit from the show. The
+ * current bag is discarded because it may have been dealt under different
+ * ordering rules; the next pick starts a fresh cycle with the new rules.
+ */
+export function setChannelShowSeasonMode(
+  db: Db,
+  channelId: number,
+  showId: number,
+  season: number,
+  mode: PlayMode | null
+): void {
+  db.transaction(() => {
+    if (mode == null) {
+      db.prepare(
+        `DELETE FROM channel_show_season_modes
+          WHERE channel_id = ? AND show_id = ? AND season = ?`
+      ).run(channelId, showId, season)
+    } else {
+      db.prepare(
+        `INSERT INTO channel_show_season_modes (channel_id, show_id, season, mode)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (channel_id, show_id, season)
+         DO UPDATE SET mode = excluded.mode`
+      ).run(channelId, showId, season, mode)
+    }
+    db.prepare(
+      `UPDATE channel_show_state SET shuffle_bag = '[]'
+        WHERE channel_id = ? AND show_id = ?`
+    ).run(channelId, showId)
+  })()
 }
 
 /** Lottery weight: a show at weight 2 is drawn twice as often as one at weight 1. */

@@ -187,6 +187,13 @@ export function registerHandlers(ctx: HandlerContext): void {
     channelRepo.setChannelShowMode(db, channelId, showId, mode)
     return channelsChanged(getChannelDetail(db, channelId))
   })
+  handle(
+    IPC.channels.setSeasonMode,
+    (channelId: number, showId: number, season: number, mode: PlayMode | null) => {
+      channelRepo.setChannelShowSeasonMode(db, channelId, showId, season, mode)
+      return channelsChanged(getChannelDetail(db, channelId))
+    }
+  )
   handle(IPC.channels.setWeight, (channelId: number, showId: number, weight: number) => {
     channelRepo.setChannelShowWeight(db, channelId, showId, weight)
     return channelsChanged(getChannelDetail(db, channelId))

@@ -107,5 +107,17 @@ export const MIGRATIONS: string[] = [
     mtime_ms   INTEGER NOT NULL DEFAULT 0,
     size_bytes INTEGER NOT NULL DEFAULT 0
   );
+  `,
+  // -- 2 ---------------------------------------------------------------------
+  `
+  CREATE TABLE channel_show_season_modes (
+    channel_id INTEGER NOT NULL,
+    show_id    INTEGER NOT NULL,
+    season     INTEGER NOT NULL,
+    mode       TEXT    NOT NULL CHECK (mode IN ('sequential','shuffle')),
+    PRIMARY KEY (channel_id, show_id, season),
+    FOREIGN KEY (channel_id, show_id)
+      REFERENCES channel_shows(channel_id, show_id) ON DELETE CASCADE
+  );
   `
 ]

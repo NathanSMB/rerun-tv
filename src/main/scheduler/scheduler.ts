@@ -37,6 +37,7 @@ import {
   getShowState,
   lastAired,
   listChannelShows,
+  listChannelShowSeasonModes,
   logAiring,
   resetShowState,
   saveShowState,
@@ -92,6 +93,64 @@ function dealBag(units: PlayableUnit[], rng: () => number, avoidFirst: string | 
     const j = 1 + Math.floor(rng() * (bag.length - 1))
     bag[0] = bag[j]
     bag[j] = avoidFirst
+  }
+  return bag
+}
+
+/**
+ * Deal one no-repeat cycle for a show with mixed season modes. All unit slots
+ * are randomized first, then each sequential season's units are put back into
+ * airing order within that season's slots. Ordered seasons can therefore be
+ * interleaved with shuffled material without ever airing their own episodes
+ * backwards.
+ */
+function dealMixedBag(
+  units: PlayableUnit[],
+  modeForSeason: (season: number) => 'sequential' | 'shuffle',
+  rng: () => number,
+  avoidFirst: string | null
+): string[] {
+  const bag = shuffled(
+    units.map((unit) => unit.key),
+    rng
+  )
+  const byKey = new Map(units.map((unit) => [unit.key, unit]))
+  const sequentialSeasons = new Set(
+    units
+      .filter((unit) => modeForSeason(unit.season) === 'sequential')
+      .map((unit) => unit.season)
+  )
+
+  for (const season of sequentialSeasons) {
+    const positions = bag
+      .map((key, index) => (byKey.get(key)?.season === season ? index : -1))
+      .filter((index) => index >= 0)
+    const ordered = units.filter((unit) => unit.season === season)
+    positions.forEach((position, index) => {
+      bag[position] = ordered[index].key
+    })
+  }
+
+  // Only shuffle units may be swapped freely without violating an ordered
+  // season. This retains the old no-immediate-repeat promise where it applies.
+  if (avoidFirst != null && bag.length > 1 && bag[0] === avoidFirst) {
+    const first = byKey.get(bag[0])
+    if (first && modeForSeason(first.season) === 'shuffle') {
+      const candidates = bag
+        .map((key, index) => ({ key, index, unit: byKey.get(key) }))
+        .filter(
+          (item) =>
+            item.index > 0 &&
+            item.key !== avoidFirst &&
+            item.unit != null &&
+            modeForSeason(item.unit.season) === 'shuffle'
+        )
+      if (candidates.length > 0) {
+        const chosen = candidates[Math.floor(rng() * candidates.length)]
+        bag[0] = chosen.key
+        bag[chosen.index] = avoidFirst
+      }
+    }
   }
   return bag
 }
@@ -170,11 +229,19 @@ function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | n
   const chosen = weightedPick(candidates, rng)
   const units = chosen.units
   const state = getShowState(db, channelId, chosen.showId)
+  const seasonModes = new Map(
+    listChannelShowSeasonModes(db, channelId, chosen.showId).map((item) => [
+      item.season,
+      item.mode
+    ])
+  )
+  const modeForSeason = (season: number) => seasonModes.get(season) ?? chosen.mode
+  const hasShuffle = units.some((unit) => modeForSeason(unit.season) === 'shuffle')
 
-  // 3 · Pick a unit inside that show, by the show's mode.
+  // 3 · Pick a unit inside that show, applying season overrides over its mode.
   let unit: PlayableUnit
   let nextState: ChannelShowState
-  if (chosen.mode === 'sequential') {
+  if (!hasShuffle) {
     // The cursor is an index into a *derived* list, so it can be left dangling
     // by a rescan that removed episodes; treat anything out of range as a wrap.
     const cursor =
@@ -190,7 +257,12 @@ function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | n
     if (bag.length === 0) {
       const lastEpisodeId = lastAired(db, channelId, chosen.showId)
       const avoid = lastEpisodeId == null ? null : unitKeyForEpisodeId(units, lastEpisodeId)
-      bag.push(...dealBag(units, rng, avoid))
+      const allShuffle = units.every((item) => modeForSeason(item.season) === 'shuffle')
+      bag.push(
+        ...(allShuffle
+          ? dealBag(units, rng, avoid)
+          : dealMixedBag(units, modeForSeason, rng, avoid))
+      )
     }
     const key = bag.shift() as string
     unit = units.find((u) => u.key === key) ?? units[0]

@@ -61,6 +61,13 @@ export interface RerunApi {
     addShow(channelId: number, showId: number): Promise<ChannelDetail>
     removeShow(channelId: number, showId: number): Promise<ChannelDetail>
     setMode(channelId: number, showId: number, mode: PlayMode): Promise<ChannelDetail>
+    /** Null removes the override so the season inherits the show mode. */
+    setSeasonMode(
+      channelId: number,
+      showId: number,
+      season: number,
+      mode: PlayMode | null
+    ): Promise<ChannelDetail>
     setWeight(channelId: number, showId: number, weight: number): Promise<ChannelDetail>
     /** Reset the cursor to the pilot, or deal a fresh shuffle bag. */
     resetProgress(channelId: number, showId: number): Promise<ChannelDetail>
@@ -126,6 +133,7 @@ export const IPC = {
     addShow: 'channels:addShow',
     removeShow: 'channels:removeShow',
     setMode: 'channels:setMode',
+    setSeasonMode: 'channels:setSeasonMode',
     setWeight: 'channels:setWeight',
     resetProgress: 'channels:resetProgress'
   },

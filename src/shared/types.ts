@@ -97,6 +97,14 @@ export interface ChannelShow {
   weight: number
 }
 
+/** A season can override its channel/show mode; no row means "inherit". */
+export interface ChannelShowSeasonMode {
+  channelId: number
+  showId: number
+  season: number
+  mode: PlayMode
+}
+
 export interface ChannelShowState {
   channelId: number
   showId: number
@@ -180,6 +188,13 @@ export interface LineupEntry {
   arcCount: number
   /** e.g. `"AWAKENING" ×5 + 2 MORE`, or null when the show has no arcs. */
   arcSummary: string | null
+  seasons: Array<{
+    season: number
+    episodeCount: number
+    /** Null inherits `LineupEntry.mode`. */
+    modeOverride: PlayMode | null
+    effectiveMode: PlayMode
+  }>
   progress: LineupProgress
 }
 

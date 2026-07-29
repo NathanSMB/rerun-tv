@@ -10,8 +10,10 @@ import {
   createChannel,
   getChannel,
   getShowState,
+  listChannelShowSeasonModes,
   setActiveArc,
   setChannelShowMode,
+  setChannelShowSeasonMode,
   setChannelShowWeight
 } from '@main/db/repositories/channels.js'
 import { peekNext, pickNext, resetProgress, validateActiveArc } from '@main/scheduler/scheduler.js'
@@ -318,6 +320,90 @@ describe('shuffle mode', () => {
     const next = pickNext(db, channel.id, rng)
     expect(next?.unit.key).not.toBe(stale[0])
     expect(getShowState(db, channel.id, showId).shuffleBag).not.toContain(stale[0])
+  })
+})
+
+describe('season mode overrides', () => {
+  it('keeps an ordered season in order inside an otherwise shuffled cycle', () => {
+    const showId = insertShow(db, 'Mixed South Park')
+    for (let season = 1; season <= 2; season++) {
+      for (let episode = 1; episode <= 5; episode++) {
+        insertEpisode(db, showId, season, episode)
+      }
+    }
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowSeasonMode(db, channel.id, showId, 1, 'sequential')
+    const rng = seeded(37)
+
+    const cycle = Array.from({ length: 10 }, () => pickNext(db, channel.id, rng)?.unit)
+    const orderedEpisodes = cycle
+      .filter((unit) => unit?.season === 1)
+      .map((unit) => unit?.episode)
+    const shuffledEpisodes = cycle
+      .filter((unit) => unit?.season === 2)
+      .map((unit) => unit?.episode)
+
+    expect(orderedEpisodes).toEqual([1, 2, 3, 4, 5])
+    expect(shuffledEpisodes.slice().sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([
+      1, 2, 3, 4, 5
+    ])
+    expect(shuffledEpisodes).not.toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('can shuffle one season inside a show whose default is in order', () => {
+    const showId = insertShow(db, 'Mostly ordered')
+    for (let season = 1; season <= 2; season++) {
+      for (let episode = 1; episode <= 6; episode++) {
+        insertEpisode(db, showId, season, episode)
+      }
+    }
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowMode(db, channel.id, showId, 'sequential')
+    setChannelShowSeasonMode(db, channel.id, showId, 2, 'shuffle')
+    const rng = seeded(91)
+
+    const cycle = Array.from({ length: 12 }, () => pickNext(db, channel.id, rng)?.unit)
+    expect(
+      cycle.filter((unit) => unit?.season === 1).map((unit) => unit?.episode)
+    ).toEqual([1, 2, 3, 4, 5, 6])
+    expect(
+      cycle.filter((unit) => unit?.season === 2).map((unit) => unit?.episode)
+    ).not.toEqual([1, 2, 3, 4, 5, 6])
+  })
+
+  it('removes an override to inherit again and exposes effective modes to the editor', () => {
+    const showId = insertShow(db, 'Overrides')
+    insertEpisode(db, showId, 1, 1)
+    insertEpisode(db, showId, 2, 1)
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+
+    setChannelShowSeasonMode(db, channel.id, showId, 2, 'sequential')
+    expect(listChannelShowSeasonModes(db, channel.id, showId)).toHaveLength(1)
+    expect(getChannelDetail(db, channel.id)?.lineup[0].seasons).toEqual([
+      {
+        season: 1,
+        episodeCount: 1,
+        modeOverride: null,
+        effectiveMode: 'shuffle'
+      },
+      {
+        season: 2,
+        episodeCount: 1,
+        modeOverride: 'sequential',
+        effectiveMode: 'sequential'
+      }
+    ])
+
+    setChannelShowSeasonMode(db, channel.id, showId, 2, null)
+
+    expect(listChannelShowSeasonModes(db, channel.id, showId)).toEqual([])
+    expect(getChannelDetail(db, channel.id)?.lineup[0].seasons[1]).toMatchObject({
+      modeOverride: null,
+      effectiveMode: 'shuffle'
+    })
   })
 })
 

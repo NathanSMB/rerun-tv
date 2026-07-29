@@ -131,6 +131,19 @@ export default function ChannelEditor(): ReactElement {
     )
   }
 
+  const setSeasonMode = (
+    entry: LineupEntry,
+    season: number,
+    mode: PlayMode | null
+  ): void => {
+    if (detail == null) return
+    const current = entry.seasons.find((item) => item.season === season)?.modeOverride ?? null
+    if (current === mode) return
+    void run(`season-mode:${entry.showId}:${season}`, () =>
+      window.rerun.channels.setSeasonMode(detail.channel.id, entry.showId, season, mode)
+    )
+  }
+
   const bumpWeight = (entry: LineupEntry, delta: number): void => {
     if (detail == null) return
     const weight = Math.min(MAX_WEIGHT, Math.max(MIN_WEIGHT, entry.weight + delta))
@@ -415,6 +428,65 @@ export default function ChannelEditor(): ReactElement {
                 </button>
               </div>
               {renderProgress(entry)}
+              {entry.seasons.length > 0 && (
+                <details className="season-overrides">
+                  <summary>
+                    Season overrides
+                    {entry.seasons.some((season) => season.modeOverride != null) && (
+                      <span className="override-count">
+                        {
+                          entry.seasons.filter((season) => season.modeOverride != null)
+                            .length
+                        }{' '}
+                        active
+                      </span>
+                    )}
+                  </summary>
+                  <div className="season-list">
+                    {entry.seasons.map((season) => (
+                      <div className="season-row" key={season.season}>
+                        <span className="season-label">
+                          Season {season.season}
+                          <small>{plural(season.episodeCount, 'episode')}</small>
+                        </span>
+                        <span
+                          className="seg season-mode"
+                          role="group"
+                          aria-label={`Play mode for ${entry.title} season ${season.season}`}
+                        >
+                          <button
+                            type="button"
+                            className={season.modeOverride == null ? 'on' : undefined}
+                            aria-pressed={season.modeOverride == null}
+                            disabled={locked}
+                            onClick={() => setSeasonMode(entry, season.season, null)}
+                          >
+                            Use show ({entry.mode === 'sequential' ? 'In order' : 'Shuffle'})
+                          </button>
+                          <button
+                            type="button"
+                            className={season.modeOverride === 'shuffle' ? 'on' : undefined}
+                            aria-pressed={season.modeOverride === 'shuffle'}
+                            disabled={locked}
+                            onClick={() => setSeasonMode(entry, season.season, 'shuffle')}
+                          >
+                            Shuffle
+                          </button>
+                          <button
+                            type="button"
+                            className={season.modeOverride === 'sequential' ? 'on' : undefined}
+                            aria-pressed={season.modeOverride === 'sequential'}
+                            disabled={locked}
+                            onClick={() => setSeasonMode(entry, season.season, 'sequential')}
+                          >
+                            In order
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           ))
         )}
