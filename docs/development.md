@@ -49,7 +49,7 @@ src/
     playback.ts      decidePlaybackPath, episodeCode, formatDuration
   main/              Node — owns the library, the database, the scheduler
     index.ts         bootstrap and window
-    paths.ts         XDG data dir + database path
+    paths.ts         XDG data dir · database, staged-import and backup paths
     db/
       index.ts       open + migrate
       schema.ts      the migration list
@@ -57,7 +57,7 @@ src/
     library/         parse · arcs · ffprobe · scanner
     scheduler/       playable units · what plays next
     stream/          ffmpeg supervisor · loopback HTTP server
-    services/        view models the renderer consumes
+    services/        view models the renderer consumes · restore.ts
     ipc/handlers.ts  one handle() per IPC channel
   preload/index.ts   contextBridge — the only thing the renderer can see
   renderer/          React + TypeScript
@@ -65,7 +65,7 @@ src/
     src/screens/     Guide · Player · ChannelEditor · Library · Settings
     src/components/  AppBar · ChannelBanner · ChannelNumber
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
-tests/               Vitest — parser, arcs, units, scheduler, stream, repos
+tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
 docs/                this documentation, plus the original plan and mockup
 ```
 
@@ -91,6 +91,8 @@ docs/                this documentation, plus the original plan and mockup
 | | |
 | --- | --- |
 | Database | `~/.local/share/rerun-tv/library.db` (WAL mode) |
+| Automatic backups | `~/.local/share/rerun-tv/backups/` — taken before an import replaces the database, last 5 kept |
+| Staged import | `library.db.incoming` (+ `.json`) beside the database, applied and consumed at the next boot |
 | Electron caches | the same directory — `userData` is repointed in `paths.ts` |
 | Stream server | `http://127.0.0.1:<ephemeral>` — loopback only |
 
@@ -117,3 +119,8 @@ Tests are Node-target Vitest and never boot Electron. The database ones open
 the real schema and the real migrations. The stream tests start a real HTTP
 server on an ephemeral port; the cases that need ffmpeg skip themselves when it
 isn't installed.
+
+`restore.test.ts` is the exception that uses real files in a temp directory,
+because the whole point of that module is filesystem behaviour — what survives a
+rejected import, what gets copied before a swap, what happens to a stale WAL
+sidecar. An in-memory database would test none of it.

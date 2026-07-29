@@ -257,6 +257,25 @@ export interface NowPlaying {
   arc: { title: string; partIndex: number; partCount: number } | null
 }
 
+/**
+ * What the last database import replaced, and where the old database went.
+ *
+ * Written into the imported database itself at boot, because the restart that
+ * finishes an import takes the renderer's status banner with it — this receipt
+ * is the only thing left to tell the user where their safety copy landed.
+ */
+export interface RestoreReceipt {
+  /** The file the user picked. */
+  sourcePath: string
+  /** ISO timestamp of the swap. */
+  restoredAt: string
+  /** The pre-restore copy of the database that was replaced. */
+  backupPath: string | null
+  shows: number
+  episodes: number
+  channels: number
+}
+
 export interface SystemInfo {
   appVersion: string
   ffmpegPath: string | null
@@ -269,6 +288,8 @@ export interface SystemInfo {
   dbPath: string
   dbSizeBytes: number
   streamPort: number | null
+  /** Set once this database arrived via an import; null on a normal database. */
+  lastRestore: RestoreReceipt | null
 }
 
 // ---------------------------------------------------------------------------

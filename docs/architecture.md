@@ -39,11 +39,15 @@ Node, synchronous, single-threaded. It holds the only handle to SQLite —
 state transition be one transaction with no await points for another tune-in to
 interleave with.
 
-Boot order in `index.ts` is deliberate: XDG data dir → open and migrate the
-database → resolve ffmpeg and start the stream server → construct the scanner →
-register IPC handlers → open the window. The codec check runs *after* the window
-is on its way, because per plan §10 a failure is non-fatal: anything unplayable
-just routes to the transcode path.
+Boot order in `index.ts` is deliberate: XDG data dir → **apply a staged database
+import, if one is waiting** → open and migrate the database → resolve ffmpeg and
+start the stream server → construct the scanner → register IPC handlers → open
+the window. The codec check runs *after* the window is on its way, because per
+plan §10 a failure is non-fatal: anything unplayable just routes to the transcode
+path.
+
+The import step comes first because it's the only moment nothing holds a handle
+on the database file — see [backup-restore.md](backup-restore.md).
 
 ### Preload (`src/preload/index.ts`)
 
@@ -88,6 +92,7 @@ client.
 ```
 ipc/handlers.ts        translate IPC → subsystem call → view model. No decisions.
 services/              view models: LibraryOverview, ChannelSummary, ChannelDetail
+                       plus restore.ts — validate, stage and swap a database
 scheduler/ library/ stream/    the actual behaviour
 db/repositories/       all SQL, camel-cased at the boundary
 db/index.ts            open + migrate
@@ -102,4 +107,5 @@ A handler that starts to look like it's deciding something belongs in
 - [scheduler.md](scheduler.md) — playable units, cursors, shuffle bags, arc locking
 - [playback.md](playback.md) — direct / remux / transcode, seeking, the supervisor
 - [library.md](library.md) — scanning, filename parsing, arc detection
+- [backup-restore.md](backup-restore.md) — backing up the database, and importing one back
 - [ui.md](ui.md) — the five screens and the design language

@@ -94,6 +94,12 @@ export interface RerunApi {
     /** Native folder picker; resolves to null if the user cancels. */
     pickFolder(): Promise<string | null>
     backupDb(): Promise<string | null>
+    /**
+     * Pick a database file, validate it, and — once the user confirms a native
+     * warning — stage it and restart. Resolves false if they cancelled either
+     * the picker or the confirm; true means the app is on its way down.
+     */
+    importDb(): Promise<boolean>
   }
 
   /** Push channels from main. Each returns an unsubscribe function. */
@@ -150,7 +156,8 @@ export const IPC = {
   system: {
     getInfo: 'system:getInfo',
     pickFolder: 'system:pickFolder',
-    backupDb: 'system:backupDb'
+    backupDb: 'system:backupDb',
+    importDb: 'system:importDb'
   }
 } as const
 

@@ -114,7 +114,15 @@ group any two or more episodes the heuristic missed, even across gaps or seasons
 
 Four cards: where the media lives, how it plays, how the interface behaves, and
 what the system underneath is doing (ffmpeg version and path, the startup codec
-check, the database and its size, with a backup button).
+check, the database and its size, with **Back up…** and **Import…** beside it).
+
+Importing replaces everything, so the confirmation is a native dialog with
+Cancel as the default button — and it's raised from the main process, because
+that's the only side that can quote the counts and the missing-media check from
+inside the file you picked. Afterwards the app restarts, which takes the status
+banner with it, so the Database row grows a line saying what was restored and
+where the previous database was saved. See
+[backup-restore.md](backup-restore.md).
 
 Post-MVP controls — hardware VAAPI encode — ship **visible but disabled**, so
 the settings surface doesn't reshuffle as features land.

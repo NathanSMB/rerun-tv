@@ -69,7 +69,8 @@ const api: RerunApi = {
   system: {
     getInfo: () => ipcRenderer.invoke(IPC.system.getInfo),
     pickFolder: () => ipcRenderer.invoke(IPC.system.pickFolder),
-    backupDb: () => ipcRenderer.invoke(IPC.system.backupDb)
+    backupDb: () => ipcRenderer.invoke(IPC.system.backupDb),
+    importDb: () => ipcRenderer.invoke(IPC.system.importDb)
   },
   events: {
     onScanProgress: (cb) => subscribe<ScanStatus>(EVENTS.scanProgress, cb),

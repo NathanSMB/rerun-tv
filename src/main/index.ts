@@ -22,7 +22,14 @@ import { EVENTS } from '../shared/ipc.js'
 import type { SystemInfo } from '../shared/types.js'
 import { closeDb, openDatabase, setDb } from './db/index.js'
 import { getSettings } from './db/repositories/settings.js'
-import { configureAppPaths, databasePath } from './paths.js'
+import {
+  backupsDir,
+  configureAppPaths,
+  databasePath,
+  stagedImportMetaPath,
+  stagedImportPath
+} from './paths.js'
+import { applyStagedImport, recordRestoreReceipt } from './services/restore.js'
 import { Scanner } from './library/scanner.js'
 import { startStreamServer, type StreamServer } from './stream/server.js'
 import { checkCodecs, resolveFfmpeg } from './stream/ffmpeg.js'
@@ -73,9 +80,34 @@ function createWindow(): void {
   })
 }
 
+/**
+ * Tear everything down and come back up — how a staged import is applied.
+ *
+ * `app.exit()` rather than `app.quit()`: quitting races the single-instance
+ * lock the relaunched process immediately asks for. Exiting skips `will-quit`,
+ * which is why the teardown is spelled out here instead.
+ */
+async function restart(): Promise<void> {
+  scanner?.dispose()
+  await streamServer?.close() // awaited so ffmpeg children die with us
+  closeDb() // checkpoints and removes -wal/-shm
+  app.relaunch()
+  app.exit(0)
+}
+
 async function bootstrap(): Promise<void> {
+  // Before anything opens the database: if an import is staged, this is the one
+  // moment nothing holds a handle on the file, so the swap is safe here.
+  const receipt = applyStagedImport({
+    dbPath: databasePath(),
+    stagedPath: stagedImportPath(),
+    metaPath: stagedImportMetaPath(),
+    backupsDir: backupsDir()
+  })
+
   const db = openDatabase(databasePath())
   setDb(db)
+  if (receipt) recordRestoreReceipt(db, receipt)
 
   const settings = getSettings(db)
   const ffmpeg = resolveFfmpeg()
@@ -93,7 +125,8 @@ async function bootstrap(): Promise<void> {
     db,
     scanner,
     stream: streamServer,
-    codecCheck: () => codecStatus
+    codecCheck: () => codecStatus,
+    restart
   })
 
   createWindow()

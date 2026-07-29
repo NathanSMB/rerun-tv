@@ -13,7 +13,7 @@
 
 import { BrowserWindow, app, dialog, ipcMain } from 'electron'
 import { copyFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { EVENTS, IPC } from '../../shared/ipc.js'
 import type {
   AppSettings,
@@ -28,7 +28,8 @@ import type {
   UpdateChannelInput
 } from '../../shared/types.js'
 import type { Db } from '../db/index.js'
-import { databasePath } from '../paths.js'
+import { backupsDir, databasePath, stagedImportMetaPath, stagedImportPath } from '../paths.js'
+import { discardStagedImport, getRestoreReceipt, inspectAndStage } from '../services/restore.js'
 import { getSettings, setSetting } from '../db/repositories/settings.js'
 import * as libraryRepo from '../db/repositories/library.js'
 import * as channelRepo from '../db/repositories/channels.js'
@@ -45,6 +46,8 @@ export interface HandlerContext {
   stream: StreamServer
   /** Resolved once at startup; `pending` until the check finishes. */
   codecCheck: () => SystemInfo['codecCheck']
+  /** Tear down every subsystem and relaunch — how an import is finished. */
+  restart: () => Promise<void>
 }
 
 /** Broadcast a push event to every open window. */
@@ -266,7 +269,8 @@ export function registerHandlers(ctx: HandlerContext): void {
       codecCheck: ctx.codecCheck(),
       dbPath,
       dbSizeBytes,
-      streamPort: ctx.stream.port
+      streamPort: ctx.stream.port,
+      lastRestore: getRestoreReceipt(db)
     }
   })
 
@@ -291,4 +295,63 @@ export function registerHandlers(ctx: HandlerContext): void {
     copyFileSync(databasePath(), result.filePath)
     return result.filePath
   })
+
+  handle(IPC.system.importDb, async (): Promise<boolean> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    const picked = await dialog.showOpenDialog(win, {
+      title: 'Import a library database',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Rerun TV database', extensions: ['db', 'sqlite', 'sqlite3'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    })
+    const source = picked.canceled ? null : (picked.filePaths[0] ?? null)
+    if (source == null) return false
+
+    // Validated and copied before anything is asked of the user, so the confirm
+    // can quote real numbers — and so a bad file fails before it looks committal.
+    const report = inspectAndStage(source, stagedImportPath(), stagedImportMetaPath())
+
+    const media =
+      report.sampled === 0
+        ? 'It contains no episodes yet.'
+        : report.missing === 0
+          ? `All ${report.sampled} sampled episode files were found on this machine.`
+          : `${report.missing} of ${report.sampled} sampled episode files were not found on ` +
+            'this machine — those episodes drop out of the schedule on the next scan.'
+
+    const confirm = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['Cancel', 'Replace and restart'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Replace the library database?',
+      message: `Replace your library with ${basename(source)}?`,
+      detail: [
+        `The imported database has ${report.shows} shows, ${report.episodes} episodes and ` +
+          `${report.channels} channels. Your current library has ${countRows(db, 'shows')} shows, ` +
+          `${countRows(db, 'episodes')} episodes and ${countRows(db, 'channels')} channels — ` +
+          'all of it, including playback progress, is replaced.',
+        media,
+        `Your current database will be saved to ${backupsDir()} first.`,
+        'Rerun TV restarts to finish the import.'
+      ].join('\n\n')
+    })
+
+    if (confirm.response !== 1) {
+      discardStagedImport(stagedImportPath(), stagedImportMetaPath())
+      return false
+    }
+
+    // Deliberately not awaited: the reply has to reach the renderer before the
+    // process goes away, or the caller sees a dead-channel error instead.
+    void ctx.restart()
+    return true
+  })
+}
+
+function countRows(db: Db, table: string): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+  return row.n
 }

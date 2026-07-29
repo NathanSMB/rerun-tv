@@ -6,6 +6,10 @@ migrations keyed off `PRAGMA user_version`. All SQL lives in
 `src/main/db/repositories/`, which camel-cases rows into the interfaces in
 `src/shared/types.ts` — no snake_case ever reaches the renderer.
 
+Everything the app knows except the media files is in this one file, which is
+what makes [backing it up and putting it back](backup-restore.md) a complete
+answer rather than half of one.
+
 ```
 shows ─1:many─ episodes ─0:1─ part_groups          channels ─1:many─ channel_shows
                                                        │                  │
@@ -117,6 +121,11 @@ are recorded now.
 `key · value` — JSON-encoded values, merged over `DEFAULT_SETTINGS` on read so a
 key added in a later version needs no migration. Every knob the app exposes is a
 row here; there are no config files.
+
+One row isn't a knob: `lastRestore` records where this database came from if it
+arrived via an import, and is written outside `AppSettings` so that type stays a
+list of things a user can actually set. See
+[backup-restore.md](backup-restore.md).
 
 ### `scan_roots`
 `id · path (unique) · added_at` — the library folders from Settings.

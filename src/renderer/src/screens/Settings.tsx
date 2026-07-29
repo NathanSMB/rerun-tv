@@ -41,6 +41,15 @@ function formatMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function baseName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1) || path
+}
+
+function formatDate(iso: string): string {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString()
+}
+
 /** The mockup's pill switch, wired as a real `role="switch"` control. */
 function Toggle({
   checked,
@@ -162,6 +171,18 @@ export default function Settings(): ReactElement {
     void run('backup', async () => {
       const path = await window.rerun.system.backupDb()
       return path == null ? 'Backup cancelled.' : `Database backed up to ${path}`
+    })
+  }
+
+  /**
+   * The picker, the validation and the confirm all live in main — it's the only
+   * side that can report what's actually in the file being imported. All that
+   * comes back is whether the user went through with it.
+   */
+  function onImport(): void {
+    void run('import', async () => {
+      const started = await window.rerun.system.importDb()
+      return started ? 'Importing — Rerun TV is restarting…' : 'Import cancelled.'
     })
   }
 
@@ -481,15 +502,35 @@ export default function Settings(): ReactElement {
                 ? '—'
                 : `${system.dbPath} · ${formatMb(system.dbSizeBytes)}`}
             </div>
+            {/* The restart eats the status banner, so the receipt is the only
+                thing left to say where the replaced database went. */}
+            {system?.lastRestore != null && (
+              <div className="set-hint">
+                Restored from {baseName(system.lastRestore.sourcePath)} on{' '}
+                {formatDate(system.lastRestore.restoredAt)}
+                {system.lastRestore.backupPath != null &&
+                  ` · previous database saved at ${system.lastRestore.backupPath}`}
+              </div>
+            )}
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            disabled={locked || system == null}
-            onClick={onBackup}
-          >
-            {busy === 'backup' ? 'Backing up…' : 'Back up…'}
-          </button>
+          <span className="set-value">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={locked || system == null}
+              onClick={onBackup}
+            >
+              {busy === 'backup' ? 'Backing up…' : 'Back up…'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={locked || system == null}
+              onClick={onImport}
+            >
+              {busy === 'import' ? 'Importing…' : 'Import…'}
+            </button>
+          </span>
         </div>
 
         <div className="set-row">

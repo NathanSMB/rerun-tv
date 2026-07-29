@@ -39,6 +39,10 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
 - **Play** — a loopback HTTP server fronts ffmpeg and picks the cheapest path
   that works: serve the file directly, remux losslessly into fragmented MP4, or
   transcode. The decision is made at scan time, so tuning in is instant.
+- **Back up** — channels, lineups and progress are one SQLite file, and Settings
+  will both write a copy of it and put one back. Restoring validates the file
+  first, keeps an automatic copy of the database it replaces, and swaps it in at
+  the next launch so nothing is rewritten underneath a running scan.
 
 ## Documentation
 
@@ -49,6 +53,7 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
 | [docs/scheduler.md](docs/scheduler.md) | Playable units, cursors, shuffle bags, arc locking |
 | [docs/playback.md](docs/playback.md) | direct / remux / transcode, seeking, the ffmpeg supervisor |
 | [docs/library.md](docs/library.md) | Scanning, filename parsing, arc detection |
+| [docs/backup-restore.md](docs/backup-restore.md) | Backing up the database, and importing one back |
 | [docs/ui.md](docs/ui.md) | The five screens and the design language |
 | [docs/development.md](docs/development.md) | Setup, scripts, layout, conventions |
 
