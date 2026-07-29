@@ -100,7 +100,7 @@ The scan strip reports what's been probed and what was skipped. Each show shows
 from the scan-time probe — so you can see what will cost CPU before you tune in.
 Anything the parser couldn't read waits in the **Unmatched** queue for manual
 assignment. Arcs are reviewed and corrected here: ungroup a false positive, or
-group a consecutive run the heuristic missed.
+group any two or more episodes the heuristic missed, even across gaps or seasons.
 
 ### Settings — every knob in one place
 

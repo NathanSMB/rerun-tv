@@ -10,8 +10,8 @@
  *    Unparseable files wait in the Unmatched queue instead of vanishing, and can
  *    be assigned by hand or dismissed.
  * 3. **Arcs** — the Part-N heuristic only proposes; this panel is the source of
- *    truth the scheduler obeys, so it can ungroup false positives and group a
- *    consecutive run the heuristic missed.
+ *    truth the scheduler obeys, so it can ungroup false positives and group any
+ *    set of episodes the heuristic missed.
  */
 
 import {
@@ -367,8 +367,8 @@ export default function Library(): ReactElement {
               ))}
 
               <p className="side-tip">
-                Select a consecutive run of episodes in any show to group it into an arc the
-                scheduler will never interrupt.
+                Select any episodes in a show to group them into an arc the scheduler will
+                play in airing order without interruption.
               </p>
 
               {buildingArc ? (
@@ -559,10 +559,8 @@ function AssignPanel({
 // ---------------------------------------------------------------------------
 
 /**
- * Group a consecutive run of episodes into an arc. "Consecutive" is checked
- * against the show's airing order rather than raw episode numbers, so a gap in
- * the numbering (a missing file) still counts as adjacent — and the requirement
- * is stated in the UI before the main process has to reject anything.
+ * Group any two or more episodes into an arc. The main process stores them in
+ * the show's airing order, regardless of the order in which they were selected.
  */
 function ArcBuilder({
   showId,
@@ -602,25 +600,12 @@ function ArcBuilder({
   const ordered = episodes ?? []
   const selectedSet = useMemo(() => new Set(selected), [selected])
   const indices = ordered.map((ep, i) => (selectedSet.has(ep.id) ? i : -1)).filter((i) => i >= 0)
-  const first = indices[0]
-  const last = indices[indices.length - 1]
-  const isRun =
-    indices.length >= 2 && last != null && first != null && last - first + 1 === indices.length
+  const canCreate = indices.length >= 2
 
   let hint: string
-  if (indices.length === 0) hint = 'Pick the episodes that make up the arc, in order.'
+  if (indices.length === 0) hint = 'Pick the episodes that make up the arc.'
   else if (indices.length === 1) hint = 'An arc needs at least two parts.'
-  else if (!isRun && first != null && last != null)
-    hint = `Not a consecutive run — everything from ${episodeCode(
-      ordered[first].season,
-      ordered[first].episode,
-      ordered[first].episodeEnd
-    )} to ${episodeCode(
-      ordered[last].season,
-      ordered[last].episode,
-      ordered[last].episodeEnd
-    )} has to be selected.`
-  else hint = `${indices.length} parts selected.`
+  else hint = `${indices.length} parts selected · plays in airing order.`
 
   function toggle(episodeId: number): void {
     setSelected((current) =>
@@ -633,7 +618,7 @@ function ArcBuilder({
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault()
     setError(null)
-    if (!isRun) return setError('Select a consecutive run of at least two episodes.')
+    if (!canCreate) return setError('Select at least two episodes.')
     if (title.trim() === '') return setError('Give the arc a name.')
     setBusy(true)
     try {
@@ -700,7 +685,7 @@ function ArcBuilder({
         </p>
       )}
       <div className="assign-actions">
-        <button type="submit" className="btn btn-tune btn-sm" disabled={busy || !isRun}>
+        <button type="submit" className="btn btn-tune btn-sm" disabled={busy || !canCreate}>
           {busy ? 'Grouping…' : 'Create arc'}
         </button>
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onCancel}>

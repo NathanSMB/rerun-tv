@@ -458,13 +458,11 @@ export function getArc(db: Db, groupId: number): ArcView | null {
 }
 
 /**
- * Group a run of episodes into an arc.
+ * Group episodes into an arc.
  *
- * Consecutiveness is enforced here rather than trusted from the caller because
- * an arc is uninterruptible at playback time: a group whose members are scattered
- * across a season would lock the channel onto an incoherent sequence. A double
- * episode counts as covering `episode..episodeEnd`, so `S01E01-E02` followed by
- * `S01E03` is a legal run.
+ * Members do not have to be consecutive or belong to the same season. Some
+ * shows deliberately interrupt a multipart story, so part order is the show's
+ * normal season/episode order rather than selection order.
  *
  * Members that already belonged to another group are moved into this one (that
  * is what "regroup this run" means in the UI), and any group left empty as a
@@ -488,8 +486,6 @@ export function createArc(
     if (foreign) {
       throw new Error(`createArc: episode ${foreign.id} belongs to show ${foreign.showId}`)
     }
-    assertConsecutive(members)
-
     const groupId = Number(
       db
         .prepare('INSERT INTO part_groups (show_id, title, source) VALUES (?, ?, ?)')
@@ -574,9 +570,9 @@ function buildArcView(db: Db, group: ArcRow): ArcView {
 }
 
 /**
- * `S01E01–E05` (en-dash, matching the mockup). The short form is only correct
- * within one season; a group that somehow spans a season boundary gets the full
- * code on both ends so the label can't lie.
+ * Consecutive members use the compact `S01E01–E05` form from the mockup.
+ * Gapped or cross-season arcs list every member so the label never implies that
+ * the intervening episodes belong to the arc.
  */
 function arcRange(members: Episode[]): string {
   if (members.length === 0) return ''
@@ -584,25 +580,15 @@ function arcRange(members: Episode[]): string {
   const last = members[members.length - 1]
   const start = episodeCode(first.season, first.episode, first.episodeEnd)
   if (members.length === 1) return start
+  const consecutive = members.every((member, index) => {
+    if (index === 0) return true
+    const previous = members[index - 1]
+    const previousEnd = previous.episodeEnd ?? previous.episode
+    return member.season === previous.season && member.episode === previousEnd + 1
+  })
+  if (!consecutive) {
+    return members.map((member) => episodeCode(member.season, member.episode, member.episodeEnd)).join(' · ')
+  }
   const lastNumber = last.episodeEnd ?? last.episode
-  if (last.season !== first.season) {
-    return `${start}–${episodeCode(last.season, last.episode, last.episodeEnd)}`
-  }
   return `${start}–E${String(lastNumber).padStart(2, '0')}`
-}
-
-/** Members must form one unbroken run inside a single season. */
-function assertConsecutive(members: Episode[]): void {
-  for (let i = 1; i < members.length; i++) {
-    const prev = members[i - 1]
-    const next = members[i]
-    const prevEnd = prev.episodeEnd ?? prev.episode
-    if (next.season !== prev.season || next.episode !== prevEnd + 1) {
-      throw new Error(
-        `createArc: episodes must be consecutive — ` +
-          `${episodeCode(prev.season, prev.episode, prev.episodeEnd)} is not followed by ` +
-          `${episodeCode(next.season, next.episode, next.episodeEnd)}`
-      )
-    }
-  }
 }

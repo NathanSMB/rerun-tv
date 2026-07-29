@@ -59,9 +59,11 @@ Gathering**. Parts must number 1..N in order with no gaps, and a run of one is
 not an arc.
 
 The heuristic is **only a head start**. `part_groups` is the source of truth,
-and the Library screen lets you ungroup a false positive or hand-group a run it
-missed. At rescan, auto arcs are recomputed from scratch and **manual arcs are
-never touched** — an episode already in a manual arc is left alone.
+and the Library screen lets you ungroup a false positive or hand-group any two
+or more episodes, including non-consecutive and cross-season parts. Manual arcs
+play in normal season/episode order. At rescan, auto arcs are recomputed from
+scratch and **manual arcs are never touched** — an episode already in a manual
+arc is left alone.
 
 Arcs are why the scheduler needs playable units; see [scheduler.md](scheduler.md).
 

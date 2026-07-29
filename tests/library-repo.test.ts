@@ -161,11 +161,15 @@ describe('arcs', () => {
     }
   })
 
-  it('rejects a non-consecutive run', () => {
+  it('allows non-consecutive and cross-season episodes in airing order', () => {
     const { showId, ids } = showWithEpisodes(3)
-    expect(() => createArc(db, showId, 'Nope', [ids[0], ids[2]], 'manual')).toThrow(/consecutive/)
-    expect(listArcs(db, showId)).toEqual([])
-    expect(getEpisode(db, ids[0])?.partGroupId).toBeNull()
+    const seasonTwo = upsertEpisode(db, episode(showId, 2, 2))
+    const arc = createArc(db, showId, 'Interrupted conclusion', [seasonTwo, ids[0], ids[2]], 'manual')
+
+    expect(arc.episodeIds).toEqual([ids[0], ids[2], seasonTwo])
+    expect(arc.range).toBe('S01E01 · S01E03 · S02E02')
+    expect(getEpisode(db, ids[0])).toMatchObject({ partGroupId: arc.id, partIndex: 1 })
+    expect(getEpisode(db, seasonTwo)).toMatchObject({ partGroupId: arc.id, partIndex: 3 })
   })
 
   it('rejects episodes from another show and empty input', () => {
