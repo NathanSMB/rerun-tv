@@ -1,0 +1,361 @@
+/*
+ * Screen 04 · The Library — mockup.html screen 04.
+ *
+ * A full-width scan strip over a two-column body: parsed shows and the
+ * unmatched queue on the left, the arc panel on the right. Buttons that are
+ * really rows (a show row, an episode in the arc builder) reset the native
+ * button chrome and take their look from the mockup's div markup.
+ */
+
+/* ---- scan strip ---- */
+
+.lib-scan {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 35%, transparent);
+}
+
+.lib-scan-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.lib-scan .scan-label {
+  margin-bottom: 8px;
+}
+
+.scan-note {
+  font-size: 12.5px;
+  color: var(--steel);
+  margin-top: 8px;
+}
+
+.scan-note b {
+  color: var(--white);
+  font-weight: 600;
+}
+
+.lib-error {
+  color: var(--danger);
+  font-size: 12.5px;
+  margin: 8px 0 0;
+}
+
+.lib-note {
+  font-size: 12.5px;
+  color: var(--steel-dim);
+  margin: 8px 0;
+}
+
+/* ---- body ---- */
+
+.lib-body {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  min-height: 460px;
+}
+
+.lib-main {
+  padding: 20px 24px 24px;
+  border-right: 1px solid var(--line);
+}
+
+.lib-main .lineup-caption {
+  margin: 22px 0 10px;
+}
+
+.lib-main .lineup-caption:first-child {
+  margin-top: 0;
+}
+
+.lib-empty-actions {
+  margin-top: 12px;
+}
+
+/* ---- one parsed show ---- */
+
+.show-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 4px 16px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 12px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 3px solid transparent;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.show-row:hover {
+  background: color-mix(in srgb, var(--indigo) 16%, transparent);
+}
+
+.show-row.sel {
+  background: color-mix(in srgb, var(--indigo) 30%, transparent);
+  border-left-color: var(--amber);
+}
+
+.show-row .s-block {
+  display: block;
+  min-width: 0;
+}
+
+.show-row .s-name {
+  display: block;
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.show-row .s-facts {
+  display: block;
+  font-size: 12px;
+  color: var(--steel-dim);
+}
+
+.pipetags {
+  display: flex;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.pipetag {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 7px;
+  color: var(--steel);
+  white-space: nowrap;
+}
+
+.pipetag.warn {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+}
+
+.s-ok {
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+/* ---- unmatched queue ---- */
+
+.file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.file-path {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--steel);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.file-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex: none;
+}
+
+.assign {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+  padding: 14px 16px;
+  margin: 0 4px 12px;
+}
+
+.assign-why {
+  font-size: 12px;
+  color: var(--steel-dim);
+  margin: 0 0 10px;
+}
+
+.assign-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.assign-grid label {
+  font-size: 12.5px;
+  color: var(--steel);
+}
+
+.assign-grid .textinput,
+.assign-grid .selectbox {
+  width: 100%;
+}
+
+.assign-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---- arc panel ---- */
+
+.lib-side {
+  padding: 22px;
+  background: color-mix(in srgb, var(--panel) 35%, transparent);
+}
+
+.lib-side .side-caption {
+  margin: 0 0 12px;
+}
+
+.arc-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.arc-card .a-name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.arc-card .a-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--amber);
+  margin: 3px 0 6px;
+}
+
+/* Ungroup reads as a link but is a real button — it mutates the library. */
+.lib-side .linkbtn {
+  font-family: var(--body);
+  font-size: 12px;
+  color: var(--amber);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.lib-side .linkbtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.lib-side .linkbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.side-tip {
+  font-size: 12.5px;
+  color: var(--steel);
+  margin: 4px 0 12px;
+}
+
+/* ---- new arc from selection ---- */
+
+.arc-builder {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.arc-builder-caption {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.ep-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 10px 0 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+}
+
+.ep-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--steel);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ep-pick:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--indigo) 16%, transparent);
+  color: var(--white);
+}
+
+.ep-pick.on {
+  background: color-mix(in srgb, var(--indigo) 30%, transparent);
+  color: var(--white);
+}
+
+.ep-pick:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ep-pick .ep-code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--amber);
+  flex: none;
+}
+
+.ep-pick .ep-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ep-pick .ep-flag {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--steel-dim);
+  margin-left: auto;
+  flex: none;
+}
+
+.arc-hint {
+  font-size: 11.5px;
+  color: var(--steel-dim);
+  margin: 8px 0 0;
+}
+
+@media (max-width: 860px) {
+  .lib-body {
+    grid-template-columns: 1fr;
+  }
+
+  .lib-main {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .show-row {
+    grid-template-columns: 1fr;
+  }
+}

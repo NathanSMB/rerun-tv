@@ -1,0 +1,312 @@
+/*
+ * Screen 02 — the Player.
+ *
+ * Straight from docs/mockup.html, with one adaptation: the mockup's stage is a
+ * fixed 16/8.4 block inside a TV frame, while the real screen is the window. So
+ * `.stage` fills the viewport and goes black, and the video letterboxes itself
+ * with `object-fit: contain` rather than the stage faking a picture with
+ * gradients.
+ *
+ * `.stage` is also the element we hand to `requestFullscreen()`, which is why
+ * the OSD lives inside it — see the header of Player.tsx.
+ */
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: #000;
+}
+
+/* Cursor follows the OSD: a lean-back screen shouldn't sit under an arrow. */
+.stage.idle {
+  cursor: none;
+}
+
+.stage .video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* ---- fade ---- */
+
+.stage .banner,
+.stage .onair,
+.stage .osd {
+  transition: opacity 220ms ease;
+}
+
+.stage .is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage .banner,
+  .stage .onair,
+  .stage .osd {
+    transition: none;
+  }
+}
+
+/* ---- banner & on-air ---- */
+
+.stage .banner {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  max-width: calc(100% - 220px);
+}
+
+.stage .onair {
+  position: absolute;
+  top: 26px;
+  right: 26px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--signal);
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.stage .onair .live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+  flex: none;
+}
+
+/* The pulse itself is defined in global.css and is already gated on
+   prefers-reduced-motion: no-preference. */
+
+/* ---- up-next toast ---- */
+
+.stage .toast {
+  position: absolute;
+  right: 22px;
+  bottom: 96px;
+  background: rgba(5, 7, 12, 0.82);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 14px;
+  font-size: 12.5px;
+  color: var(--steel);
+  backdrop-filter: blur(6px);
+}
+
+.stage .toast b {
+  color: var(--white);
+  font-weight: 600;
+}
+
+.stage .toast code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+}
+
+/* ---- osd ---- */
+
+.osd {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 40px 22px 16px;
+  background: linear-gradient(transparent, rgba(5, 7, 12, 0.88) 55%);
+}
+
+.scrub {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(141, 151, 184, 0.28);
+  margin-bottom: 12px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* A 4px line is a poor pointer target — widen the hit area, not the paint. */
+.scrub::before,
+.vol-track::before {
+  content: '';
+  position: absolute;
+  inset: -9px 0;
+}
+
+.scrub .fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--amber);
+  border-radius: 2px;
+}
+
+.scrub .knob {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(5, 7, 12, 0.85);
+  pointer-events: none;
+}
+
+.scrub:focus-visible,
+.vol-track:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 6px;
+}
+
+.osd-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.osd-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--white);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 0;
+}
+
+.osd-btn:hover {
+  background: rgba(240, 239, 230, 0.1);
+}
+
+.osd-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.osd-btn.primary {
+  background: var(--amber);
+  color: #201302;
+  width: 46px;
+  height: 46px;
+}
+
+.osd-btn.primary:hover {
+  filter: brightness(1.06);
+}
+
+.vol {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 4px;
+}
+
+.vol-track {
+  position: relative;
+  width: 92px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(141, 151, 184, 0.28);
+  flex: none;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.vol-track .fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--white);
+  border-radius: 2px;
+}
+
+.timecode {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--steel);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.timecode b {
+  color: var(--white);
+  font-weight: 500;
+}
+
+.kbd-hints {
+  display: flex;
+  gap: 14px;
+  margin-left: 18px;
+}
+
+.kbd-hints span {
+  font-size: 11.5px;
+  color: var(--steel-dim);
+  white-space: nowrap;
+}
+
+/* The window gets narrow long before the hints matter — drop them first. */
+@media (max-width: 900px) {
+  .kbd-hints {
+    display: none;
+  }
+}
+
+/* ---- playback failure ---- */
+
+.player-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 32px;
+  background: rgba(5, 7, 12, 0.86);
+}
+
+.player-error .pe-title {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 22px;
+  color: var(--white);
+}
+
+.player-error .pe-sub {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+}
+
+.player-error .pe-hint {
+  font-size: 13.5px;
+  color: var(--steel);
+  max-width: 44ch;
+}
+
+.player-error .pe-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}

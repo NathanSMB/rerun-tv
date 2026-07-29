@@ -1,0 +1,120 @@
+/*
+ * Screen 05 · Settings — mockup.html screen 05.
+ *
+ * Four cards in a two-column grid. The controls themselves (.toggle,
+ * .selectbox, .remove, .btn-sm, .postmvp, .status-dot, kbd) are shared chrome
+ * from global.css; this file is the card and row geometry only.
+ */
+
+.set-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 24px;
+  align-items: start;
+}
+
+.set-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px 8px;
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+}
+
+.set-card .side-caption {
+  margin: 0 0 4px;
+}
+
+/* The one status line for the whole screen: a failed IPC call, or where a
+   backup landed. Spans both columns so it can't be missed. */
+.set-status {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--steel);
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.set-status-error {
+  color: var(--danger);
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.set-row:last-child {
+  border-bottom: 0;
+}
+
+.set-muted {
+  font-size: 12.5px;
+  color: var(--steel-dim);
+}
+
+.set-label {
+  display: block;
+  font-size: 13.5px;
+}
+
+.set-hint {
+  font-size: 11.5px;
+  color: var(--steel-dim);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.set-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--steel);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  max-width: 60%;
+  overflow-wrap: anywhere;
+}
+
+.set-value b {
+  color: var(--white);
+  font-weight: 500;
+}
+
+.folder-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--white);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0 10px;
+}
+
+.shortcuts span {
+  font-size: 11.5px;
+  color: var(--steel-dim);
+}
+
+@media (max-width: 860px) {
+  .set-body {
+    grid-template-columns: 1fr;
+  }
+
+  .set-value {
+    max-width: none;
+  }
+}
