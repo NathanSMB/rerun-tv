@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rerun TV — UI Mock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* palette — tube black / midnight panel / prevue indigo / phosphor amber / static white */
+    --tube:      #0b0e14;
+    --panel:     #141a2e;
+    --panel-2:   #1a2140;
+    --indigo:    #28338f;
+    --indigo-hi: #3a48c4;
+    --amber:     #ffb454;
+    --amber-dim: rgba(255, 180, 84, 0.14);
+    --white:     #f0efe6;
+    --steel:     #8d97b8;
+    --steel-dim: #5a6485;
+    --signal:    #59d999;
+    --line:      rgba(141, 151, 184, 0.18);
+    --shadow:    rgba(0, 0, 0, 0.5);
+
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --mono:    "IBM Plex Mono", ui-monospace, monospace;
+    --body:    "Instrument Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--tube); color: var(--white);
+    font-family: var(--body); font-size: 15px; line-height: 1.55;
+  }
+  main { max-width: 1120px; margin: 0 auto; padding: 56px 28px 120px; }
+  a { color: var(--amber); }
+
+  /* ============ intro ============ */
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--steel);
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800; font-size: clamp(40px, 7vw, 72px);
+    line-height: 0.98; letter-spacing: -0.02em; margin: 12px 0 16px;
+  }
+  h1 .tv { color: var(--amber); }
+  .lede { color: var(--steel); max-width: 62ch; margin: 0 0 28px; font-size: 16.5px; }
+  .lede strong { color: var(--white); font-weight: 600; }
+
+  .tokens { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 14px 6px 8px; font-size: 12.5px; color: var(--steel);
+    font-family: var(--mono);
+  }
+  .chip .dot { width: 16px; height: 16px; border-radius: 50%; }
+
+  /* ============ screen sections ============ */
+  .screen { margin-top: 88px; }
+  .screen-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+  .screen-head h2 {
+    font-family: var(--display); font-weight: 600; font-size: 26px; margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .screen-head .tag {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--amber);
+  }
+  .screen-sub { color: var(--steel); max-width: 70ch; margin: 0 0 20px; }
+
+  .tv-frame {
+    background: #05070c;
+    border: 1px solid rgba(141,151,184,0.22);
+    border-radius: 18px; padding: 14px;
+    box-shadow: 0 24px 60px var(--shadow), inset 0 0 0 1px rgba(0,0,0,0.6);
+  }
+  .app {
+    background: var(--tube); border-radius: 8px; overflow: hidden;
+    border: 1px solid rgba(141,151,184,0.10);
+  }
+
+  .notes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px; margin-top: 16px;
+  }
+  .note {
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+    font-size: 13px; color: var(--steel); background: rgba(20,26,46,0.5);
+  }
+  .note b { color: var(--white); font-weight: 600; display: block; margin-bottom: 2px; }
+
+  /* ============ shared app chrome ============ */
+  .appbar {
+    display: flex; align-items: center; gap: 22px;
+    padding: 14px 22px; border-bottom: 1px solid var(--line);
+    background: rgba(20, 26, 46, 0.55);
+  }
+  .wordmark { font-family: var(--display); font-weight: 800; font-size: 17px; letter-spacing: 0.01em; }
+  .wordmark span { color: var(--amber); }
+  .appnav { display: flex; gap: 4px; margin-left: 8px; }
+  .appnav a {
+    font-size: 13.5px; text-decoration: none; color: var(--steel);
+    padding: 6px 12px; border-radius: 6px;
+  }
+  .appnav a.on { color: var(--white); background: var(--panel-2); }
+  .appnav a:hover { color: var(--white); }
+  .scanpill {
+    margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--steel);
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .scanpill .live { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
+  @media (prefers-reduced-motion: no-preference) {
+    .scanpill .live { animation: pulse 2.4s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  }
+
+  /* ============ screen 1 · guide ============ */
+  .guide-body { display: grid; grid-template-columns: 1fr 340px; min-height: 520px; }
+  .guide-list { padding: 18px 0 22px; border-right: 1px solid var(--line); }
+  .guide-caption {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--steel-dim); padding: 4px 22px 10px;
+  }
+  .ch-row {
+    display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 18px;
+    padding: 14px 22px; cursor: default; border-left: 3px solid transparent;
+  }
+  .ch-row:hover { background: rgba(40, 51, 143, 0.16); }
+  .ch-row.sel { background: rgba(40, 51, 143, 0.30); border-left-color: var(--amber); }
+  .ch-num {
+    font-family: var(--display); font-weight: 800; font-size: 44px; line-height: 1;
+    letter-spacing: -0.02em; color: var(--white);
+  }
+  .ch-num small {
+    display: block; font-family: var(--mono); font-weight: 500; font-size: 10px;
+    letter-spacing: 0.22em; color: var(--steel-dim); margin-bottom: 3px;
+  }
+  .ch-row.sel .ch-num small { color: var(--amber); }
+  .ch-meta .ch-name { font-weight: 600; font-size: 16px; }
+  .ch-meta .ch-deck { font-size: 13px; color: var(--steel); margin-top: 2px; }
+  .ch-meta .ch-deck code {
+    font-family: var(--mono); font-size: 12px; color: var(--amber);
+    background: var(--amber-dim); border-radius: 4px; padding: 1px 6px; margin-right: 6px;
+  }
+  .ch-shows { font-family: var(--mono); font-size: 11px; color: var(--steel-dim); text-align: right; line-height: 1.7; }
+
+  .guide-side { padding: 22px; display: flex; flex-direction: column; gap: 14px; background: rgba(20,26,46,0.35); }
+  .preview {
+    aspect-ratio: 16 / 9; border-radius: 8px; position: relative; overflow: hidden;
+    background:
+      linear-gradient(160deg, rgba(40,51,143,0.85), rgba(11,14,20,0.9) 70%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px);
+    border: 1px solid var(--line);
+    display: flex; align-items: flex-end;
+  }
+  .preview .banner { position: static; transform: none; margin: 12px; }
+  .side-title { font-weight: 600; font-size: 15.5px; }
+  .side-note { font-size: 13px; color: var(--steel); margin: -6px 0 0; }
+  .btn {
+    font-family: var(--body); font-weight: 600; font-size: 14px; border-radius: 8px;
+    padding: 11px 18px; border: 1px solid transparent; cursor: pointer;
+  }
+  .btn-tune { background: var(--amber); color: #201302; }
+  .btn-tune:hover { filter: brightness(1.06); }
+  .btn-ghost { background: transparent; border-color: var(--line); color: var(--steel); }
+  .btn-ghost:hover { color: var(--white); border-color: var(--steel-dim); }
+  .side-actions { display: flex; gap: 10px; }
+  .side-actions .btn-tune { flex: 1; }
+
+  /* ============ channel banner (the signature) ============ */
+  .banner {
+    display: inline-flex; align-items: center; gap: 14px;
+    background: rgba(5, 7, 12, 0.82); border: 1px solid rgba(255,180,84,0.35);
+    border-radius: 10px; padding: 10px 16px; backdrop-filter: blur(6px);
+  }
+  .banner .b-num {
+    font-family: var(--display); font-weight: 800; font-size: 34px; line-height: 1;
+    color: var(--amber); letter-spacing: -0.02em;
+  }
+  .banner .b-show { font-weight: 600; font-size: 14.5px; line-height: 1.3; }
+  .banner .b-ep {
+    font-family: var(--mono); font-size: 11.5px; color: var(--amber); margin-top: 2px;
+  }
+
+  /* ============ screen 2 · player ============ */
+  .stage {
+    position: relative; aspect-ratio: 16 / 8.4; overflow: hidden;
+    background:
+      radial-gradient(120% 90% at 50% 20%, rgba(58,72,196,0.35), transparent 60%),
+      linear-gradient(200deg, #10162b 0%, #05070c 65%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 3px);
+  }
+  .stage .banner { position: absolute; top: 22px; left: 22px; }
+  .onair {
+    position: absolute; top: 26px; right: 26px; font-family: var(--mono);
+    font-size: 11px; letter-spacing: 0.2em; color: var(--signal);
+    display: inline-flex; gap: 8px; align-items: center;
+  }
+  .onair .live { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
+  @media (prefers-reduced-motion: no-preference) { .onair .live { animation: pulse 2.4s infinite; } }
+
+  .toast {
+    position: absolute; right: 22px; bottom: 96px;
+    background: rgba(5,7,12,0.82); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 14px; font-size: 12.5px; color: var(--steel);
+  }
+  .toast b { color: var(--white); font-weight: 600; }
+  .toast code { font-family: var(--mono); font-size: 11px; color: var(--amber); }
+
+  .osd {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 40px 22px 16px;
+    background: linear-gradient(transparent, rgba(5,7,12,0.88) 55%);
+  }
+  .scrub { position: relative; height: 4px; border-radius: 2px; background: rgba(141,151,184,0.28); margin-bottom: 12px; }
+  .scrub .fill { position: absolute; inset: 0 68% 0 0; background: var(--amber); border-radius: 2px; }
+  .scrub .knob {
+    position: absolute; left: 32%; top: 50%; width: 12px; height: 12px;
+    transform: translate(-50%, -50%); border-radius: 50%; background: var(--amber);
+    box-shadow: 0 0 0 3px rgba(5,7,12,0.85);
+  }
+  .osd-row { display: flex; align-items: center; gap: 14px; }
+  .osd-btn {
+    width: 40px; height: 40px; border-radius: 8px; border: 1px solid transparent;
+    background: transparent; color: var(--white); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .osd-btn:hover { background: rgba(240,239,230,0.10); }
+  .osd-btn svg { width: 20px; height: 20px; fill: currentColor; }
+  .osd-btn.primary { background: var(--amber); color: #201302; width: 46px; height: 46px; }
+  .osd-btn.primary:hover { filter: brightness(1.06); }
+  .vol { display: flex; align-items: center; gap: 10px; margin-left: 4px; }
+  .vol-track { width: 92px; height: 4px; border-radius: 2px; background: rgba(141,151,184,0.28); position: relative; }
+  .vol-track .fill { position: absolute; inset: 0 30% 0 0; background: var(--white); border-radius: 2px; }
+  .timecode { font-family: var(--mono); font-size: 12px; color: var(--steel); margin-left: auto; }
+  .timecode b { color: var(--white); font-weight: 500; }
+  .kbd-hints { display: flex; gap: 14px; margin-left: 18px; }
+  .kbd-hints span { font-size: 11.5px; color: var(--steel-dim); }
+  .kbd-hints kbd {
+    font-family: var(--mono); font-size: 10.5px; color: var(--steel);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 5px; margin-right: 4px;
+  }
+
+  /* ============ screen 3 · editor ============ */
+  .editor-body { display: grid; grid-template-columns: 1fr 300px; min-height: 520px; }
+  .editor-main { padding: 24px; border-right: 1px solid var(--line); }
+  .editor-head { display: flex; align-items: center; gap: 18px; margin-bottom: 8px; }
+  .editor-head .ch-num { font-size: 52px; color: var(--amber); }
+  .editor-title { font-family: var(--display); font-weight: 600; font-size: 24px; }
+  .editor-subtitle { font-size: 13px; color: var(--steel); }
+  .lineup-caption {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--steel-dim); margin: 22px 0 10px;
+  }
+  .show-card {
+    border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+    margin-bottom: 12px; background: rgba(20,26,46,0.45);
+    display: grid; grid-template-columns: 1fr auto; gap: 6px 18px; align-items: center;
+  }
+  .show-name { font-weight: 600; font-size: 15.5px; }
+  .show-facts { font-size: 12.5px; color: var(--steel); }
+  .show-facts code { font-family: var(--mono); font-size: 11.5px; color: var(--amber); }
+  .arcbadge {
+    display: inline-block; font-family: var(--mono); font-size: 10.5px;
+    color: var(--amber); background: var(--amber-dim);
+    border-radius: 4px; padding: 2px 7px; margin-left: 8px;
+  }
+  .show-ctrls { display: flex; align-items: center; gap: 14px; justify-self: end; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button {
+    font-family: var(--body); font-size: 12.5px; font-weight: 500; padding: 7px 13px;
+    background: transparent; color: var(--steel); border: 0; cursor: pointer;
+  }
+  .seg button.on { background: var(--indigo); color: var(--white); }
+  .weight { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--steel); }
+  .weight .w-val {
+    font-family: var(--mono); font-size: 12.5px; color: var(--white);
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; min-width: 34px; text-align: center;
+  }
+  .show-progress { grid-column: 1 / -1; font-size: 12.5px; color: var(--steel-dim); display: flex; gap: 14px; align-items: center; }
+  .show-progress a { font-size: 12px; }
+
+  .editor-side { padding: 24px; background: rgba(20,26,46,0.35); }
+  .side-caption {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--steel-dim); margin: 0 0 12px;
+  }
+  .search {
+    width: 100%; font-family: var(--body); font-size: 13.5px; color: var(--white);
+    background: var(--tube); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 12px;
+  }
+  .search::placeholder { color: var(--steel-dim); }
+  .pick { display: flex; align-items: center; justify-content: space-between; padding: 9px 4px; border-bottom: 1px solid rgba(141,151,184,0.10); }
+  .pick .p-name { font-size: 13.5px; }
+  .pick .p-eps { font-family: var(--mono); font-size: 11px; color: var(--steel-dim); }
+  .pick .add {
+    font-size: 16px; line-height: 1; color: var(--amber); background: none;
+    border: 1px solid var(--line); border-radius: 6px; width: 26px; height: 26px; cursor: pointer;
+  }
+  .pick .add:hover { border-color: var(--amber); }
+
+  /* ============ screen 4 · library ============ */
+  .lib-scan {
+    display: flex; align-items: center; gap: 20px; padding: 18px 24px;
+    border-bottom: 1px solid var(--line); background: rgba(20,26,46,0.35);
+  }
+  .lib-scan-info { flex: 1; }
+  .scan-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--steel-dim); margin-bottom: 8px;
+  }
+  .progress { height: 6px; border-radius: 3px; background: rgba(141,151,184,0.22); overflow: hidden; }
+  .progress .fill { height: 100%; background: var(--amber); border-radius: 3px; }
+  .scan-note { font-size: 12.5px; color: var(--steel); margin-top: 8px; }
+  .scan-note b { color: var(--white); font-weight: 600; }
+  .lib-body { display: grid; grid-template-columns: 1fr 300px; min-height: 460px; }
+  .lib-main { padding: 20px 24px 24px; border-right: 1px solid var(--line); }
+  .show-row {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; align-items: center;
+    padding: 12px 4px; border-bottom: 1px solid rgba(141,151,184,0.10);
+  }
+  .show-row .s-name { font-weight: 600; font-size: 14.5px; }
+  .show-row .s-facts { font-size: 12px; color: var(--steel-dim); }
+  .pipetags { display: flex; gap: 6px; font-family: var(--mono); font-size: 10px; }
+  .pipetag { border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; color: var(--steel); white-space: nowrap; }
+  .pipetag.warn { color: var(--amber); border-color: rgba(255,180,84,0.4); }
+  .s-ok { color: var(--signal); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; }
+  .file-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 10px 4px; border-bottom: 1px solid rgba(141,151,184,0.10);
+  }
+  .file-path { font-family: var(--mono); font-size: 11.5px; color: var(--steel); overflow-wrap: anywhere; }
+  .btn-sm { font-size: 12px; padding: 6px 12px; border-radius: 6px; flex: none; }
+  .lib-side { padding: 22px; background: rgba(20,26,46,0.35); }
+  .arc-card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .arc-card .a-name { font-weight: 600; font-size: 13.5px; }
+  .arc-card .a-meta { font-family: var(--mono); font-size: 10.5px; color: var(--amber); margin: 3px 0 6px; }
+  .arc-card a { font-size: 12px; }
+  .side-tip { font-size: 12.5px; color: var(--steel); margin: 4px 0 12px; }
+
+  /* ============ screen 5 · settings ============ */
+  .set-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 24px; }
+  .set-card { border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px 8px; background: rgba(20,26,46,0.45); }
+  .set-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 11px 0; border-bottom: 1px solid rgba(141,151,184,0.10);
+  }
+  .set-row:last-child { border-bottom: 0; }
+  .set-label { font-size: 13.5px; }
+  .set-hint { font-size: 11.5px; color: var(--steel-dim); margin-top: 2px; }
+  .set-value { font-family: var(--mono); font-size: 12px; color: var(--steel); display: inline-flex; align-items: center; gap: 8px; flex: none; }
+  .set-value b { color: var(--white); font-weight: 500; }
+  .toggle { width: 38px; height: 22px; border-radius: 11px; background: rgba(141,151,184,0.30); position: relative; border: 0; cursor: pointer; flex: none; padding: 0; }
+  .toggle::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--white); transition: left 140ms ease;
+  }
+  .toggle.on { background: var(--amber); }
+  .toggle.on::after { left: 19px; background: #201302; }
+  .toggle:disabled { opacity: 0.45; cursor: not-allowed; }
+  @media (prefers-reduced-motion: reduce) { .toggle::after { transition: none; } }
+  .selectbox {
+    font-family: var(--body); font-size: 12.5px; color: var(--white);
+    background: var(--tube); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; flex: none;
+  }
+  .postmvp {
+    font-family: var(--mono); font-size: 9.5px; color: var(--steel-dim);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
+    margin-left: 8px; letter-spacing: 0.1em; vertical-align: 2px;
+  }
+  .folder-path { font-family: var(--mono); font-size: 12px; color: var(--white); overflow-wrap: anywhere; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); display: inline-block; flex: none; }
+  .remove {
+    font-size: 14px; line-height: 1; color: var(--steel-dim); background: none;
+    border: 1px solid var(--line); border-radius: 6px; width: 24px; height: 24px; cursor: pointer; flex: none;
+  }
+  .remove:hover { color: var(--white); border-color: var(--steel-dim); }
+  .shortcuts { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 0 10px; }
+  .shortcuts span { font-size: 11.5px; color: var(--steel-dim); }
+  .shortcuts kbd {
+    font-family: var(--mono); font-size: 10.5px; color: var(--steel);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 5px; margin-right: 4px;
+  }
+
+  footer.mock-foot { margin-top: 88px; font-size: 13px; color: var(--steel-dim); font-family: var(--mono); }
+
+  :where(button, a, input):focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  @media (max-width: 860px) {
+    .guide-body, .editor-body, .lib-body { grid-template-columns: 1fr; }
+    .set-body { grid-template-columns: 1fr; }
+    .guide-list, .editor-main, .lib-main { border-right: 0; border-bottom: 1px solid var(--line); }
+    .show-row { grid-template-columns: 1fr; }
+    .ch-shows { display: none; }
+    .show-card { grid-template-columns: 1fr; }
+    .show-ctrls { justify-self: start; flex-wrap: wrap; }
+    .kbd-hints { display: none; }
+    .stage { aspect-ratio: 16 / 10; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="eyebrow">UI mock · MVP design direction · July 2026</div>
+  <h1>RERUN <span class="tv">TV</span></h1>
+  <p class="lede">Your library, running like it's <strong>Saturday, 1994</strong>.
+  The chrome is a tube-black blue, panels borrow the indigo of the old cable guide
+  channel, and everything the "broadcast" says to you — channel numbers, episode
+  codes, timecodes — speaks in phosphor-amber mono, like a VCR's on-screen display.
+  The recurring signature is the <strong>channel banner</strong>: it appears when you
+  flip channels, when episodes hand off, and in the guide.</p>
+  <div class="tokens" aria-label="Design tokens">
+    <span class="chip"><span class="dot" style="background:#0b0e14; border:1px solid var(--line)"></span>tube black #0B0E14</span>
+    <span class="chip"><span class="dot" style="background:#28338f"></span>prevue indigo #28338F</span>
+    <span class="chip"><span class="dot" style="background:#ffb454"></span>phosphor amber #FFB454</span>
+    <span class="chip"><span class="dot" style="background:#f0efe6"></span>static white #F0EFE6</span>
+    <span class="chip"><span class="dot" style="background:#59d999"></span>signal green #59D999</span>
+    <span class="chip">Bricolage Grotesque · IBM Plex Mono · Instrument Sans</span>
+  </div>
+</header>
+
+<!-- ================= SCREEN 1 · GUIDE ================= -->
+<section class="screen" aria-labelledby="s1">
+  <div class="screen-head"><span class="tag">Screen 01</span><h2 id="s1">The Guide</h2></div>
+  <p class="screen-sub">Home. Channels read like a cable lineup — big dial numbers, the
+  channel's name, and what the scheduler has on deck. Click a row to preview, tune in
+  to start watching.</p>
+
+  <div class="tv-frame"><div class="app">
+    <div class="appbar">
+      <span class="wordmark">RERUN <span>TV</span></span>
+      <nav class="appnav">
+        <a class="on" href="#s1">Guide</a><a href="#s3">Channels</a><a href="#s4">Library</a><a href="#s5">Settings</a>
+      </nav>
+      <span class="scanpill"><span class="live"></span>LIBRARY OK · 1,482 EPISODES</span>
+    </div>
+    <div class="guide-body">
+      <div class="guide-list">
+        <div class="guide-caption">Channel lineup</div>
+
+        <div class="ch-row">
+          <div class="ch-num"><small>CH</small>02</div>
+          <div class="ch-meta">
+            <div class="ch-name">Saturday Morning</div>
+            <div class="ch-deck"><code>S02E05</code>Batman: The Animated Series — “Robin's Reckoning, Part I”</div>
+          </div>
+          <div class="ch-shows">DUCKTALES · BATMAN TAS<br>GARGOYLES · X-MEN</div>
+        </div>
+
+        <div class="ch-row sel" aria-current="true">
+          <div class="ch-num"><small>CH</small>03</div>
+          <div class="ch-meta">
+            <div class="ch-name">Trek After Dark</div>
+            <div class="ch-deck"><code>S04E11</code>Star Trek: TNG — “Data's Day”</div>
+          </div>
+          <div class="ch-shows">TNG · DS9 · VOYAGER</div>
+        </div>
+
+        <div class="ch-row">
+          <div class="ch-num"><small>CH</small>04</div>
+          <div class="ch-meta">
+            <div class="ch-name">Prime Time '94</div>
+            <div class="ch-deck"><code>S01E08</code>The X-Files — “Ice”</div>
+          </div>
+          <div class="ch-shows">X-FILES · ER · FRASIER</div>
+        </div>
+
+        <div class="ch-row">
+          <div class="ch-num"><small>CH</small>05</div>
+          <div class="ch-meta">
+            <div class="ch-name">Late Nite Toons</div>
+            <div class="ch-deck"><code>S03E02</code>Futurama — “A Tale of Two Santas”</div>
+          </div>
+          <div class="ch-shows">FUTURAMA · SIMPSONS<br>KING OF THE HILL</div>
+        </div>
+      </div>
+
+      <aside class="guide-side">
+        <div class="side-title">Now tuned · CH 03</div>
+        <div class="preview">
+          <div class="banner">
+            <span class="b-num">03</span>
+            <span>
+              <span class="b-show">Star Trek: The Next Generation</span><br>
+              <span class="b-ep">S04E11 · DATA'S DAY · 44 MIN</span>
+            </span>
+          </div>
+        </div>
+        <p class="side-note">Up after: DS9 — “Duet”, then whatever the dial decides.
+        TNG plays in order; DS9 &amp; Voyager shuffle.</p>
+        <div class="side-actions">
+          <button class="btn btn-tune">▶ Tune in</button>
+          <button class="btn btn-ghost">Edit channel</button>
+        </div>
+      </aside>
+    </div>
+  </div></div>
+
+  <div class="notes">
+    <div class="note"><b>On-deck line</b> The guide shows the scheduler's actual next pick per channel — it's precomputed, so tuning in starts instantly.</div>
+    <div class="note"><b>Channel numbers</b> User-assignable, displayed in the display face at dial size. Reordering happens by dragging rows.</div>
+    <div class="note"><b>Scan pill</b> Live library status; clicking it jumps to the Library screen and its unmatched-files queue.</div>
+  </div>
+</section>
+
+<!-- ================= SCREEN 2 · PLAYER ================= -->
+<section class="screen" aria-labelledby="s2">
+  <div class="screen-head"><span class="tag">Screen 02</span><h2 id="s2">The Player</h2></div>
+  <p class="screen-sub">Full-bleed video. The OSD — banner, transport, volume, skip,
+  fullscreen — rises on mouse move or key press and fades after three seconds.
+  Fullscreen wraps this whole stage, so episode handoffs never drop out of it.</p>
+
+  <div class="tv-frame"><div class="app">
+    <div class="stage">
+      <div class="banner">
+        <span class="b-num">03</span>
+        <span>
+          <span class="b-show">Star Trek: The Next Generation</span><br>
+          <span class="b-ep">S04E11 · DATA'S DAY</span>
+        </span>
+      </div>
+      <span class="onair"><span class="live"></span>ON AIR</span>
+
+      <div class="toast">Up next on CH 03 · <b>Deep Space Nine</b> <code>S01E19</code> “Duet”</div>
+
+      <div class="osd">
+        <div class="scrub" role="slider" aria-label="Seek" aria-valuemin="0" aria-valuemax="2640" aria-valuenow="846" tabindex="0">
+          <div class="fill"></div><div class="knob"></div>
+        </div>
+        <div class="osd-row">
+          <button class="osd-btn primary" aria-label="Pause">
+            <svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+          </button>
+          <button class="osd-btn" aria-label="Skip to next episode">
+            <svg viewBox="0 0 24 24"><path d="M6 5l8 7-8 7V5zm10 0h2v14h-2z"/></svg>
+          </button>
+          <div class="vol">
+            <button class="osd-btn" aria-label="Mute">
+              <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a3.5 3.5 0 0 0-2-3.15v6.3a3.5 3.5 0 0 0 2-3.15z"/></svg>
+            </button>
+            <div class="vol-track" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" tabindex="0"><div class="fill"></div></div>
+          </div>
+          <div class="kbd-hints" aria-hidden="true">
+            <span><kbd>Space</kbd>pause</span><span><kbd>→</kbd>skip</span><span><kbd>F</kbd>fullscreen</span><span><kbd>Esc</kbd>guide</span>
+          </div>
+          <span class="timecode"><b>14:06</b> / 44:00</span>
+          <button class="osd-btn" aria-label="Toggle fullscreen">
+            <svg viewBox="0 0 24 24"><path d="M5 5h5v2H7v3H5V5zm9 0h5v5h-2V7h-3V5zM5 14h2v3h3v2H5v-5zm12 0h2v5h-5v-2h3v-3z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="notes">
+    <div class="note"><b>The banner is the signature</b> It appears on tune-in, on every episode handoff, and on demand (channel-up/down later). Amber mono = "the broadcast talking".</div>
+    <div class="note"><b>Skip respects arcs</b> Inside a multiparter, skip advances to the next part; the arc always completes before the lottery runs again.</div>
+    <div class="note"><b>Up-next toast</b> Appears in the last 30 seconds while the next stream pre-warms, so transitions are gapless.</div>
+  </div>
+</section>
+
+<!-- ================= SCREEN 3 · CHANNEL EDITOR ================= -->
+<section class="screen" aria-labelledby="s3">
+  <div class="screen-head"><span class="tag">Screen 03</span><h2 id="s3">The Channel Editor</h2></div>
+  <p class="screen-sub">Where a channel gets its personality. Every scheduling knob
+  from the plan is a visible control: per-show play mode, lottery weight, detected
+  multipart arcs, and the show's progress cursor.</p>
+
+  <div class="tv-frame"><div class="app">
+    <div class="appbar">
+      <span class="wordmark">RERUN <span>TV</span></span>
+      <nav class="appnav">
+        <a href="#s1">Guide</a><a class="on" href="#s3">Channels</a><a href="#s4">Library</a><a href="#s5">Settings</a>
+      </nav>
+      <span class="scanpill">EDITING · CH 02</span>
+    </div>
+    <div class="editor-body">
+      <div class="editor-main">
+        <div class="editor-head">
+          <div class="ch-num"><small>CH</small>02</div>
+          <div>
+            <div class="editor-title">Saturday Morning</div>
+            <div class="editor-subtitle">4 shows · 213 playable units · 6 multipart arcs</div>
+          </div>
+        </div>
+
+        <div class="lineup-caption">Lineup — each pick draws a show by weight, then an episode by mode</div>
+
+        <div class="show-card">
+          <div>
+            <div class="show-name">Batman: The Animated Series</div>
+            <div class="show-facts">85 episodes · 82 units <span class="arcbadge">3 ARCS</span></div>
+          </div>
+          <div class="show-ctrls">
+            <span class="seg"><button class="on">Shuffle</button><button>In order</button></span>
+            <span class="weight">weight <span class="w-val">2</span></span>
+          </div>
+          <div class="show-progress">Shuffle bag: 31 of 82 units left this cycle · <a href="#">reshuffle</a></div>
+        </div>
+
+        <div class="show-card">
+          <div>
+            <div class="show-name">Gargoyles</div>
+            <div class="show-facts">78 episodes · 71 units <span class="arcbadge">“AWAKENING” ×5 + 2 MORE</span></div>
+          </div>
+          <div class="show-ctrls">
+            <span class="seg"><button>Shuffle</button><button class="on">In order</button></span>
+            <span class="weight">weight <span class="w-val">1</span></span>
+          </div>
+          <div class="show-progress">Cursor at <code style="font-family:var(--mono); color:var(--amber)">S01E04</code> — next airing continues from here · <a href="#">reset to pilot</a></div>
+        </div>
+
+        <div class="show-card">
+          <div>
+            <div class="show-name">DuckTales</div>
+            <div class="show-facts">100 episodes · 96 units <span class="arcbadge">1 ARC</span></div>
+          </div>
+          <div class="show-ctrls">
+            <span class="seg"><button class="on">Shuffle</button><button>In order</button></span>
+            <span class="weight">weight <span class="w-val">1</span></span>
+          </div>
+          <div class="show-progress">Shuffle bag: fresh cycle — nothing repeats until all 96 units air</div>
+        </div>
+      </div>
+
+      <aside class="editor-side">
+        <div class="side-caption">Add a show</div>
+        <input class="search" type="search" placeholder="Search library…">
+        <div class="pick"><span class="p-name">X-Men: The Animated Series</span><span class="p-eps">76 EP</span><button class="add" aria-label="Add X-Men">+</button></div>
+        <div class="pick"><span class="p-name">Animaniacs</span><span class="p-eps">99 EP</span><button class="add" aria-label="Add Animaniacs">+</button></div>
+        <div class="pick"><span class="p-name">Batman Beyond</span><span class="p-eps">52 EP</span><button class="add" aria-label="Add Batman Beyond">+</button></div>
+        <div class="pick"><span class="p-name">The Real Ghostbusters</span><span class="p-eps">140 EP</span><button class="add" aria-label="Add The Real Ghostbusters">+</button></div>
+      </aside>
+    </div>
+  </div></div>
+
+  <div class="notes">
+    <div class="note"><b>Units, not episodes</b> Counts show episodes and units separately, so it's visible that a 5-parter like “Awakening” holds exactly one lottery ticket.</div>
+    <div class="note"><b>Mode per show</b> The segmented control is the whole story: In order keeps a cursor, Shuffle deals from a bag. Progress text underneath shows the live state either way.</div>
+    <div class="note"><b>Weight</b> A show with weight 2 is drawn twice as often. Defaults to 1; nothing to configure unless you want to.</div>
+  </div>
+</section>
+
+<!-- ================= SCREEN 4 · LIBRARY ================= -->
+<section class="screen" aria-labelledby="s4">
+  <div class="screen-head"><span class="tag">Screen 04</span><h2 id="s4">The Library</h2></div>
+  <p class="screen-sub">Where files become television. The scanner reports what it
+  parsed and how each show will play; anything it couldn't parse waits in the
+  Unmatched queue instead of silently disappearing. Multipart arcs are reviewed and
+  corrected here — this screen is the source of truth the scheduler trusts.</p>
+
+  <div class="tv-frame"><div class="app">
+    <div class="appbar">
+      <span class="wordmark">RERUN <span>TV</span></span>
+      <nav class="appnav">
+        <a href="#s1">Guide</a><a href="#s3">Channels</a><a class="on" href="#s4">Library</a><a href="#s5">Settings</a>
+      </nav>
+      <span class="scanpill"><span class="live"></span>SCANNING · 912 / 1,482</span>
+    </div>
+
+    <div class="lib-scan">
+      <div class="lib-scan-info">
+        <div class="scan-label">Scanning ~/TV · incremental</div>
+        <div class="progress"><div class="fill" style="width: 61%"></div></div>
+        <div class="scan-note"><b>912 of 1,482</b> files probed · 37 new since last scan · unchanged files skipped</div>
+      </div>
+      <button class="btn btn-ghost">Pause scan</button>
+    </div>
+
+    <div class="lib-body">
+      <div class="lib-main">
+        <div class="lineup-caption">Shows — with how each file will play</div>
+
+        <div class="show-row">
+          <div>
+            <div class="s-name">Batman: The Animated Series</div>
+            <div class="s-facts">85 episodes · 4 seasons · 3 arcs</div>
+          </div>
+          <div class="pipetags"><span class="pipetag">DIRECT 12</span><span class="pipetag">REMUX 68</span><span class="pipetag warn">TRANSCODE 5</span></div>
+          <span class="s-ok">✓ READY</span>
+        </div>
+
+        <div class="show-row">
+          <div>
+            <div class="s-name">Gargoyles</div>
+            <div class="s-facts">78 episodes · 3 seasons · 3 arcs</div>
+          </div>
+          <div class="pipetags"><span class="pipetag">DIRECT 0</span><span class="pipetag">REMUX 78</span><span class="pipetag warn">TRANSCODE 0</span></div>
+          <span class="s-ok">✓ READY</span>
+        </div>
+
+        <div class="show-row">
+          <div>
+            <div class="s-name">Star Trek: The Next Generation</div>
+            <div class="s-facts">178 episodes · 7 seasons · 2 arcs</div>
+          </div>
+          <div class="pipetags"><span class="pipetag">DIRECT 178</span><span class="pipetag">REMUX 0</span><span class="pipetag warn">TRANSCODE 0</span></div>
+          <span class="s-ok">✓ READY</span>
+        </div>
+
+        <div class="show-row">
+          <div>
+            <div class="s-name">The X-Files</div>
+            <div class="s-facts">202 episodes · 9 seasons · 6 arcs</div>
+          </div>
+          <div class="pipetags"><span class="pipetag">DIRECT 24</span><span class="pipetag">REMUX 155</span><span class="pipetag warn">TRANSCODE 23</span></div>
+          <span class="s-ok">✓ READY</span>
+        </div>
+
+        <div class="lineup-caption">Unmatched — 3 files waiting for a home</div>
+
+        <div class="file-row">
+          <span class="file-path">~/TV/Batman TAS/batman_beware.the.gray.ghost_final.avi</span>
+          <button class="btn btn-ghost btn-sm">Assign…</button>
+        </div>
+        <div class="file-row">
+          <span class="file-path">~/TV/misc/trek-bloopers-vhs-rip.mkv</span>
+          <button class="btn btn-ghost btn-sm">Assign…</button>
+        </div>
+        <div class="file-row">
+          <span class="file-path">~/TV/Gargoyles/gargoyles_special (1).mp4</span>
+          <button class="btn btn-ghost btn-sm">Assign…</button>
+        </div>
+      </div>
+
+      <aside class="lib-side">
+        <div class="side-caption">Detected arcs · Gargoyles</div>
+        <div class="arc-card">
+          <div class="a-name">“Awakening”</div>
+          <div class="a-meta">5 PARTS · S01E01–E05 · AUTO-DETECTED</div>
+          <a href="#s4">Ungroup</a>
+        </div>
+        <div class="arc-card">
+          <div class="a-name">“City of Stone”</div>
+          <div class="a-meta">4 PARTS · S02E09–E12 · AUTO-DETECTED</div>
+          <a href="#s4">Ungroup</a>
+        </div>
+        <div class="arc-card">
+          <div class="a-name">“Hunter's Moon”</div>
+          <div class="a-meta">3 PARTS · S02E50–E52 · GROUPED BY YOU</div>
+          <a href="#s4">Ungroup</a>
+        </div>
+        <p class="side-tip">Select a consecutive run of episodes in any show to
+        group it into an arc the scheduler will never interrupt.</p>
+        <button class="btn btn-ghost">New arc from selection</button>
+      </aside>
+    </div>
+  </div></div>
+
+  <div class="notes">
+    <div class="note"><b>Playback path is visible per show</b> The DIRECT / REMUX / TRANSCODE tags come from the scan-time ffprobe, so you can see at a glance which files will cost CPU before you ever tune in.</div>
+    <div class="note"><b>Unmatched never blocks airing</b> A file the parser can't read waits here for manual assignment; the rest of the show keeps scheduling normally.</div>
+    <div class="note"><b>Arcs are correctable</b> The Part-N heuristic proposes groups; you can ungroup false positives or hand-group runs it missed. What's shown here is what the scheduler obeys.</div>
+  </div>
+</section>
+
+<!-- ================= SCREEN 5 · SETTINGS ================= -->
+<section class="screen" aria-labelledby="s5">
+  <div class="screen-head"><span class="tag">Screen 05</span><h2 id="s5">The Settings</h2></div>
+  <p class="screen-sub">Every knob in one place — no config files. Four quiet cards:
+  where the media lives, how it plays, how the interface behaves, and what the
+  system underneath is doing.</p>
+
+  <div class="tv-frame"><div class="app">
+    <div class="appbar">
+      <span class="wordmark">RERUN <span>TV</span></span>
+      <nav class="appnav">
+        <a href="#s1">Guide</a><a href="#s3">Channels</a><a href="#s4">Library</a><a class="on" href="#s5">Settings</a>
+      </nav>
+      <span class="scanpill">RERUN TV 0.1.0 · APPIMAGE</span>
+    </div>
+
+    <div class="set-body">
+      <div class="set-card">
+        <div class="side-caption">Library folders</div>
+        <div class="set-row">
+          <span class="folder-path">~/TV</span>
+          <span class="set-value"><span class="status-dot"></span>watching<button class="remove" aria-label="Remove ~/TV">✕</button></span>
+        </div>
+        <div class="set-row">
+          <span class="folder-path">~/Videos/Cartoons</span>
+          <span class="set-value"><span class="status-dot"></span>watching<button class="remove" aria-label="Remove ~/Videos/Cartoons">✕</button></span>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Watch folders for new episodes</div>
+            <div class="set-hint">New files are parsed and probed as they appear</div>
+          </div>
+          <button class="toggle on" role="switch" aria-checked="true" aria-label="Watch folders for new episodes"></button>
+        </div>
+        <div class="set-row">
+          <button class="btn btn-ghost btn-sm">+ Add folder</button>
+          <button class="btn btn-ghost btn-sm">Rescan everything</button>
+        </div>
+      </div>
+
+      <div class="set-card">
+        <div class="side-caption">Playback</div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Transcode quality</div>
+            <div class="set-hint">Only used when a file can't direct-play or remux</div>
+          </div>
+          <span class="selectbox">veryfast · CRF 21 ▾</span>
+        </div>
+        <div class="set-row">
+          <span class="set-label">Audio bitrate (transcode)</span>
+          <span class="selectbox">192 kbps ▾</span>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Hardware encode (VAAPI)<span class="postmvp">POST-MVP</span></div>
+            <div class="set-hint">GPU-assisted transcoding on Intel/AMD</div>
+          </div>
+          <button class="toggle" role="switch" aria-checked="false" aria-label="Hardware encode" disabled></button>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Pre-warm next episode</div>
+            <div class="set-hint">Start the next stream in the last 30 s for gapless handoffs</div>
+          </div>
+          <button class="toggle on" role="switch" aria-checked="true" aria-label="Pre-warm next episode"></button>
+        </div>
+      </div>
+
+      <div class="set-card">
+        <div class="side-caption">Interface</div>
+        <div class="set-row">
+          <span class="set-label">Start on</span>
+          <span class="selectbox">Guide ▾</span>
+        </div>
+        <div class="set-row">
+          <span class="set-label">Hide player controls after</span>
+          <span class="selectbox">3 seconds ▾</span>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Remember volume</div>
+            <div class="set-hint">Restore last volume and mute state on launch</div>
+          </div>
+          <button class="toggle on" role="switch" aria-checked="true" aria-label="Remember volume"></button>
+        </div>
+        <div class="shortcuts" aria-label="Keyboard shortcuts">
+          <span><kbd>Space</kbd>pause</span><span><kbd>↑</kbd><kbd>↓</kbd>volume</span><span><kbd>→</kbd>skip</span><span><kbd>F</kbd>fullscreen</span><span><kbd>Esc</kbd>guide</span>
+        </div>
+      </div>
+
+      <div class="set-card">
+        <div class="side-caption">System</div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">ffmpeg</div>
+            <div class="set-hint">System binary preferred; bundled fallback if missing</div>
+          </div>
+          <span class="set-value"><span class="status-dot"></span><b>7.1</b>· /usr/bin/ffmpeg</span>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Codec check</div>
+            <div class="set-hint">H.264/AAC decode asserted at startup</div>
+          </div>
+          <span class="set-value"><span class="status-dot"></span>OK</span>
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-label">Database</div>
+            <div class="set-hint">~/.local/share/rerun-tv/library.db · 4.2 MB</div>
+          </div>
+          <button class="btn btn-ghost btn-sm">Back up…</button>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <div class="notes">
+    <div class="note"><b>No config files</b> Everything the plan calls configurable is a control on this screen or the Channel Editor — the app never asks you to edit JSON.</div>
+    <div class="note"><b>Arch-friendly ffmpeg</b> Uses the system ffmpeg from pacman when present (smaller AppImage, faster updates); a bundled static build keeps the app working without it.</div>
+    <div class="note"><b>Honest about scope</b> Post-MVP controls like VAAPI ship visible but disabled, so the settings surface doesn't reshuffle as features land.</div>
+  </div>
+</section>
+
+<footer class="mock-foot">RERUN TV · design mock · companion plan: <a href="./plan.html">plan.html</a></footer>
+</main>
+</body>
+</html>
