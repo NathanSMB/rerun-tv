@@ -30,7 +30,7 @@
  * same transaction: the arc is complete, so the channel is already free.
  */
 
-import type { ChannelShow, ChannelShowState, PlayableUnit } from '@shared/types.js'
+import type { ChannelShow, ChannelShowState, PlayMode, PlayableUnit } from '@shared/types.js'
 import type { Db } from '../db/index.js'
 import {
   getChannel,
@@ -106,7 +106,7 @@ function dealBag(units: PlayableUnit[], rng: () => number, avoidFirst: string | 
  */
 function dealMixedBag(
   units: PlayableUnit[],
-  modeForSeason: (season: number) => 'sequential' | 'shuffle',
+  modeForSeason: (season: number) => PlayMode,
   rng: () => number,
   avoidFirst: string | null
 ): string[] {
@@ -190,6 +190,53 @@ function unitKeyForEpisodeId(units: PlayableUnit[], episodeId: number): string |
 }
 
 /**
+ * How one show's units are ordered on one channel, once per-season overrides
+ * have been folded into the show's own mode.
+ *
+ * Exported because the Channel Editor has to *describe* the same decision the
+ * scheduler *makes*: `getChannelDetail` renders either a cursor or a bag, and
+ * deriving that separately is how the two drifted. The editor asked the
+ * `episodes` table which seasons exist while the scheduler asked the unit list,
+ * and those disagree — a season whose every episode belongs to a cross-season
+ * arc has episodes but no units of its own, because the arc counts once, under
+ * the season of its first part. The editor would then promise a shuffle bag for
+ * a show the scheduler was walking with a cursor.
+ *
+ * Both flags are therefore computed over *units*, which is what cursors and
+ * bags actually hold.
+ */
+export interface ShowModePlan {
+  /** Explicit overrides only — absent seasons inherit, and the editor shows that. */
+  overrides: ReadonlyMap<number, PlayMode>
+  /** A season's effective mode: its override, or the show's mode. */
+  modeForSeason: (season: number) => PlayMode
+  /** False walks a sequential cursor; true deals from a shuffle bag. */
+  usesBag: boolean
+  /** True when no unit is ordered, so a dealt bag needs no ordering pass. */
+  allShuffle: boolean
+}
+
+export function planShowModes(
+  db: Db,
+  channelId: number,
+  showId: number,
+  showMode: PlayMode,
+  units: PlayableUnit[]
+): ShowModePlan {
+  const overrides = new Map(
+    listChannelShowSeasonModes(db, channelId, showId).map((item) => [item.season, item.mode])
+  )
+  const modeForSeason = (season: number): PlayMode => overrides.get(season) ?? showMode
+  const shuffleUnits = units.filter((unit) => modeForSeason(unit.season) === 'shuffle').length
+  return {
+    overrides,
+    modeForSeason,
+    usesBag: shuffleUnits > 0,
+    allShuffle: shuffleUnits === units.length
+  }
+}
+
+/**
  * The plan's `nextEpisode()`, expressed as a pure computation. Reads the
  * database, decides, and reports the mutations it would need — but performs
  * none of them.
@@ -229,19 +276,18 @@ function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | n
   const chosen = weightedPick(candidates, rng)
   const units = chosen.units
   const state = getShowState(db, channelId, chosen.showId)
-  const seasonModes = new Map(
-    listChannelShowSeasonModes(db, channelId, chosen.showId).map((item) => [
-      item.season,
-      item.mode
-    ])
+  const { modeForSeason, usesBag, allShuffle } = planShowModes(
+    db,
+    channelId,
+    chosen.showId,
+    chosen.mode,
+    units
   )
-  const modeForSeason = (season: number) => seasonModes.get(season) ?? chosen.mode
-  const hasShuffle = units.some((unit) => modeForSeason(unit.season) === 'shuffle')
 
   // 3 · Pick a unit inside that show, applying season overrides over its mode.
   let unit: PlayableUnit
   let nextState: ChannelShowState
-  if (!hasShuffle) {
+  if (!usesBag) {
     // The cursor is an index into a *derived* list, so it can be left dangling
     // by a rescan that removed episodes; treat anything out of range as a wrap.
     const cursor =
@@ -257,7 +303,6 @@ function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | n
     if (bag.length === 0) {
       const lastEpisodeId = lastAired(db, channelId, chosen.showId)
       const avoid = lastEpisodeId == null ? null : unitKeyForEpisodeId(units, lastEpisodeId)
-      const allShuffle = units.every((item) => modeForSeason(item.season) === 'shuffle')
       bag.push(
         ...(allShuffle
           ? dealBag(units, rng, avoid)

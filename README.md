@@ -4,8 +4,10 @@ Turn a local media library into lean-back TV channels — you build the lineup,
 the channel decides what's on. Linux-first (Arch), Electron + ffmpeg.
 
 Point it at `~/TV`, group some shows into a channel, and tune in. Shows play in
-order or on shuffle, multipart arcs air start-to-finish without interruption,
-and the next episode starts on its own. Nothing to configure in a text file.
+order or on shuffle — down to individual seasons, so you can run the first eight
+in order and shuffle the rest — multipart arcs air start-to-finish without
+interruption, and the next episode starts on its own. Nothing to configure in a
+text file.
 
 ## Quick start
 
@@ -31,9 +33,9 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
   (keyed on mtime + size) and anything that doesn't parse waits in an *Unmatched*
   queue instead of disappearing.
 - **Schedule** — each pick draws a show by weight, then a *playable unit* within
-  it by mode. A unit is either one episode or a whole multipart arc, which is
-  what makes arcs uninterruptible **and** exactly as likely to air as any single
-  episode.
+  it by mode (per show, or per season where you've overridden it). A unit is
+  either one episode or a whole multipart arc, which is what makes arcs
+  uninterruptible **and** exactly as likely to air as any single episode.
 - **Play** — a loopback HTTP server fronts ffmpeg and picks the cheapest path
   that works: serve the file directly, remux losslessly into fragmented MP4, or
   transcode. The decision is made at scan time, so tuning in is instant.

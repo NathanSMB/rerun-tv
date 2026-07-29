@@ -405,6 +405,33 @@ describe('season mode overrides', () => {
       effectiveMode: 'shuffle'
     })
   })
+
+  it('reports the progress model the scheduler actually keeps, not one per season', () => {
+    // Season 2 has an episode but no unit of its own: both episodes belong to a
+    // cross-season arc, which counts once under season 1. Overriding season 2
+    // therefore cannot change how the show is scheduled, and the editor must not
+    // claim a shuffle bag for a show the scheduler walks with a cursor.
+    const showId = insertShow(db, 'Cross-season arc')
+    const first = insertEpisode(db, showId, 1, 1)
+    const second = insertEpisode(db, showId, 2, 1)
+    insertArc(db, showId, 'Spans the break', [first, second])
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowMode(db, channel.id, showId, 'sequential')
+    setChannelShowSeasonMode(db, channel.id, showId, 2, 'shuffle')
+
+    const entry = getChannelDetail(db, channel.id)?.lineup[0]
+    // The override is still listed — it is a control the user set and can unset.
+    expect(entry?.seasons).toMatchObject([
+      { season: 1, effectiveMode: 'sequential' },
+      { season: 2, modeOverride: 'shuffle', effectiveMode: 'shuffle' }
+    ])
+    expect(entry?.progress.kind).toBe('cursor')
+
+    // And the scheduler agrees: the cursor advances, the bag stays empty.
+    pickNext(db, channel.id, seeded(5))
+    expect(getShowState(db, channel.id, showId).shuffleBag).toEqual([])
+  })
 })
 
 describe('peekNext', () => {

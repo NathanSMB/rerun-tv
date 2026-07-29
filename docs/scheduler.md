@@ -42,12 +42,13 @@ nextEpisode(channel):
   # 2 · Pick a show (weighted; weights are per-show sliders in the editor)
   show = weightedRandom(channel.shows, by=weight)
 
-  # 3 · Pick a unit within that show, by the show's mode
-  if show.mode == sequential:
+  # 3 · Pick a unit within that show, by its mode plus any per-season overrides
+  mode(season) = seasonOverride(channel, show, season) or show.mode
+  if no unit's season resolves to shuffle:
       unit = show.units[state.cursor]; state.cursor += 1   # wraps to 0 at the end
-  else:  # shuffle — a dealt bag, so nothing repeats until all units have aired
+  else:  # a dealt bag, so nothing repeats until all units have aired
       if state.shuffle_bag.isEmpty():
-          state.shuffle_bag = shuffled(show.units, avoidFirst=lastAired)
+          state.shuffle_bag = deal(show.units, mode, avoidFirst=lastAired)
       unit = state.shuffle_bag.pop()
 
   # 4 · Arcs enter as one unit and lock the channel until they finish
@@ -64,6 +65,52 @@ nextEpisode(channel):
 - **Skip** during an arc advances to the arc's next part (the arc still
   completes); skip otherwise triggers a fresh pick. Both are instant, because
   the decision needs no probing — the playback path is already on the row.
+
+## Per-season overrides
+
+A season can override its show's mode (`channel_show_season_modes`, see
+[data-model.md](data-model.md)); a season with no row inherits. The motivating
+case is the show you want to *start* properly and then let run: seasons 1–8 in
+order, everything after that shuffled, on one channel, without splitting the
+show in two.
+
+The two clean cases are unchanged — all-sequential walks the cursor,
+all-shuffle deals an ordinary bag. The interesting case is **mixed**, and it is
+where the design has a real constraint: a cursor and a bag cannot both be the
+show's progress, so a show with any shuffled unit is dealt from a bag.
+
+`dealMixedBag()` makes an ordered season survive that:
+
+1. Shuffle **every** unit's slot, ordered seasons included.
+2. For each sequential season, collect the slots its units landed in and write
+   that season's units back into them **in airing order**.
+
+An ordered season therefore keeps its slots — so it stays interleaved with the
+shuffled material at the same frequency — while its own episodes always play
+S01E01, S01E02, S01E03 relative to each other. A bag still holds every unit
+exactly once, so the no-repeat-until-the-cycle-ends promise is intact, and an
+ordered season restarts at its first episode each cycle.
+
+One promise is deliberately weaker here. "A fresh bag never leads with the unit
+that just aired" can only be kept by *swapping* the offender to a later slot,
+and swapping an ordered season's unit would break the order the override was
+asked for. So the swap is attempted only between shuffled units; a mixed show
+can open a cycle by repeating an ordered season's episode. That is a rare
+cycle-boundary artefact, and the alternative is silently disobeying the setting.
+
+### One resolver, two callers
+
+`planShowModes(db, channelId, showId, showMode, units)` resolves overrides and
+returns `usesBag` / `allShuffle`. Both the scheduler and `getChannelDetail()`
+call it, because the editor has to *describe* the model the scheduler *keeps* —
+if the editor says "shuffle bag: 12 of 40" for a show being walked by a cursor,
+the reset link and the progress line are both lying.
+
+The flags are computed over **units**, never over the `episodes` table. Those
+disagree: a cross-season arc is one unit under the season of its first part, so
+a season whose every episode belongs to such an arc has episodes but no units,
+and an override on it changes nothing. Deriving the answer twice is exactly how
+those two views drifted apart once already.
 
 ## The API
 
@@ -100,6 +147,13 @@ live unit are simply dropped when the bag is read.
 
 Every knob in the algorithm is a visible control on the Channel Editor
 ([ui.md](ui.md)): the `sequential | shuffle` segmented control, the weight
-stepper, and a live progress line — `Shuffle bag: 31 of 82 units left this
-cycle` or `Cursor at S01E04` — with a reset link. Counts are shown as episodes
-*and* units, so it's visible that a 5-parter holds exactly one ticket.
+stepper, the collapsible **Season overrides** list, and a live progress line —
+`Shuffle bag: 31 of 82 units left this cycle` or `Cursor at S01E04` — with a
+reset link. Counts are shown as episodes *and* units, so it's visible that a
+5-parter holds exactly one ticket.
+
+Changing a mode — the show's or a season's — **clears the shuffle bag** when
+overrides are in play, because a bag already dealt under the old rules has its
+ordered seasons baked into it. The cursor is left alone: it is an index into the
+unit list, still meaningful under either mode, so a show flipped to shuffle and
+back resumes where it was.

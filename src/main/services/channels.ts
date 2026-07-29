@@ -26,10 +26,9 @@ import {
   getChannel,
   getShowState,
   listChannels,
-  listChannelShows,
-  listChannelShowSeasonModes
+  listChannelShows
 } from '../db/repositories/channels.js'
-import { peekNext } from '../scheduler/scheduler.js'
+import { peekNext, planShowModes } from '../scheduler/scheduler.js'
 import { buildUnits } from '../scheduler/units.js'
 
 interface EpisodeViewRow {
@@ -126,12 +125,17 @@ export function getChannelDetail(db: Db, channelId: number): ChannelDetail | nul
     const units = buildUnits(db, entry.showId)
     const arcs = units.filter((u) => u.kind === 'arc')
     const state = getShowState(db, channelId, entry.showId)
-    const overrides = new Map(
-      listChannelShowSeasonModes(db, channelId, entry.showId).map((item) => [
-        item.season,
-        item.mode
-      ])
+    const { overrides, modeForSeason, usesBag } = planShowModes(
+      db,
+      channelId,
+      entry.showId,
+      entry.mode,
+      units
     )
+
+    // Every season with episodes is listed, even one that contributes no unit of
+    // its own (all of its episodes sit in an arc anchored in an earlier season),
+    // because the override is still a control the user needs to see and set.
     const seasons = (
       db
         .prepare(
@@ -145,11 +149,13 @@ export function getChannelDetail(db: Db, channelId: number): ChannelDetail | nul
     ).map((season) => ({
       ...season,
       modeOverride: overrides.get(season.season) ?? null,
-      effectiveMode: overrides.get(season.season) ?? entry.mode
+      effectiveMode: modeForSeason(season.season)
     }))
 
+    // `usesBag` rather than a scan of `seasons`: the progress line has to match
+    // the structure the scheduler actually keeps, which is decided over units.
     let progress: LineupProgress
-    if (seasons.every((season) => season.effectiveMode === 'sequential')) {
+    if (!usesBag) {
       const cursor =
         state.cursorUnitIndex >= 0 && state.cursorUnitIndex < units.length
           ? state.cursorUnitIndex

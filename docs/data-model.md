@@ -12,8 +12,11 @@ shows ─1:many─ episodes ─0:1─ part_groups          channels ─1:many─
                                                        │              (lineup:
                                                        │               mode, weight)
                                                        │                  │
-                                                       │           channel_show_state
-                                                       │            (cursor, bag)
+                                                       │                  ├─ channel_show_season_modes
+                                                       │                  │   (per-season mode override)
+                                                       │                  │
+                                                       │                  └─ channel_show_state
+                                                       │                      (cursor, bag)
                                                        └─1:many─ play_log
 
 settings (k/v)      scan_roots      unmatched_files
@@ -71,6 +74,28 @@ renumbering channels.
 
 The lineup you built. `mode` is `sequential | shuffle`; `weight` is the lottery
 weight (a show with weight 2 is drawn twice as often).
+
+### `channel_show_season_modes` — per-season overrides
+`channel_id · show_id · season · mode`
+
+Also configuration. **Absence is the default**: a season with no row here
+inherits `channel_shows.mode`, so an untouched show behaves exactly as it did
+before this table existed and "inherit" is never a value that has to be stored.
+Rows cascade away with the lineup entry, so dropping a show from a channel takes
+its overrides with it.
+
+This is what lets one channel run *The Simpsons* seasons 1–8 in order while the
+rest of the show shuffles. The override is per **channel**, not per show — the
+same show can be ordered on one channel and shuffled on another, which is the
+whole point of keeping it out of `shows`.
+
+Note the granularity mismatch this table has with the scheduler: overrides are
+keyed by season, but the scheduler picks *units*, and a cross-season arc is one
+unit belonging to the season of its first part. A season whose every episode
+sits in such an arc contributes no unit of its own, so its override has nothing
+to apply to. `planShowModes()` in `scheduler.ts` is the single place that
+resolves this, precisely so the editor and the scheduler cannot disagree about
+it — see [scheduler.md](scheduler.md).
 
 ### `channel_show_state` — progress
 `channel_id · show_id · cursor_unit_index · shuffle_bag`

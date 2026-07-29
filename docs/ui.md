@@ -93,6 +93,14 @@ live progress cursor or shuffle bag with a reset link. Counts are shown as
 episodes *and* units, so it's visible that a 5-parter like *Awakening* holds
 exactly one lottery ticket.
 
+**Season overrides** sit behind a `<details>` per show, collapsed by default
+with an "N active" badge, because most shows never need them and an always-open
+list of 30 seasons would bury the controls that matter. Each season offers three
+choices — *Use show*, *Shuffle*, *In order* — where the first is the absence of
+an override rather than a third mode, and names the inherited setting inline
+(*Use show (In order)*) so the effect is readable without looking up. That is
+also why a show with no episodes shows no override list at all.
+
 ### Library — where files become television
 
 The scan strip reports what's been probed and what was skipped. Each show shows
