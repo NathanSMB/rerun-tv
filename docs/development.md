@@ -143,20 +143,75 @@ accelerated `playbackRate`, and fails on any stall over three seconds, on
 sustained over-budget encoder counts, or on an episode airing twice.
 
 ```
-npm run build && npm run rebuild:electron   # it runs the real app
-npm run soak
+npm run build && npm run rebuild:electron   # it drives the real app in out/
+npm run soak                                # 6 episodes at 8x on channel 1
 node scripts/soak.mjs --episodes 4 --rate 12 --channel 2
+node scripts/soak.mjs --help
 ```
 
-Two things about it are worth knowing:
+The `rebuild:electron` is not optional: `npm test` leaves `better-sqlite3` on the
+Node ABI, and the app will not boot on that (see the native-module gotcha above).
 
-- `XDG_DATA_HOME=/tmp/somewhere` runs it against a throwaway copy of the library,
-  so a soak never touches your real database.
-- `--eval '<expression>'` attaches to the renderer, evaluates one expression, and
-  prints it. That is how the three Chromium constraints documented in
-  [playback.md](playback.md) were found — bisecting an init segment inside the
-  real app beats reasoning about the spec.
+### Reading the output
 
-It also strips `ELECTRON_RUN_AS_NODE` from the child environment. If that variable
-is set, the Electron binary boots as a plain Node interpreter — no window, no
-renderer, no debugger port, and nothing that says so.
+```
+[soak] episode 1/4 — id 317
+[soak]   buffered ahead 4–66s · peak encoders 1
+[soak] PASS — no stalls, no phantom encoders, no repeats
+```
+
+**`peak encoders` is the number that matters.** One encoder for a whole episode is
+the fix working. Two is legal during a handoff — the episode on air plus the one
+prewarming behind it. A *sustained* three or more is the original bug back: a
+stream was dropped and silently re-requested, which is invisible from inside the
+page and shows up only as a second ffmpeg. For reference, the investigation
+measured 14 encoders across 6 episodes.
+
+`buffered ahead` should sit roughly in the 15–60s band the pump aims for, plus one
+fragment of overshoot at the top (a single fragment can be several seconds, and the
+read decision is made before the append) and a low reading on the first poll after
+a swap.
+
+### Running it against a throwaway library
+
+The soak plays real episodes and advances real schedule state, so point it at a
+copy:
+
+```
+mkdir -p /tmp/soak/rerun-tv
+cp ~/.local/share/rerun-tv/library.db /tmp/soak/rerun-tv/
+XDG_DATA_HOME=/tmp/soak npm run soak
+```
+
+`XDG_DATA_HOME` is what `dataDir()` in `main/paths.ts` reads. It does **not** copy
+anything for you — an empty directory means an empty library, and the run fails
+with `no channel numbered 1`.
+
+### The debugging mode
+
+`--eval '<expression>'` attaches to the renderer, evaluates one expression
+(awaiting it if it returns a promise), prints the result as JSON, and exits. It is
+the more valuable half of this script: bisecting an MSE initialisation segment
+inside the real app is how all three Chromium constraints in
+[playback.md](playback.md) were found, and none of them were guessable from the
+spec.
+
+```
+node scripts/soak.mjs --eval "globalThis.__rerunStore.getState().nowPlaying"
+```
+
+`globalThis.__rerunStore` is exposed in `renderer/src/main.tsx` precisely so the
+harness can drive the app through the store instead of poking at the DOM. To
+attach to an app you already have running, stop the harness launching a second
+copy:
+
+```
+RERUN_SOAK_BIN=/bin/true node scripts/soak.mjs --port 9223 --eval '…'
+```
+
+### One trap it handles for you
+
+The harness strips `ELECTRON_RUN_AS_NODE` from the child environment. If that
+variable is set — some shells and tool wrappers export it — the Electron binary
+boots as a plain Node interpreter: no window, no renderer, no debugger port, and
+nothing that says so.

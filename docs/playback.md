@@ -197,8 +197,13 @@ an episode airing twice. It is not part of `npm test` — it needs a real librar
 display, and minutes rather than milliseconds.
 
 ```
-npm run build
+npm run build && npm run rebuild:electron
 npm run soak                                  # 6 episodes at 8x, channel 1
 node scripts/soak.mjs --episodes 12 --rate 4 --channel 3
-XDG_DATA_HOME=/tmp/soak node scripts/soak.mjs # against a throwaway library
 ```
+
+`peak encoders 1` in its per-episode line is the fix working; a sustained three or
+more is the bug back. Its `--eval` mode attaches to the real renderer and is how
+the three constraints above were found. Full usage, including how to sandbox the
+library it plays against, is in
+[development.md](development.md#the-soak-harness).

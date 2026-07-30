@@ -17,22 +17,60 @@
  *     there should have been 6.
  *
  * It is deliberately not part of `npm test`: it needs a real library, a display,
- * and minutes rather than milliseconds.
+ * and minutes rather than milliseconds. Run `npm run build` first — it drives the
+ * built app in `out/`, not the dev server — and `npm run rebuild:electron`, since
+ * `npm test` leaves `better-sqlite3` on the Node ABI and the app will not boot on
+ * that.
  *
  *   node scripts/soak.mjs                     # 6 episodes at 8×, channel 1
  *   node scripts/soak.mjs --episodes 12 --rate 4 --channel 3
  *   node scripts/soak.mjs --max-stall 3 --keep-open
+ *   node scripts/soak.mjs --eval 'document.title'   # see below
  *
- * Exits 0 on a clean run, 1 on any violation, 2 if it could not get started.
+ * A run prints one line per episode:
  *
- * Environment: `RERUN_SOAK_BIN` overrides the launch command (defaults to
- * `npx electron-vite preview`, i.e. the built app). Set `HEADLESS=1` to run under
- * `xvfb-run` if you have it — Chromium's media stack does behave differently
- * without a real compositor, so a headed run is the trustworthy one.
+ *   [soak] episode 1/4 — id 317
+ *   [soak]   buffered ahead 4–66s · peak encoders 1
+ *
+ * **`peak encoders 1` is the number to read.** One encoder for a whole episode is
+ * the fix working. Two is legal during a handoff (current plus prewarming). A
+ * sustained three or more is the original bug back: a stream was dropped and
+ * silently re-requested. `buffered ahead` should sit in the 15–60s band, give or
+ * take one fragment of overshoot at the top and a low reading right after a swap.
+ *
+ * `--eval '<expression>'` is the debugging mode, and the reason the harness is
+ * worth more than its test-runner role: it attaches to the real renderer, runs one
+ * expression (awaiting a promise if you return one), and prints the result as
+ * JSON. Bisecting an MSE initialisation segment inside the real app is how all
+ * three constraints in docs/playback.md were found; none of them were guessable
+ * from the spec. It uses `globalThis.__rerunStore` (exposed in
+ * `renderer/src/main.tsx`) to drive the app rather than poking at the DOM.
+ *
+ * With the app *already running* under `--remote-debugging-port=N`, point the
+ * harness at it and stop it launching a second copy:
+ *
+ *   RERUN_SOAK_BIN=/bin/true node scripts/soak.mjs --port N --eval '…'
+ *
+ * Exits 0 on a clean run, 1 on any violation, 2 if it could not get started,
+ * 130 if interrupted.
+ *
+ * Environment:
+ *   RERUN_SOAK_BIN   launch command; default `npx electron .`
+ *   RERUN_SOAK_ARGS  space-separated args for it (only used with RERUN_SOAK_BIN)
+ *   XDG_DATA_HOME    where the app keeps its database — see `dataDir()` in
+ *                    `main/paths.ts`. Point it at a directory holding a
+ *                    `rerun-tv/library.db` you don't mind touching and the soak
+ *                    cannot affect your real library. Note it does *not* copy
+ *                    anything for you: an empty directory means an empty library
+ *                    and the run fails with "no channel numbered N".
+ *   HEADLESS=1       run under `xvfb-run`. Chromium's media stack behaves
+ *                    differently without a real compositor, so a headed run is
+ *                    the trustworthy one.
  */
 
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
+import { writeSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -91,9 +129,23 @@ function parseArgs(argv) {
       case '--help':
       case '-h':
         console.log(
-          'usage: node scripts/soak.mjs [--episodes N] [--rate N] [--channel N]\n' +
-            '                            [--max-stall S] [--max-encoders N] [--port N]\n' +
-            '                            [--episode-timeout S] [--keep-open]'
+          [
+            'usage: node scripts/soak.mjs [options]',
+            '',
+            '  --episodes N          episodes to play (default 6)',
+            '  --rate N              playbackRate; 8 turns a 3-hour soak into ~20 min (default 8)',
+            '  --channel N           dial number to tune (default 1)',
+            '  --max-stall S         seconds of frozen playback that fails the run (default 3)',
+            '  --max-encoders N      encoders one channel may own (default 2: on air + prewarming)',
+            '  --episode-timeout S   give up on one episode after this long (default 900)',
+            '  --port N              debugger port (default 9222)',
+            '  --keep-open           leave the app running afterwards',
+            '  --eval <expression>   attach, evaluate one expression, print it as JSON,',
+            '                        and exit — the debugging mode; see the file header',
+            '',
+            'Needs `npm run build` and `npm run rebuild:electron` first.',
+            'See docs/development.md for reading the output and for sandboxing the library.'
+          ].join('\n')
         )
         process.exit(0)
         break
@@ -104,9 +156,25 @@ function parseArgs(argv) {
   return options
 }
 
+/**
+ * A giving-up condition: could not launch, could not attach, no such channel.
+ *
+ * Thrown rather than `process.exit`ed, for two reasons that both bit during
+ * development. `process.exit` discards buffered stdout, so piping the harness
+ * through `grep` lost the very message explaining the failure; and it skips the
+ * `finally` that kills the app, stranding an Electron and its encoders to
+ * confuse the *next* run's numbers.
+ */
+class SoakError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.name = 'SoakError'
+    this.code = code
+  }
+}
+
 function fail(code, message) {
-  console.error(`soak: ${message}`)
-  process.exit(code)
+  throw new SoakError(code, message)
 }
 
 const log = (message) => console.log(`[soak] ${message}`)
@@ -591,7 +659,9 @@ async function main() {
    * which then poison the next run's encoder count.
    */
   const bail = (signal) => {
-    console.error(`\nsoak: interrupted by ${signal}`)
+    // `writeSync`, not console.error: this path ends in `process.exit`, which
+    // throws away anything still sitting in a piped stdout buffer.
+    writeSync(2, `\nsoak: interrupted by ${signal}\n`)
     cdp?.close()
     app.kill('SIGKILL')
     process.exit(130)
@@ -638,7 +708,7 @@ async function main() {
     }
   } catch (err) {
     console.error(`soak: ${err instanceof Error ? err.message : String(err)}`)
-    exitCode = 2
+    exitCode = err instanceof SoakError ? err.code : 2
   } finally {
     cdp?.close()
     if (!options.keepOpen) {
@@ -649,7 +719,12 @@ async function main() {
     }
   }
 
-  process.exit(exitCode)
+  // `process.exitCode` rather than `process.exit()`: exiting outright truncates a
+  // piped stdout, which silently swallowed the failure message whenever this was
+  // run through `grep`. The timer is only a backstop against some stray handle
+  // hanging a CI run, and is unref'd so it never delays a clean exit.
+  process.exitCode = exitCode
+  setTimeout(() => process.exit(exitCode), 5000).unref()
 }
 
 await main()
