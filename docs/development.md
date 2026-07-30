@@ -209,6 +209,23 @@ copy:
 RERUN_SOAK_BIN=/bin/true node scripts/soak.mjs --port 9223 --eval '…'
 ```
 
+Because the expression is awaited, one `--eval` can be a whole scenario: arm
+something, drive `playbackRate` up, poll the store until a screen changes, and
+return a trace. That is how the sleep timer was verified end to end — a timer
+armed for five seconds against episodes played at 16×, checking that expiry
+mid-episode changes nothing, that a mid-arc expiry still hands off to the next
+part, and that the blackout only arrives at the unit boundary. Both Chromium
+behaviours in [playback.md](playback.md#two-things-chromium-does-around-ended)
+came out of that run, and neither was reachable from `tests/`.
+
+Two rules for a long run, both learned the hard way:
+
+- **Don't touch native modules while it's running.** `npm test` rebuilds
+  `better-sqlite3` for the Node ABI, and replacing the `.node` file under a live
+  Electron segfaults it mid-run. Wait for the run to finish.
+- **Sandbox the library** (below) if the scenario advances the schedule, which
+  anything playing to an `ended` does.
+
 ### One trap it handles for you
 
 The harness strips `ELECTRON_RUN_AS_NODE` from the child environment. If that

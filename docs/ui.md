@@ -1,8 +1,8 @@
 # The UI
 
 `src/renderer/` — the implementation of [mockup.html](mockup.html) and
-[plan.html](plan.html) §7–8. Five screens, all configuration in-app, no config
-files.
+[plan.html](plan.html) §7–8. Five screens plus a blackout, all configuration
+in-app, no config files.
 
 ## The design language
 
@@ -41,7 +41,7 @@ thing the viewer most needs signalled.
 ## State
 
 One Zustand store, `src/renderer/src/store.ts`. Its `screen` field is the router
-— there are five screens and no URLs worth having. Components read slices with
+— there are six screens and no URLs worth having. Components read slices with
 `useStore(s => s.x)` and call store actions; they never call `window.rerun`
 directly, with the deliberate exception of the screens doing one-off queries
 (arc lists, episode lists) that aren't worth caching globally.
@@ -83,7 +83,58 @@ on. In the last 30 seconds an *up next* toast appears while the next stream
 pre-warms.
 
 Keyboard map (plan §7): `Space` play/pause · `↑`/`↓` volume · `→` skip · `F`
-fullscreen · `Esc` back to the guide · `M` mute.
+fullscreen · `Esc` back to the guide · `M` mute · `S` sleep timer.
+
+### The sleep timer
+
+A moon button in the OSD row, or `S`. The first press arms
+`settings.sleepTimerDefaultMin`; each press after that moves to the next preset
+up — 15, 30, 45, 60, 90, 120 minutes — and past the last one it switches off. An
+amber chip beside it counts down.
+
+**It stops at the end of a playable unit, never mid-story.** Reaching the
+deadline changes nothing on screen: the episode plays to its natural end, and if
+that episode is part 2 of a three-parter, so do parts 2 and 3. Only then does the
+channel shut down and the screen go black. Past the deadline the chip stops
+counting and says where it will stop instead — *after this episode*, or *after
+part 3* — because that is the question a viewer actually has at that point. See
+[scheduler.md](scheduler.md#the-sleep-timer-stops-here-too) for why the renderer
+can answer it without asking the main process.
+
+Three consequences worth knowing:
+
+- **The prewarm is suppressed** once the timer is due to stop after the current
+  episode. Prewarming commits a real schedule step, and committing one for an
+  episode nobody will watch means releasing it again a minute later. Cancel
+  during that window and the prewarm fires late but still in time, so the handoff
+  stays gapless.
+- **Expiring while paused stops immediately**, since nothing is playing towards a
+  boundary and a viewer who paused and didn't come back is the case the timer is
+  for. This is the one path that stops mid-episode.
+- **Leaving the player disarms it.** A timer that survived into the guide would
+  fire against whatever you tuned into next.
+
+The deadline is wall-clock (`sleepUntil`, epoch ms), compared at the moments that
+matter rather than counted down, so Chromium's background-timer throttling can't
+make it drift. The one-second interval exists only to repaint the chip, and only
+runs while something is armed. Nothing is persisted: an armed countdown
+surviving a restart would be a surprise, not a convenience.
+
+### Blackout — where the sleep timer leaves you
+
+`screens/Blackout.tsx`. Full window, no app bar, `#000` rather than `--tube`,
+because the point is for an OLED to draw nothing and a dark room to stay dark.
+
+By the time it mounts the channel is fully released — no video, no encoder, no
+wake lock (the app has no `powerSaveBlocker`) — so the OS display-sleep policy
+takes over. That inertness *is* the feature; a merely dark screen would hold the
+display awake all night.
+
+The one affordance, *Back to channels*, is hidden until the pointer moves, on the
+same reveal-then-idle pattern the OSD uses and tuned by the same
+`osdHideAfterS`. It is `tabIndex={-1}` and `aria-hidden` while hidden, so focus
+can't land on an invisible control, and the cursor hides with it. `Esc` and
+`Enter` do the same thing, so the exit is never mouse-only.
 
 ### Channel editor — where a channel gets its personality
 

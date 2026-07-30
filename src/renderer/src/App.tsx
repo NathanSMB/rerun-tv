@@ -18,6 +18,7 @@
 import { Component, useEffect, useState } from 'react'
 import type { CSSProperties, ErrorInfo, JSX, ReactNode } from 'react'
 import AppBar from './components/AppBar.js'
+import Blackout from './screens/Blackout.js'
 import Guide from './screens/Guide.js'
 import ChannelEditor from './screens/ChannelEditor.js'
 import Library from './screens/Library.js'
@@ -112,7 +113,7 @@ class ScreenErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 // Shell
 // ---------------------------------------------------------------------------
 
-function screenFor(screen: Exclude<Screen, 'player'>): JSX.Element {
+function screenFor(screen: Exclude<Screen, 'player' | 'blackout'>): JSX.Element {
   switch (screen) {
     case 'channels':
       return <ChannelEditor />
@@ -177,6 +178,16 @@ export default function App(): JSX.Element {
     return (
       <ScreenErrorBoundary key="player">
         <Player />
+      </ScreenErrorBoundary>
+    )
+  }
+
+  // The blackout takes the window for the opposite reason: an app bar is a light
+  // source, and this screen exists to emit nothing.
+  if (screen === 'blackout') {
+    return (
+      <ScreenErrorBoundary key="blackout">
+        <Blackout />
       </ScreenErrorBoundary>
     )
   }

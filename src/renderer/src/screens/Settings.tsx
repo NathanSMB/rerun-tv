@@ -33,6 +33,9 @@ const START_SCREENS: { value: AppSettings['startScreen']; label: string }[] = [
 
 const OSD_DELAYS = [2, 3, 5, 10]
 
+/** Must stay in step with `SLEEP_PRESETS` in Player.tsx, which cycles through it. */
+const SLEEP_DURATIONS = [15, 30, 45, 60, 90, 120]
+
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -422,6 +425,36 @@ export default function Settings(): ReactElement {
 
         <div className="set-row">
           <div>
+            <label className="set-label" htmlFor="set-sleep">
+              Sleep timer starts at
+            </label>
+            <div className="set-hint">
+              First press of <kbd>S</kbd> in the player; it stops at the end of the episode
+              or arc
+            </div>
+          </div>
+          <select
+            id="set-sleep"
+            className="selectbox"
+            value={String(settings.sleepTimerDefaultMin)}
+            disabled={locked}
+            onChange={(event) => update('sleepTimerDefaultMin', Number(event.target.value))}
+          >
+            {!SLEEP_DURATIONS.includes(settings.sleepTimerDefaultMin) && (
+              <option value={String(settings.sleepTimerDefaultMin)}>
+                {settings.sleepTimerDefaultMin} minutes
+              </option>
+            )}
+            {SLEEP_DURATIONS.map((minutes) => (
+              <option key={minutes} value={String(minutes)}>
+                {minutes} minutes
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="set-row">
+          <div>
             <div className="set-label">Remember volume</div>
             <div className="set-hint">Restore last volume and mute state on launch</div>
           </div>
@@ -443,6 +476,9 @@ export default function Settings(): ReactElement {
           </span>
           <span>
             <kbd>→</kbd>skip
+          </span>
+          <span>
+            <kbd>S</kbd>sleep timer
           </span>
           <span>
             <kbd>F</kbd>fullscreen

@@ -31,6 +31,26 @@ start at Part 2.
 Drawing units gives the whole arc exactly one ticket. `tests/scheduler.test.ts`
 asserts this property directly against a seeded RNG.
 
+### The sleep timer stops here too
+
+Units are also what makes "sleep at the end of an episode or arc, never in the
+middle of one" a one-line question, answerable **in the renderer, with no extra
+IPC**:
+
+```ts
+const endsUnit = arc === null || arc.partIndex >= arc.partCount
+```
+
+`NowPlaying.arc` already carries `partIndex`/`partCount` for the banner, and is
+null for a standalone episode — including a single-episode part group, since the
+lock below only engages when `partCount > 1`. So the unit boundary is on screen
+already; the sleep timer just reads it (`endsPlayableUnit` in the store).
+
+Nothing in `src/main/` changed to support the feature. Mid-arc the timer takes no
+action at all: the arc lock hands out the next part exactly as it would have, and
+the question gets asked again when *that* part ends. See
+[ui.md](ui.md#the-sleep-timer).
+
 ## The algorithm
 
 ```

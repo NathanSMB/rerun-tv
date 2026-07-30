@@ -43,6 +43,10 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
   `MediaSource` it drives itself, which is what keeps a long session from
   stalling, and it double-buffers the next episode so handoffs cut rather than
   pause.
+- **Sleep** — press `S` in the player and the countdown starts, but it never cuts
+  you off mid-story: when it expires the episode plays to its end — or the whole
+  arc does, if you're inside one — and only then does the channel shut down to a
+  black screen, with the way back hidden until you move the mouse.
 - **Back up** — channels, lineups and progress are one SQLite file, and Settings
   will both write a copy of it and put one back. Restoring validates the file
   first, keeps an automatic copy of the database it replaces, and swaps it in at
@@ -58,7 +62,7 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
 | [docs/playback.md](docs/playback.md) | direct / remux / transcode, seeking, the ffmpeg supervisor |
 | [docs/library.md](docs/library.md) | Scanning, filename parsing, arc detection |
 | [docs/backup-restore.md](docs/backup-restore.md) | Backing up the database, and importing one back |
-| [docs/ui.md](docs/ui.md) | The five screens and the design language |
+| [docs/ui.md](docs/ui.md) | The screens, the sleep timer, and the design language |
 | [docs/development.md](docs/development.md) | Setup, scripts, layout, conventions |
 
 ## Planning documents

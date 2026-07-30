@@ -31,7 +31,25 @@ import type {
 } from '@shared/types.js'
 import { DEFAULT_SETTINGS } from '@shared/types.js'
 
-export type Screen = 'guide' | 'player' | 'channels' | 'library' | 'settings'
+export type Screen = 'guide' | 'player' | 'channels' | 'library' | 'settings' | 'blackout'
+
+/**
+ * Whether this episode is the last thing in its **playable unit**.
+ *
+ * The scheduler hands out units, not episodes (`scheduler/units.ts`): a
+ * standalone episode is a unit of one, a multipart arc is a unit of N. That
+ * distinction reaches the renderer intact on `NowPlaying.arc`, which is null for
+ * a standalone episode and carries `partIndex`/`partCount` inside an arc — so
+ * "may we stop here?" needs no extra IPC and no scheduler state.
+ *
+ * This is what makes the sleep timer land at the end of an episode or the end of
+ * an arc, never in the middle of a two-parter.
+ */
+export function endsPlayableUnit(playing: NowPlaying | null): boolean {
+  if (!playing) return false
+  const { arc } = playing
+  return arc === null || arc.partIndex >= arc.partCount
+}
 
 /** The preload bridge. Same object as `window.rerun`; see the module header. */
 function bridge(): RerunApi {
@@ -107,6 +125,23 @@ interface AppState {
   volume: number
   muted: boolean
 
+  // ---- sleep timer ----
+  /**
+   * Wall-clock epoch-ms deadline, or null when the timer is off.
+   *
+   * Stored as a deadline rather than a remaining count on purpose: expiry is a
+   * `Date.now()` comparison made at the two moments that matter (an episode
+   * ending, and the pause branch), so Chromium's background-timer throttling
+   * cannot make the timer drift. The 1-second tick in the Player exists only to
+   * paint the countdown chip.
+   *
+   * Reaching the deadline does not stop playback — the current *playable unit*
+   * finishes first. See `endsPlayableUnit`.
+   */
+  sleepUntil: number | null
+  /** The armed duration, kept so the OSD button can cycle on from it. */
+  sleepMinutes: number | null
+
   // ---- actions ----
   init(): Promise<void>
   navigate(screen: Screen): void
@@ -126,9 +161,54 @@ interface AppState {
   /** Leave the player (Esc) and log the current episode as incomplete. */
   leavePlayer(): Promise<void>
 
+  /** Arm the sleep timer for `minutes` from now, or disarm it with null. */
+  armSleep(minutes: number | null): void
+  /**
+   * Stop now rather than at the next unit boundary — the paused case, where
+   * nothing is "finishing" and waiting would mean waiting forever.
+   */
+  sleepNow(): Promise<void>
+
   setVolume(volume: number): void
   toggleMute(): void
   setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void>
+}
+
+/** Has the armed deadline passed? Null (disarmed) is never due. */
+function sleepDue(sleepUntil: number | null): boolean {
+  return sleepUntil !== null && Date.now() >= sleepUntil
+}
+
+/**
+ * Shut the channel down and go dark.
+ *
+ * The caller has already reported the outcome of the episode on air, and both
+ * callers run inside `serialize` — this must not take the queue itself or it
+ * would deadlock against the transition that invoked it.
+ */
+async function goDark(
+  get: () => AppState,
+  set: (partial: Partial<AppState>) => void
+): Promise<void> {
+  const api = bridge()
+  const current = get().nowPlaying
+  // The whole channel, so a prewarmed standby cannot outlive the screen — the
+  // same reasoning, and the same accepted cost, as `leavePlayer`: a pick that was
+  // committed at T−30s keeps an incomplete play-log entry.
+  if (current) await api.player.release(current.channelId)
+  const pending = get().pendingNext
+  if (pending && (!current || pending.channelId !== current.channelId)) {
+    await api.player.release(pending.channelId, pending.episode.id)
+  }
+  set({
+    nowPlaying: null,
+    upNext: null,
+    pendingNext: null,
+    sleepUntil: null,
+    sleepMinutes: null,
+    screen: 'blackout'
+  })
+  void get().refreshChannels()
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -150,6 +230,9 @@ export const useStore = create<AppState>((set, get) => ({
   pendingNext: null,
   volume: DEFAULT_SETTINGS.volume,
   muted: DEFAULT_SETTINGS.muted,
+
+  sleepUntil: null,
+  sleepMinutes: null,
 
   async init() {
     const api = bridge()
@@ -250,6 +333,18 @@ export const useStore = create<AppState>((set, get) => ({
       // episode's job is a separate slot and survives.
       await api.player.reportEnded(current.channelId, current.episode.id, completed)
 
+      // The sleep boundary. Reached only here, after the outcome is logged, so
+      // an episode that genuinely finished is still recorded as watched — the
+      // one thing that separates going to sleep from walking out (`leavePlayer`,
+      // which reports `completed: false`).
+      //
+      // Mid-arc this is false and the normal path runs: the scheduler's arc lock
+      // hands out the next part, and we come back here when *that* one ends.
+      if (sleepDue(get().sleepUntil) && endsPlayableUnit(current)) {
+        await goDark(get, set)
+        return
+      }
+
       const pending = get().pendingNext
       if (pending !== null && pending.channelId === current.channelId) {
         // The schedule step for this episode was already spent at T−30s.
@@ -282,6 +377,13 @@ export const useStore = create<AppState>((set, get) => ({
       // Every one of these is a real state by the time the queue reaches us: the
       // user may have skipped, left, or turned the setting off while we waited.
       if (!current || get().pendingNext !== null || !get().settings.prewarmNext) return
+      // Prewarming is a *committing* pick, so once we know this episode is the
+      // last one before sleep there is nothing to buffer — committing here would
+      // spend a schedule step on an episode nobody will watch and leave us to
+      // release it again at the boundary. The Player skips the call for the same
+      // reason; this is the authoritative check, because the queue may have
+      // handed us a state the effect never saw.
+      if (sleepDue(get().sleepUntil) && endsPlayableUnit(current)) return
 
       const next = await bridge().player.prewarmNext(current.channelId)
       if (!next) return
@@ -312,8 +414,35 @@ export const useStore = create<AppState>((set, get) => ({
       if (pending && (!current || pending.channelId !== current.channelId)) {
         await api.player.release(pending.channelId, pending.episode.id)
       }
-      set({ nowPlaying: null, upNext: null, pendingNext: null, screen: 'guide' })
+      // Disarmed on the way out: a timer that survived into the guide would fire
+      // against whatever the viewer tuned into next, or — worse — sit armed with
+      // nothing to wind down. Leaving the player is a decision to stop watching,
+      // which is the thing the timer was there to do.
+      set({
+        nowPlaying: null,
+        upNext: null,
+        pendingNext: null,
+        sleepUntil: null,
+        sleepMinutes: null,
+        screen: 'guide'
+      })
       void get().refreshChannels()
+    })
+  },
+
+  armSleep(minutes) {
+    if (minutes === null) return set({ sleepUntil: null, sleepMinutes: null })
+    set({ sleepUntil: Date.now() + minutes * 60_000, sleepMinutes: minutes })
+  },
+
+  sleepNow() {
+    return serialize(async () => {
+      const current = get().nowPlaying
+      if (!current) return
+      // Nothing finished here — this is the paused branch — so the episode is
+      // logged the way an abandoned one is.
+      await bridge().player.reportEnded(current.channelId, current.episode.id, false)
+      await goDark(get, set)
     })
   },
 

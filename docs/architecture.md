@@ -59,9 +59,14 @@ renderer runs sandboxed.
 ### Renderer (`src/renderer/`)
 
 React 19 + TypeScript. No router: the store's `screen` field is the router,
-because there are five screens and no URLs worth having. Components read store
+because there are six screens and no URLs worth having. Components read store
 slices and call store actions; only the Player talks to the DOM directly, since
 it owns a `<video>` element whose state changes every frame.
+
+Two screens take the whole window with no app bar around them, for opposite
+reasons: the **Player**, so a fullscreen handoff never has to escape a layout
+wrapper, and the **blackout** the sleep timer ends on, because an app bar is a
+light source and that screen exists to emit nothing.
 
 ## The IPC contract
 

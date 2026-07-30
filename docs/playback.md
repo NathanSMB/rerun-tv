@@ -158,7 +158,33 @@ race, and a full arc.
 
 Leaving the player or changing channel discards the pending pick and releases the
 channel's encoders. The committed play-log entry simply stays incomplete — the same
-thing that happens when the app dies mid-episode (plan §10).
+thing that happens when the app dies mid-episode (plan §10). Going to sleep does
+the same, with one difference that matters: the episode that *finished* is
+reported `completed: true`, because it was genuinely watched.
+
+## Two things Chromium does around `ended`
+
+Both were found by driving the real app with `--eval` (below), and both are the
+kind of thing that reads as a logic bug for hours. Anything keying off "the video
+is paused" has to know them.
+
+**`pause` fires immediately before `ended`.** Same millisecond, with the element's
+`ended` already true. So a handler that treats "paused" as a viewer action runs at
+the close of *every* episode, racing the `ended` handler. The sleep timer's
+pause branch hit this and logged fully-watched episodes as `completed: false` —
+invisible on screen, and exactly the flag a shuffle bag reads to avoid repeats.
+
+**A promoted standby is paused for an instant.** During a gapless handoff the
+newly-active element is paused until `play()` takes, so "paused" is briefly true
+mid-channel with `ended` false. A seek's reload has the same shape. This is why
+the Player keys its pause branch on `wantsPlayRef` — cleared only in
+`togglePlay`, where a human actually asked — rather than on the `paused` flag.
+Keyed on `paused`, a sleep timer that expired mid-arc stopped at the handoff into
+the next part, which is the one thing the unit boundary exists to prevent.
+
+Neither is reachable from `tests/`: they are properties of Chromium's media
+element, not of our state machine. The store tests pin the transitions; a live
+run is what pins these.
 
 ## Finding ffmpeg
 

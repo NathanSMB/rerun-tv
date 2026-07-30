@@ -347,6 +347,14 @@ export interface AppSettings {
   startScreen: 'guide' | 'channels' | 'library' | 'settings'
   /** Seconds of idle before the OSD fades. */
   osdHideAfterS: number
+  /**
+   * Minutes the sleep timer arms for on its first press in the player.
+   *
+   * Only the starting point: the OSD button cycles on through the presets from
+   * here. The timer itself is never persisted — an armed countdown surviving a
+   * restart would be a surprise, not a convenience.
+   */
+  sleepTimerDefaultMin: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -361,7 +369,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prewarmNext: true,
   loudnessEq: false,
   startScreen: 'guide',
-  osdHideAfterS: 3
+  osdHideAfterS: 3,
+  sleepTimerDefaultMin: 30
 }
 
 // ---------------------------------------------------------------------------

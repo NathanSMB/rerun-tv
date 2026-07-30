@@ -117,6 +117,12 @@ away" — the MVP uses it only for honesty, but combined with `episodes.duration
 it's exactly what a post-MVP simulated-live schedule needs, which is why both
 are recorded now.
 
+The distinction is easy to break by accident and hard to notice: falling asleep
+at the end of an episode records `true` (it finished), while leaving, skipping,
+or a timer expiring while paused records `false`. See
+[playback.md](playback.md#two-things-chromium-does-around-ended) for the Chromium
+event ordering that got this backwards once.
+
 ### `settings`
 `key · value` — JSON-encoded values, merged over `DEFAULT_SETTINGS` on read so a
 key added in a later version needs no migration. Every knob the app exposes is a

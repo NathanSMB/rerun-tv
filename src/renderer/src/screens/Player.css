@@ -250,6 +250,46 @@
   margin-left: 4px;
 }
 
+/* ---- sleep timer ---- */
+
+/*
+ * Armed is a state the viewer should be able to see at a glance without the
+ * control shouting — amber is what the rest of the OSD uses for "the broadcast
+ * is telling you something", so the icon simply joins that register.
+ */
+.osd-btn.sleep.is-armed {
+  color: var(--amber);
+}
+
+.sleep-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  background: var(--amber-dim);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  white-space: nowrap;
+  flex: none;
+}
+
+/*
+ * Past the deadline the number stops moving and the chip changes what it says —
+ * from "how long left" to "where this stops". Steel keeps it from reading as a
+ * live countdown that has frozen.
+ */
+.sleep-chip.is-due {
+  color: var(--steel);
+  background: rgba(141, 151, 184, 0.12);
+}
+
+/* The hints go first when space runs out; the chip is a state, so it stays. */
+@media (max-width: 1040px) {
+  .kbd-hints {
+    display: none;
+  }
+}
+
 .vol-track {
   position: relative;
   width: 92px;

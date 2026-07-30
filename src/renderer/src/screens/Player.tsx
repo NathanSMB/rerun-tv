@@ -44,7 +44,7 @@ import VideoSurface, {
   type VideoSource,
   type VideoSurfaceHandle
 } from '../player/VideoSurface.js'
-import { useStore } from '../store.js'
+import { endsPlayableUnit, useStore } from '../store.js'
 import './Player.css'
 
 /**
@@ -69,6 +69,16 @@ const SEEK_COMMIT_MS = 250
 
 /** Mouse-move reveals are throttled so a moving pointer doesn't re-render 60×/s. */
 const ACTIVITY_THROTTLE_MS = 150
+
+/**
+ * Sleep-timer durations the OSD button cycles through, in minutes.
+ *
+ * The first press arms `settings.sleepTimerDefaultMin`; each press after that
+ * moves to the next preset above the armed value, and past the last one the
+ * timer switches off. TV convention, and it means the common case — "give me
+ * the usual" — is one press.
+ */
+const SLEEP_PRESETS = [15, 30, 45, 60, 90, 120]
 
 const clamp = (value: number, max: number): number => Math.min(max, Math.max(0, value))
 
@@ -290,9 +300,14 @@ export default function Player(): JSX.Element | null {
   const muted = useStore((s) => s.muted)
   const osdHideAfterS = useStore((s) => s.settings.osdHideAfterS)
   const prewarmNext = useStore((s) => s.settings.prewarmNext)
+  const sleepDefaultMin = useStore((s) => s.settings.sleepTimerDefaultMin)
+  const sleepUntil = useStore((s) => s.sleepUntil)
+  const sleepMinutes = useStore((s) => s.sleepMinutes)
   const advance = useStore((s) => s.advance)
   const prewarm = useStore((s) => s.prewarm)
   const leavePlayer = useStore((s) => s.leavePlayer)
+  const armSleep = useStore((s) => s.armSleep)
+  const sleepNow = useStore((s) => s.sleepNow)
   const setVolume = useStore((s) => s.setVolume)
   const toggleMute = useStore((s) => s.toggleMute)
 
@@ -328,6 +343,13 @@ export default function Player(): JSX.Element | null {
   const [dragging, setDragging] = useState(false)
   /** Bumped on any user activity; restarts the idle timer effect below. */
   const [activity, setActivity] = useState(0)
+  /**
+   * Wall clock, repainted once a second *only while the sleep timer is armed*.
+   *
+   * The countdown chip is the only thing that needs it. Expiry itself is never
+   * read from this value — see the store's `sleepUntil`.
+   */
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   const lastActivityRef = useRef(0)
   const advancingRef = useRef(false)
@@ -345,7 +367,20 @@ export default function Player(): JSX.Element | null {
   const chromeVisible = osdVisible || failed
   const showBanner = bannerFlash || chromeVisible
   const inUpNextWindow = remainingS <= UP_NEXT_WINDOW_S && remainingS > 0
-  const showToast = prewarmNext && upNext != null && !failed && inUpNextWindow
+
+  // ---- sleep timer --------------------------------------------------------
+
+  const sleepExpired = sleepUntil !== null && nowMs >= sleepUntil
+  const endsUnit = endsPlayableUnit(nowPlaying)
+  /**
+   * The timer has fired *and* this episode finishes its playable unit, so
+   * nothing more will be picked on this channel: no prewarm, and no "up next".
+   * Mid-arc this is false — the remaining parts still play, and the store's arc
+   * lock is what supplies them.
+   */
+  const sleepPending = sleepExpired && endsUnit
+
+  const showToast = prewarmNext && upNext != null && !failed && inUpNextWindow && !sleepPending
 
   /** The element on air. Everything transport-related goes through this. */
   const activeVideo = useCallback((): HTMLVideoElement | null => {
@@ -399,10 +434,54 @@ export default function Player(): JSX.Element | null {
    */
   useEffect(() => {
     if (!prewarmNext || !inUpNextWindow || failed) return
+    // Nothing follows this episode, so committing a pick for it would spend a
+    // schedule step we'd only have to release again at the boundary. The ref is
+    // deliberately left unset: cancelling the timer re-runs this effect, and the
+    // prewarm then fires late but still inside the window, so a change of mind
+    // doesn't cost the gapless handoff.
+    if (sleepPending) return
     if (episodeId == null || prewarmedAfterRef.current === episodeId) return
     prewarmedAfterRef.current = episodeId
     void prewarm()
-  }, [prewarmNext, inUpNextWindow, failed, episodeId, prewarm])
+  }, [prewarmNext, inUpNextWindow, failed, sleepPending, episodeId, prewarm])
+
+  /** The countdown chip's clock. Runs only while something is counting down. */
+  useEffect(() => {
+    if (sleepUntil === null) return
+    setNowMs(Date.now())
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [sleepUntil])
+
+  /**
+   * Expiry while paused.
+   *
+   * Waiting for the unit to finish assumes something is playing towards its end.
+   * Paused, nothing is, and a viewer who paused and did not come back is the
+   * exact case the timer is for — so this is the one path that stops mid-episode.
+   *
+   * It keys on `wantsPlayRef` rather than on `paused`, and that distinction is
+   * load-bearing — `paused` is true during several moments that are not a viewer
+   * pausing, both of which were caught only by running the real app:
+   *
+   * 1. **Chromium fires `pause` immediately before `ended`** (measured: same
+   *    millisecond, with the element's `ended` already true). Keying on `paused`
+   *    lost the race against `handleEnded` at the close of every episode, and an
+   *    episode watched to the end was logged `completed: false` — a stop, not a
+   *    watch, which is what a shuffle bag reads.
+   * 2. **A promoted standby is paused for an instant.** So a timer that expired
+   *    mid-arc stopped at the handoff into the next part — precisely the thing
+   *    the unit boundary exists to prevent. A seek's reload has the same shape.
+   *
+   * `wantsPlayRef` is false only where a human asked for it: `togglePlay`. Every
+   * transient pause above leaves it true, and so leaves the timer waiting for a
+   * boundary, which is the whole contract.
+   */
+  useEffect(() => {
+    if (!sleepExpired || !paused || failed) return
+    if (wantsPlayRef.current) return
+    void sleepNow()
+  }, [sleepExpired, paused, failed, sleepNow])
 
   /** Mirror the store's pending pick into the standby surface, and drop it when it goes. */
   useEffect(() => {
@@ -550,6 +629,12 @@ export default function Player(): JSX.Element | null {
   const skip = useCallback(() => runAdvance(false), [runAdvance])
   const handleEnded = useCallback(() => runAdvance(true), [runAdvance])
 
+  /** Off → the default → each preset above it → off again. */
+  const cycleSleep = useCallback(() => {
+    if (sleepMinutes === null) return armSleep(sleepDefaultMin)
+    armSleep(SLEEP_PRESETS.find((minutes) => minutes > sleepMinutes) ?? null)
+  }, [sleepMinutes, sleepDefaultMin, armSleep])
+
   /** Re-open the active surface's stream from scratch, standby untouched. */
   const retry = useCallback(() => {
     setFailed(false)
@@ -636,6 +721,11 @@ export default function Player(): JSX.Element | null {
           e.preventDefault()
           toggleMute()
           break
+        case 's':
+        case 'S':
+          e.preventDefault()
+          cycleSleep()
+          break
         case 'Escape':
           // Chromium swallows Esc to leave fullscreen, so by the time we see
           // one we are usually already out. Either way the first Esc only ever
@@ -653,7 +743,17 @@ export default function Player(): JSX.Element | null {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [reveal, togglePlay, skip, toggleFullscreen, toggleMute, setVolume, leavePlayer, volume])
+  }, [
+    reveal,
+    togglePlay,
+    skip,
+    toggleFullscreen,
+    toggleMute,
+    cycleSleep,
+    setVolume,
+    leavePlayer,
+    volume
+  ])
 
   if (!nowPlaying) return null
 
@@ -668,6 +768,18 @@ export default function Player(): JSX.Element | null {
     .join(' · ')
 
   const volumePct = Math.round((muted ? 0 : volume) * 100)
+
+  /**
+   * What the sleep chip says. Once the deadline has passed the countdown is
+   * meaningless — what the viewer needs to know is *where* it will stop, which
+   * mid-arc is the end of the arc rather than the end of this episode.
+   */
+  const sleepLabel = ((): string | null => {
+    if (sleepUntil === null) return null
+    if (!sleepExpired) return formatDuration((sleepUntil - nowMs) / 1000)
+    if (endsUnit) return 'after this episode'
+    return `after part ${arc?.partCount ?? '?'}`
+  })()
 
   /**
    * Both surfaces are always mounted, so promoting one is a class change rather
@@ -833,12 +945,40 @@ export default function Player(): JSX.Element | null {
             />
           </div>
 
+          <button
+            type="button"
+            className={`osd-btn sleep${sleepUntil !== null ? ' is-armed' : ''}`}
+            aria-label={
+              sleepUntil === null
+                ? 'Set sleep timer'
+                : sleepExpired
+                  ? `Sleep timer finished — stopping ${sleepLabel}. Press to change`
+                  : `Sleep timer: ${sleepLabel} left. Press to change`
+            }
+            aria-pressed={sleepUntil !== null}
+            onClick={cycleSleep}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9zm0 2.2A5.2 5.2 0 0 0 18.8 12 7 7 0 0 1 12 18.8 6.8 6.8 0 0 1 12 5.2z" />
+            </svg>
+          </button>
+
+          {sleepLabel !== null && (
+            <span className={`sleep-chip${sleepExpired ? ' is-due' : ''}`} role="status">
+              {sleepExpired ? 'Sleeps ' : ''}
+              {sleepLabel}
+            </span>
+          )}
+
           <div className="kbd-hints" aria-hidden="true">
             <span>
               <kbd>Space</kbd>pause
             </span>
             <span>
               <kbd>→</kbd>skip
+            </span>
+            <span>
+              <kbd>S</kbd>sleep
             </span>
             <span>
               <kbd>F</kbd>fullscreen

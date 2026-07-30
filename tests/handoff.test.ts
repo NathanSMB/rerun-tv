@@ -145,11 +145,18 @@ beforeEach(() => {
     nowPlaying: null,
     upNext: null,
     pendingNext: null,
+    sleepUntil: null,
+    sleepMinutes: null,
     screen: 'guide',
     channels: [],
     settings: { ...DEFAULT_SETTINGS, prewarmNext: true }
   })
 })
+
+/** A deadline that has already passed — the state the store checks, not a wait. */
+function expireSleepTimer(): void {
+  useStore.setState({ sleepUntil: Date.now() - 1000, sleepMinutes: 30 })
+}
 
 /** A show of `count` standalone episodes on a sequential channel — a known order. */
 function sequentialChannel(count: number, dial = 3): void {
@@ -313,6 +320,127 @@ describe('prewarm then handoff', () => {
   })
 })
 
+/**
+ * The sleep timer (docs/sleep-timer-plan.html).
+ *
+ * Same invariant as the rest of this file — one play-log entry per episode
+ * watched — with one addition: going to sleep is *not* the same as walking out.
+ * The episode that finished is a watched episode and must be logged complete, or
+ * a sequential channel would re-air it the next evening.
+ */
+describe('sleep timer', () => {
+  beforeEach(() => sequentialChannel(6))
+
+  it('finishes the episode, then goes dark without spending another pick', async () => {
+    await store().tune(channelId)
+    const first = store().nowPlaying!
+    expireSleepTimer()
+
+    await store().advance(true)
+
+    expect(store().screen).toBe('blackout')
+    expect(store().nowPlaying).toBeNull()
+    expect(store().upNext).toBeNull()
+    // The timer has done its job; it must not still be armed on the far side.
+    expect(store().sleepUntil).toBeNull()
+    // No pick was committed for an episode nobody is going to watch.
+    expect(commits).toBe(1)
+    // Completed, unlike leaving the player — the episode genuinely ended.
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 1 }])
+    expect(released).toContain(`channel:${channelId}`)
+  })
+
+  it('does not prewarm once the timer is due to stop after this episode', async () => {
+    await store().tune(channelId)
+    expireSleepTimer()
+
+    await store().prewarm()
+
+    // Committing here would spend a schedule step we'd only release again.
+    expect(store().pendingNext).toBeNull()
+    expect(commits).toBe(1)
+    expect(playLog()).toHaveLength(1)
+  })
+
+  /**
+   * Expiry inside the last 30 seconds: the prewarm already ran, so a pick is
+   * committed and cannot be un-committed. It is released at the boundary, and
+   * its play-log entry stays open — the same accepted cost as `leavePlayer`.
+   */
+  it('releases a pick that was already committed before the timer expired', async () => {
+    await store().tune(channelId)
+    const first = store().nowPlaying!
+    await store().prewarm()
+    const pending = store().pendingNext!
+    expect(commits).toBe(2)
+
+    expireSleepTimer()
+    released.length = 0
+    await store().advance(true)
+
+    expect(store().screen).toBe('blackout')
+    expect(store().pendingNext).toBeNull()
+    // The whole channel, which takes the prewarmed encoder with it.
+    expect(released).toContain(`channel:${channelId}`)
+    expect(commits).toBe(2)
+    expect(playLog()).toEqual([
+      { episodeId: first.episode.id, completed: 1 },
+      { episodeId: pending.episode.id, completed: 0 }
+    ])
+  })
+
+  it('keeps playing while the deadline is still ahead', async () => {
+    await store().tune(channelId)
+    store().armSleep(30)
+
+    await store().advance(true)
+
+    expect(store().screen).toBe('player')
+    expect(store().nowPlaying).not.toBeNull()
+    expect(store().sleepUntil).not.toBeNull()
+  })
+
+  it('stops at once when the timer expires while paused, logging no false watch', async () => {
+    await store().tune(channelId)
+    const first = store().nowPlaying!
+    expireSleepTimer()
+
+    await store().sleepNow()
+
+    expect(store().screen).toBe('blackout')
+    expect(store().nowPlaying).toBeNull()
+    expect(store().sleepUntil).toBeNull()
+    // Nothing finished, so this one is not a watch.
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 0 }])
+    expect(commits).toBe(1)
+  })
+
+  it('disarms when the viewer leaves the player themselves', async () => {
+    await store().tune(channelId)
+    store().armSleep(30)
+
+    await store().leavePlayer()
+
+    // A timer that survived into the guide would fire against the next channel.
+    expect(store().screen).toBe('guide')
+    expect(store().sleepUntil).toBeNull()
+    expect(store().sleepMinutes).toBeNull()
+  })
+
+  it('stops on a skip that happens to end the unit, since the viewer can cancel', async () => {
+    await store().tune(channelId)
+    const first = store().nowPlaying!
+    expireSleepTimer()
+
+    await store().advance(false)
+
+    expect(store().screen).toBe('blackout')
+    // Skipped, not watched — the outcome is logged honestly either way.
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 0 }])
+    expect(commits).toBe(1)
+  })
+})
+
 describe('with prewarming off', () => {
   beforeEach(() => {
     sequentialChannel(4)
@@ -379,6 +507,39 @@ describe('prewarm inside a multipart arc', () => {
     expect(log).toHaveLength(4)
     expect(new Set(log.map((row) => row.episodeId)).size).toBe(4)
     expect(commits).toBe(4)
+  })
+
+  /**
+   * The sleep timer's whole promise, on the case that makes it worth having: an
+   * expired timer must not strand a viewer three-quarters of the way through a
+   * two-parter. The arc lock already guarantees the *next* pick continues the
+   * arc; what is tested here is that the store keeps asking for one.
+   */
+  it('plays an expired timer out to the end of the arc, not the end of the part', async () => {
+    await store().tune(channelId)
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 1, partCount: 3 })
+
+    expireSleepTimer()
+
+    await store().advance(true)
+    expect(store().screen).toBe('player')
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 2, partCount: 3 })
+
+    await store().advance(true)
+    expect(store().screen).toBe('player')
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 3, partCount: 3 })
+
+    // The final part ends the unit, so this is where it stops.
+    await store().advance(true)
+    expect(store().screen).toBe('blackout')
+    expect(store().nowPlaying).toBeNull()
+
+    // Three parts aired, three log entries, all complete — and the arc lock was
+    // released on the way out rather than left pointing at a fourth part.
+    const log = playLog()
+    expect(log).toHaveLength(3)
+    expect(log.every((row) => row.completed === 1)).toBe(true)
+    expect(getChannel(db, channelId)?.activeGroupId).toBeNull()
   })
 
   it('leaves the arc lock consistent when the viewer quits mid-arc after a prewarm', async () => {
