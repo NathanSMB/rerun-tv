@@ -340,6 +340,22 @@ export default function Settings(): ReactElement {
 
         <div className="set-row">
           <div>
+            <div className="set-label">Loudness equalization</div>
+            <div className="set-hint">
+              Even out volume across episodes and between quiet and loud scenes, targeting
+              &minus;16 LUFS. Episodes are measured in the background while nothing is playing.
+            </div>
+          </div>
+          <Toggle
+            checked={settings.loudnessEq}
+            label="Loudness equalization"
+            disabled={locked}
+            onChange={(next) => update('loudnessEq', next)}
+          />
+        </div>
+
+        <div className="set-row">
+          <div>
             <div className="set-label">Pre-warm next episode</div>
             <div className="set-hint">
               Buffer the next episode during the last 30 s so handoffs cut instantly. Runs a

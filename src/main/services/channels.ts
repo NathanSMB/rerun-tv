@@ -20,8 +20,9 @@ import type {
   LineupProgress,
   PlayableUnit
 } from '@shared/types.js'
-import { episodeCode } from '@shared/playback.js'
+import { effectivePlaybackPath, episodeCode } from '@shared/playback.js'
 import type { Db } from '../db/index.js'
+import { getSettings } from '../db/repositories/settings.js'
 import {
   getChannel,
   getShowState,
@@ -41,6 +42,7 @@ interface EpisodeViewRow {
   title: string | null
   durationS: number
   playbackPath: EpisodeView['playbackPath']
+  acodec: string
 }
 
 const EPISODE_VIEW_SQL = `
@@ -52,7 +54,8 @@ const EPISODE_VIEW_SQL = `
          e.episode_end   AS episodeEnd,
          e.title         AS title,
          e.duration_s    AS durationS,
-         e.playback_path AS playbackPath
+         e.playback_path AS playbackPath,
+         e.acodec        AS acodec
     FROM episodes e
     JOIN shows s ON s.id = e.show_id
    WHERE e.id = ?`
@@ -71,7 +74,15 @@ export function toEpisodeView(db: Db, episodeId: number): EpisodeView | null {
     title: row.title,
     code: episodeCode(row.season, row.episode, row.episodeEnd),
     durationS: row.durationS,
-    playbackPath: row.playbackPath
+    // The *effective* path, not the stored one. The renderer reads this to pick
+    // between a plain `<video src>` and the MediaSource pump, and while loudness
+    // equalization is on a direct file is served down the pipe — which a plain
+    // `src` cannot play. See `effectivePlaybackPath`.
+    playbackPath: effectivePlaybackPath(
+      row.playbackPath,
+      row.acodec,
+      getSettings(db).loudnessEq
+    )
   }
 }
 

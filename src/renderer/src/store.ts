@@ -332,9 +332,18 @@ export const useStore = create<AppState>((set, get) => ({
   async setSetting(key, value) {
     const settings = await bridge().settings.set(key, value)
     set({ settings })
+
+    // Two different reasons to drop a standby, both ending the same way.
+    //
     // Turning prewarming off must not leave a committed pick stranded in a
-    // standby element nobody is going to promote.
-    if (key === 'prewarmNext' && value === false) {
+    // standby element nobody is going to promote. And a standby was spawned
+    // with the audio settings of the moment: change loudness equalization and
+    // it would hand off, mid-channel, to an episode still carrying the old
+    // sound — the one place the setting could be audibly self-contradictory.
+    // Dropping it means the next episode is re-requested at handoff, with the
+    // new setting, which is where every other consumer of Settings picks it up.
+    const dropStandby = (key === 'prewarmNext' && value === false) || key === 'loudnessEq'
+    if (dropStandby) {
       const pending = get().pendingNext
       if (pending) {
         set({ pendingNext: null })

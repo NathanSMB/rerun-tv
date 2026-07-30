@@ -146,14 +146,81 @@ describe('migration 3 — the audio-only transcode path', () => {
 
   it('leaves the CHECK constraint alone — no table rebuild', () => {
     const db = openAtVersion(2)
-    const before = db
-      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'episodes'`)
-      .get() as { sql: string }
-    migrate(db)
-    const after = db
-      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'episodes'`)
-      .get() as { sql: string }
-    expect(after.sql).toBe(before.sql)
+    const before = episodesDdl(db)
+    // This migration only, not `migrate()`: later ones legitimately append
+    // columns, and the property being asserted here is that migration 3 rewrites
+    // *rows* without touching the table definition.
+    db.exec(MIGRATIONS[2])
+    expect(episodesDdl(db)).toBe(before)
     db.close()
   })
 })
+
+/**
+ * Migration 4 — cached EBU R128 loudness
+ * (docs/loudness-equalization-plan.html, phase 2).
+ *
+ * Five nullable columns and nothing else: no data is derived, because loudness
+ * cannot be derived — it takes a full audio decode per file, which is what the
+ * background job is for. So what needs proving is that it is genuinely additive.
+ */
+describe('migration 4 — cached loudness', () => {
+  const LOUDNESS_COLUMNS = [
+    'loudness_i',
+    'loudness_tp',
+    'loudness_lra',
+    'loudness_thresh',
+    'loudness_scanned_at'
+  ]
+
+  function columnsOf(db: Db, table: string): string[] {
+    return (db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table) as { name: string }[]).map(
+      (row) => row.name
+    )
+  }
+
+  it('adds the five columns, all nullable and unmeasured to start with', () => {
+    const db = openAtVersion(3)
+    seed(db)
+    expect(columnsOf(db, 'episodes')).not.toContain('loudness_i')
+
+    migrate(db)
+
+    for (const column of LOUDNESS_COLUMNS) expect(columnsOf(db, 'episodes')).toContain(column)
+    // Every pre-existing row is "not measured yet", which is the state the
+    // player already has to handle.
+    const unmeasured = db
+      .prepare('SELECT COUNT(*) AS n FROM episodes WHERE loudness_scanned_at IS NULL')
+      .get() as { n: number }
+    expect(unmeasured.n).toBe(FIXTURES.length)
+    db.close()
+  })
+
+  it('leaves every other column, and the playback labels, exactly as they were', () => {
+    const db = openAtVersion(3)
+    seed(db)
+    const before = labels(db)
+    migrate(db)
+    expect(labels(db)).toEqual(before)
+    // ALTER TABLE ADD COLUMN appends; it must not have rebuilt the table and
+    // dropped the CHECK constraint on the way.
+    expect(episodesDdl(db)).toContain(`CHECK (playback_path IN ('direct','remux','transcode'))`)
+    db.close()
+  })
+
+  it('is idempotent — a second run adds nothing', () => {
+    const db = openAtVersion(3)
+    migrate(db)
+    const after = columnsOf(db, 'episodes')
+    migrate(db)
+    expect(columnsOf(db, 'episodes')).toEqual(after)
+    db.close()
+  })
+})
+
+function episodesDdl(db: Db): string {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'episodes'`)
+    .get() as { sql: string }
+  return row.sql
+}

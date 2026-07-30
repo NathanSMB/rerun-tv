@@ -126,6 +126,44 @@ export function decidePlaybackPath(
   return containerOk && !needsAudioTranscode(acodec) ? 'direct' : 'remux'
 }
 
+/**
+ * Does loudness equalization have anything to do on this file?
+ *
+ * Only if the setting is on *and* there is a soundtrack to process. A silent
+ * episode would otherwise be dragged onto the encode path to filter an audio
+ * stream it hasn't got.
+ */
+export function loudnessEqApplies(acodec: string, loudnessEq: boolean): boolean {
+  return loudnessEq && acodec.toLowerCase() !== NO_STREAM
+}
+
+/**
+ * The playback path this episode will *actually* take right now, which is not
+ * always the one stored on its row.
+ *
+ * Loudness equalization is an ffmpeg audio filter, and a `direct` file never
+ * meets ffmpeg — it is range-served straight off disk. So while the setting is
+ * on, a direct file is served down the remux pipe instead: the video is still a
+ * byte copy, but the audio passes through the filter chain on its way to AAC.
+ *
+ * Both sides of the app have to agree on this. The stream server uses it to
+ * choose between `serveFile` and `servePipe`; `services/channels.ts` puts the
+ * same answer on `EpisodeView`, because the renderer reads it to decide between
+ * a plain `<video src>` and the MediaSource pump — and pointing a plain `src` at
+ * an open-ended pipe is precisely the stall the MSE work exists to prevent.
+ *
+ * The Library screen's DIRECT/REMUX/TRANSCODE tag deliberately keeps showing the
+ * *stored* path: that tag describes what the file is, not how one setting is
+ * currently serving it.
+ */
+export function effectivePlaybackPath(
+  stored: PlaybackPath,
+  acodec: string,
+  loudnessEq: boolean
+): PlaybackPath {
+  return stored === 'direct' && loudnessEqApplies(acodec, loudnessEq) ? 'remux' : stored
+}
+
 /** `S04E11`, or `S01E03-E04` for a file holding a double episode. */
 export function episodeCode(
   season: number,

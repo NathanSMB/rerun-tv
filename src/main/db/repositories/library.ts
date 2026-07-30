@@ -15,6 +15,7 @@ import type {
   ArcSource,
   ArcView,
   Episode,
+  LoudnessMeasurement,
   ScanRoot,
   Show,
   UnmatchedFile
@@ -31,6 +32,20 @@ export type EpisodeInput = Omit<Episode, 'id'>
  * into an `IN (...)` clause chunks at this size.
  */
 const PARAM_CHUNK = 500
+
+/**
+ * Keep a cached column through an upsert unless the file itself changed.
+ *
+ * Inside `ON CONFLICT DO UPDATE`, `episodes.x` is the stored row and
+ * `excluded.x` the incoming one; SQLite evaluates every right-hand side against
+ * the *original* row, so this still compares the old stat pair even though the
+ * same statement goes on to overwrite it.
+ */
+function keepUnlessFileChanged(column: string): string {
+  return `CASE WHEN episodes.mtime_ms = excluded.mtime_ms
+                AND episodes.size_bytes = excluded.size_bytes
+           THEN episodes.${column} ELSE NULL END`
+}
 
 // ---------------------------------------------------------------------------
 // Row shapes (snake_case, straight from SQLite)
@@ -243,6 +258,12 @@ export function findEpisodeByPath(db: Db, path: string): Episode | null {
  * opinion about `part_group_id`/`part_index` (it passes nulls) and a rescan must
  * not silently dissolve arcs the user grouped by hand. Membership is only ever
  * changed through `createArc`/`deleteArc`.
+ *
+ * The cached loudness columns are handled the same way — owned by the background
+ * measuring job, not by the scanner — with one difference: they *are* invalidated
+ * here, but only when the stat pair actually moved. A file whose bytes changed
+ * has a loudness we no longer know; a *full* rescan, which re-probes files that
+ * did not change, must not throw away hours of measuring to learn nothing.
  */
 export function upsertEpisode(db: Db, row: EpisodeInput): number {
   db.prepare(
@@ -268,6 +289,11 @@ export function upsertEpisode(db: Db, row: EpisodeInput): number {
        width        = excluded.width,
        height       = excluded.height,
        playback_path= excluded.playback_path,
+       loudness_i          = ${keepUnlessFileChanged('loudness_i')},
+       loudness_tp         = ${keepUnlessFileChanged('loudness_tp')},
+       loudness_lra        = ${keepUnlessFileChanged('loudness_lra')},
+       loudness_thresh     = ${keepUnlessFileChanged('loudness_thresh')},
+       loudness_scanned_at = ${keepUnlessFileChanged('loudness_scanned_at')},
        mtime_ms     = excluded.mtime_ms,
        size_bytes   = excluded.size_bytes`
   ).run({
@@ -343,6 +369,86 @@ export function listEpisodePaths(db: Db): { id: number; showId: number; path: st
     path: string
   }[]
   return rows.map((r) => ({ id: r.id, showId: r.show_id, path: r.path }))
+}
+
+// ---------------------------------------------------------------------------
+// Cached loudness (docs/loudness-equalization-plan.html, phase 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The measuring job's work list: episodes with a soundtrack that has never been
+ * measured, oldest row first so a library fills in predictably.
+ *
+ * Silent files are excluded here rather than discovered by measuring them —
+ * `acodec` already says there is nothing to weigh.
+ */
+export function listEpisodesNeedingLoudness(db: Db): { id: number; path: string }[] {
+  return db
+    .prepare(
+      `SELECT id, path FROM episodes
+        WHERE loudness_scanned_at IS NULL AND acodec <> 'none'
+        ORDER BY id`
+    )
+    .all() as { id: number; path: string }[]
+}
+
+/**
+ * Record one measurement. A null `measurement` still stamps `scanned_at`: the
+ * file was measured and had nothing to report (digital silence), and repeating
+ * that every launch would be a decode for a guaranteed non-answer.
+ *
+ * Guarded on the row still existing rather than assumed — a measuring pass runs
+ * for as long as it runs, and the episode can be deleted underneath it.
+ */
+export function saveLoudness(
+  db: Db,
+  episodeId: number,
+  measurement: LoudnessMeasurement | null,
+  at: number
+): void {
+  db.prepare(
+    `UPDATE episodes
+        SET loudness_i = @i, loudness_tp = @tp, loudness_lra = @lra,
+            loudness_thresh = @thresh, loudness_scanned_at = @at
+      WHERE id = @id`
+  ).run({
+    id: episodeId,
+    i: measurement?.i ?? null,
+    tp: measurement?.tp ?? null,
+    lra: measurement?.lra ?? null,
+    thresh: measurement?.thresh ?? null,
+    at
+  })
+}
+
+export function getLoudness(db: Db, episodeId: number): LoudnessMeasurement | null {
+  const row = db
+    .prepare(
+      'SELECT loudness_i, loudness_tp, loudness_lra, loudness_thresh FROM episodes WHERE id = ?'
+    )
+    .get(episodeId) as
+    | {
+        loudness_i: number | null
+        loudness_tp: number | null
+        loudness_lra: number | null
+        loudness_thresh: number | null
+      }
+    | undefined
+  if (!row || row.loudness_i === null || row.loudness_tp === null) return null
+  if (row.loudness_lra === null || row.loudness_thresh === null) return null
+  return { i: row.loudness_i, tp: row.loudness_tp, lra: row.loudness_lra, thresh: row.loudness_thresh }
+}
+
+/** How far the measuring job has got — `measured` of `total` episodes with audio. */
+export function loudnessCoverage(db: Db): { measured: number; total: number } {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              COUNT(loudness_scanned_at) AS measured
+         FROM episodes WHERE acodec <> 'none'`
+    )
+    .get() as { total: number; measured: number }
+  return { measured: row.measured, total: row.total }
 }
 
 /** Total across the whole library — the `totalEpisodes` figure in the overview. */

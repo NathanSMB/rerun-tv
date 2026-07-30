@@ -11,9 +11,13 @@ import {
   findEpisodeByPath,
   getEpisode,
   getEpisodesByIds,
+  getLoudness,
   getShowByFolder,
   getUnmatched,
   listArcs,
+  listEpisodesNeedingLoudness,
+  loudnessCoverage,
+  saveLoudness,
   listEpisodes,
   listScanRoots,
   listShows,
@@ -89,6 +93,53 @@ describe('episodes', () => {
     const found = findEpisodeByPath(db, '/tv/Show/S1E1.mkv')
     expect(found).toMatchObject({ mtimeMs: 111, sizeBytes: 222 })
     expect(findEpisodeByPath(db, '/tv/Show/missing.mkv')).toBeNull()
+  })
+
+  /**
+   * Measuring loudness costs a full audio decode per file, so the cache has to
+   * survive everything that isn't a genuine change to the file — including a
+   * *full* rescan, which re-probes files whose stat pair never moved.
+   */
+  it('keeps a cached loudness measurement through a rescan of the same bytes', () => {
+    const show = upsertShow(db, 'Show', '/tv/Show')
+    const id = upsertEpisode(db, episode(show.id, 1, 1, { mtimeMs: 111, sizeBytes: 222 }))
+    saveLoudness(db, id, { i: -22.8, tp: -3.1, lra: 15.2, thresh: -33.1 }, 1234)
+
+    // Same file, re-probed: a different duration, the same mtime and size.
+    upsertEpisode(db, episode(show.id, 1, 1, { mtimeMs: 111, sizeBytes: 222, durationS: 1400 }))
+
+    expect(getLoudness(db, id)).toEqual({ i: -22.8, tp: -3.1, lra: 15.2, thresh: -33.1 })
+    expect(loudnessCoverage(db)).toEqual({ measured: 1, total: 1 })
+  })
+
+  it('drops it when the file itself changed, which is the one thing that invalidates it', () => {
+    const show = upsertShow(db, 'Show', '/tv/Show')
+    const id = upsertEpisode(db, episode(show.id, 1, 1, { mtimeMs: 111, sizeBytes: 222 }))
+    saveLoudness(db, id, { i: -22.8, tp: -3.1, lra: 15.2, thresh: -33.1 }, 1234)
+
+    upsertEpisode(db, episode(show.id, 1, 1, { mtimeMs: 999, sizeBytes: 222 }))
+
+    expect(getLoudness(db, id)).toBeNull()
+    // Back in the work list, rather than merely blank.
+    expect(listEpisodesNeedingLoudness(db).map((row) => row.id)).toEqual([id])
+  })
+
+  /** A silent file is measured once and then left alone forever. */
+  it('records an unmeasurable file as measured, so it is never queued twice', () => {
+    const show = upsertShow(db, 'Show', '/tv/Show')
+    const id = upsertEpisode(db, episode(show.id, 1, 1))
+    saveLoudness(db, id, null, 1234)
+
+    expect(getLoudness(db, id)).toBeNull()
+    expect(listEpisodesNeedingLoudness(db)).toHaveLength(0)
+    expect(loudnessCoverage(db).measured).toBe(1)
+  })
+
+  it('leaves a genuinely silent episode out of the work list entirely', () => {
+    const show = upsertShow(db, 'Show', '/tv/Show')
+    upsertEpisode(db, episode(show.id, 1, 1, { acodec: 'none' }))
+    expect(listEpisodesNeedingLoudness(db)).toHaveLength(0)
+    expect(loudnessCoverage(db)).toEqual({ measured: 0, total: 0 })
   })
 
   it('preserves arc membership across a rescan upsert', () => {

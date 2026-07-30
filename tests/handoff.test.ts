@@ -287,6 +287,30 @@ describe('prewarm then handoff', () => {
     expect(released).toEqual([`channel:${channelId}:${pending.episode.id}`])
     expect(released).not.toContain(`channel:${channelId}`)
   })
+
+  /**
+   * Loudness equalization is an ffmpeg argument, so a standby spawned before the
+   * toggle is still encoding with the *old* audio settings. Left alone it would
+   * hand off mid-channel to an episode that sounds different from the setting
+   * that is now switched on — the one place this feature could be audibly
+   * self-contradictory. Dropping the standby makes the next episode be
+   * re-requested at handoff, which is where every other consumer of Settings
+   * picks a change up.
+   */
+  it('abandons a pending pick when loudness equalization is toggled', async () => {
+    for (const value of [true, false]) {
+      await store().tune(channelId)
+      await store().prewarm()
+      const pending = store().pendingNext!
+      released.length = 0
+
+      await store().setSetting('loudnessEq', value)
+
+      expect(store().pendingNext).toBeNull()
+      expect(released).toEqual([`channel:${channelId}:${pending.episode.id}`])
+      expect(released).not.toContain(`channel:${channelId}`)
+    }
+  })
 })
 
 describe('with prewarming off', () => {

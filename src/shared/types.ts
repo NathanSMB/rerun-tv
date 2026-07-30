@@ -52,6 +52,26 @@ export interface Episode {
   sizeBytes: number
 }
 
+/**
+ * One episode's measured EBU R128 loudness, as reported by ffmpeg's `loudnorm`
+ * filter (`main/stream/loudness.ts`).
+ *
+ * Deliberately *not* part of `Episode`. The scanner owns every other column on
+ * that row and rewrites them on each pass; loudness is measured by a separate,
+ * much slower background job, so keeping it off `EpisodeInput` is what stops an
+ * ordinary rescan from having an opinion about it.
+ */
+export interface LoudnessMeasurement {
+  /** Integrated loudness of the source, LUFS. */
+  i: number
+  /** True peak, dBTP. */
+  tp: number
+  /** Loudness range, LU. */
+  lra: number
+  /** Gating threshold, LUFS. */
+  thresh: number
+}
+
 export interface PartGroup {
   id: number
   showId: number
@@ -316,6 +336,14 @@ export interface AppSettings {
   hardwareEncode: boolean
   /** Start the next stream during the last 30 s for a gapless handoff. */
   prewarmNext: boolean
+  /**
+   * Even out volume across episodes and between scenes (EBU R128, −16 LUFS).
+   *
+   * Off by default because it is not free: it forces an AAC encode onto files
+   * whose audio would otherwise have been copied byte-for-byte, and takes a
+   * direct-play file down the remux pipe. See `stream/loudness.ts`.
+   */
+  loudnessEq: boolean
   startScreen: 'guide' | 'channels' | 'library' | 'settings'
   /** Seconds of idle before the OSD fades. */
   osdHideAfterS: number
@@ -331,6 +359,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   transcodeAudioBitrate: '192k',
   hardwareEncode: false,
   prewarmNext: true,
+  loudnessEq: false,
   startScreen: 'guide',
   osdHideAfterS: 3
 }

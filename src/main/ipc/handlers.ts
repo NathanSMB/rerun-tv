@@ -37,12 +37,15 @@ import { getLibraryOverview, assignUnmatched } from '../services/library.js'
 import { getChannelDetail, listChannelSummaries, toEpisodeView } from '../services/channels.js'
 import { peekNext, pickNext, resetProgress, validateActiveArc } from '../scheduler/scheduler.js'
 import type { Scanner } from '../library/scanner.js'
+import type { LoudnessScanner } from '../library/loudness.js'
 import type { StreamServer } from '../stream/server.js'
 import { resolveFfmpeg } from '../stream/ffmpeg.js'
 
 export interface HandlerContext {
   db: Db
   scanner: Scanner
+  /** The background loudness measuring job, started/stopped with its setting. */
+  loudness: LoudnessScanner
   stream: StreamServer
   /** Resolved once at startup; `pending` until the check finishes. */
   codecCheck: () => SystemInfo['codecCheck']
@@ -273,6 +276,12 @@ export function registerHandlers(ctx: HandlerContext): void {
     if (key === 'watchFolders') {
       if (settings.watchFolders) ctx.scanner.startWatching()
       else ctx.scanner.stopWatching()
+    }
+    // Likewise the measuring job: it exists only to serve this setting, so it
+    // should not be spending a core on a library nobody is equalizing.
+    if (key === 'loudnessEq') {
+      if (settings.loudnessEq) ctx.loudness.start()
+      else ctx.loudness.stop()
     }
     return settings
   })

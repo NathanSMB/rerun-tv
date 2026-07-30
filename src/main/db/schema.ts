@@ -142,5 +142,26 @@ export const MIGRATIONS: string[] = [
      SET playback_path = 'remux'
    WHERE playback_path = 'transcode'
      AND LOWER(vcodec) IN (${VIDEO_CODEC_SQL_LIST});
+  `,
+  // -- 4 ---------------------------------------------------------------------
+  //
+  // Cached EBU R128 loudness, for the equalization setting
+  // (docs/loudness-equalization-plan.html, phase 2). Measuring costs a real
+  // audio decode of the whole file, so the answer is stored rather than derived:
+  // ffprobe cannot produce it, and no one is waiting minutes at tune-in.
+  //
+  // Nullable with no default, because "not measured yet" is a state the player
+  // has to handle anyway — a library only fills in over time, and until a row is
+  // filled the filter chain simply runs without its pre-gain.
+  //
+  // `loudness_scanned_at` is separate from the values on purpose: it records
+  // that we *tried*, so a genuinely silent episode (which measures as `-inf` and
+  // stores nulls) is never queued again.
+  `
+  ALTER TABLE episodes ADD COLUMN loudness_i          REAL;
+  ALTER TABLE episodes ADD COLUMN loudness_tp         REAL;
+  ALTER TABLE episodes ADD COLUMN loudness_lra        REAL;
+  ALTER TABLE episodes ADD COLUMN loudness_thresh     REAL;
+  ALTER TABLE episodes ADD COLUMN loudness_scanned_at INTEGER;
   `
 ]

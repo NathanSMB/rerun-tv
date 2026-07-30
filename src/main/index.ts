@@ -31,6 +31,7 @@ import {
 } from './paths.js'
 import { applyStagedImport, recordRestoreReceipt } from './services/restore.js'
 import { Scanner } from './library/scanner.js'
+import { LoudnessScanner } from './library/loudness.js'
 import { startStreamServer, type StreamServer } from './stream/server.js'
 import { checkCodecs, resolveFfmpeg } from './stream/ffmpeg.js'
 import { broadcast, registerHandlers } from './ipc/handlers.js'
@@ -111,6 +112,7 @@ function registerRendererProtocol(): void {
 let mainWindow: BrowserWindow | null = null
 let streamServer: StreamServer | null = null
 let scanner: Scanner | null = null
+let loudnessScanner: LoudnessScanner | null = null
 let codecStatus: SystemInfo['codecCheck'] = 'pending'
 
 function createWindow(): void {
@@ -162,6 +164,7 @@ function createWindow(): void {
  */
 async function restart(): Promise<void> {
   scanner?.dispose()
+  loudnessScanner?.dispose()
   await streamServer?.close() // awaited so ffmpeg children die with us
   closeDb() // checkpoints and removes -wal/-shm
   app.relaunch()
@@ -191,12 +194,28 @@ async function bootstrap(): Promise<void> {
     db,
     ffprobePath: ffmpeg.ffprobePath ?? 'ffprobe',
     onProgress: (status) => broadcast(EVENTS.scanProgress, status),
-    onLibraryChanged: () => broadcast(EVENTS.libraryChanged)
+    onLibraryChanged: () => {
+      broadcast(EVENTS.libraryChanged)
+      // New episodes are new work for the measuring job — and a no-op when it
+      // is already running or the setting is off.
+      loudnessScanner?.start()
+    }
+  })
+
+  loudnessScanner = new LoudnessScanner({
+    db,
+    ffmpegPath: ffmpeg.ffmpegPath,
+    getSettings: () => getSettings(db),
+    // "Busy" is anything the user would hear or watch stutter: a live encoder on
+    // any channel, or a library scan already spending the disk.
+    isBusy: () =>
+      (streamServer?.activeKeys().length ?? 0) > 0 || scanner?.getStatus().state === 'scanning'
   })
 
   registerHandlers({
     db,
     scanner,
+    loudness: loudnessScanner,
     stream: streamServer,
     codecCheck: () => codecStatus,
     restart
@@ -216,6 +235,9 @@ async function bootstrap(): Promise<void> {
 
   if (settings.watchFolders) scanner.startWatching()
   void scanner.scan().catch((err) => console.error('[scan] initial pass failed:', err))
+  // Measuring waits behind the initial scan on its own (`isBusy`), so this only
+  // has to be kicked once.
+  loudnessScanner.start()
 }
 
 // A single instance owns the database and the stream port; a second launch
@@ -248,6 +270,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('will-quit', () => {
     scanner?.dispose()
+    loudnessScanner?.dispose()
     void streamServer?.close()
     closeDb()
   })

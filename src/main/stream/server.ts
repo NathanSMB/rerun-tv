@@ -23,10 +23,11 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname } from 'node:path'
-import { needsAudioTranscode, normalizeContainer } from '@shared/playback.js'
-import type { AppSettings, PlaybackPath } from '@shared/types.js'
+import { effectivePlaybackPath, needsAudioTranscode, normalizeContainer } from '@shared/playback.js'
+import type { AppSettings, LoudnessMeasurement, PlaybackPath } from '@shared/types.js'
 import type { Db } from '../db/index.js'
 import { FfmpegSupervisor, resolveFfmpeg } from './ffmpeg.js'
+import { planLoudness } from './loudness.js'
 
 export interface StreamServerOptions {
   db: Db
@@ -71,6 +72,23 @@ interface EpisodeRow {
    * CHECK-constraint rebuild on a table with hundreds of rows.
    */
   acodec: string
+  /**
+   * The background loudness scan's answer for this file, null until it has been
+   * measured. Read here, at serve time, for the same reason as `acodec`: a
+   * measurement that lands mid-session must apply to the very next tune-in
+   * without anything being invalidated.
+   */
+  loudness_i: number | null
+  loudness_tp: number | null
+  loudness_lra: number | null
+  loudness_thresh: number | null
+}
+
+/** The four measured columns as a `LoudnessMeasurement`, or null if unmeasured. */
+function measurementOf(row: EpisodeRow): LoudnessMeasurement | null {
+  const { loudness_i: i, loudness_tp: tp, loudness_lra: lra, loudness_thresh: thresh } = row
+  if (i === null || tp === null || lra === null || thresh === null) return null
+  return { i, tp, lra, thresh }
 }
 
 /**
@@ -236,7 +254,9 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
   const supervisor = new FfmpegSupervisor()
 
   const selectEpisode = db.prepare<[number], EpisodeRow>(
-    'SELECT id, path, playback_path, container, acodec FROM episodes WHERE id = ?'
+    `SELECT id, path, playback_path, container, acodec,
+            loudness_i, loudness_tp, loudness_lra, loudness_thresh
+       FROM episodes WHERE id = ?`
   )
 
   const server = createServer((req, res) => {
@@ -299,11 +319,16 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     const channelId = rawChannel !== null && /^\d+$/.test(rawChannel) ? Number(rawChannel) : null
     const key = channelId !== null ? channelKey(channelId, row.id) : `episode:${row.id}`
 
-    if (row.playback_path === 'direct') {
+    // One read of Settings per request, shared by the routing decision and the
+    // arg builders, so a toggle flipped between the two can't split them.
+    const settings = getSettings()
+    const path = effectivePlaybackPath(row.playback_path, row.acodec, settings.loudnessEq)
+
+    if (path === 'direct') {
       await serveFile(req, res, row)
       return
     }
-    servePipe(req, res, row, seekS, key, channelId)
+    servePipe(req, res, row, seekS, key, channelId, path, settings)
   }
 
   /**
@@ -386,14 +411,17 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     row: EpisodeRow,
     seekS: number,
     key: string,
-    channelId: number | null
+    channelId: number | null,
+    /** The path being served, which is the *effective* one — see `handle`. */
+    path: PlaybackPath,
+    settings: AppSettings
   ): void {
     const { ffmpegPath, source } = resolveFfmpeg()
     if (!ffmpegPath || source === 'missing') {
       sendText(
         res,
         503,
-        `This episode needs ffmpeg to play (${row.playback_path}), but no ffmpeg binary was found. ` +
+        `This episode needs ffmpeg to play (${path}), but no ffmpeg binary was found. ` +
           'Install it (pacman -S ffmpeg) and restart Rerun TV.'
       )
       return
@@ -414,10 +442,11 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
       return
     }
 
+    const loudness = planLoudness(settings, row.acodec, measurementOf(row))
     const args =
-      row.playback_path === 'remux'
-        ? remuxArgs(row.path, seekS, !needsAudioTranscode(row.acodec), getSettings())
-        : transcodeArgs(row.path, seekS, getSettings())
+      path === 'transcode'
+        ? transcodeArgs(row.path, seekS, settings, loudness)
+        : remuxArgs(row.path, seekS, !needsAudioTranscode(row.acodec), settings, loudness)
 
     let headersSent = false
     const child: ChildProcess = supervisor.spawn(key, args, ffmpegPath, {
@@ -432,7 +461,7 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
           return
         }
         const error = new Error(
-          `ffmpeg ${row.playback_path} job exited ${code} for episode ${row.id} ` +
+          `ffmpeg ${path} job exited ${code} for episode ${row.id} ` +
             `(${row.path})\n${stderrTail}`
         )
         console.error(error.message)
@@ -604,16 +633,19 @@ const FMP4_OUTPUT_ARGS = [
  */
 const AAC_CHANNEL_LAYOUTS = 'mono|stereo|3.0|4.0|5.0|5.1|7.1'
 
-/** Encode the soundtrack to AAC at the Settings bitrate, in a layout AAC can name. */
-function aacArgs(settings: AppSettings): string[] {
-  return [
-    '-c:a',
-    'aac',
-    '-b:a',
-    settings.transcodeAudioBitrate,
-    '-af',
-    `aformat=channel_layouts=${AAC_CHANNEL_LAYOUTS}`
-  ]
+/**
+ * Encode the soundtrack to AAC at the Settings bitrate, in a layout AAC can name.
+ *
+ * `loudness` is the equalization chain from `planLoudness`, or null when the
+ * feature is off (or the file is silent). It goes *in front of* the layout
+ * guard, in the same `-af` string: a second `-af` would not add a second filter,
+ * it would replace the first — and `aformat` has to stay last so whatever the
+ * loudness filters did to the channel layout is still corrected on the way into
+ * the encoder.
+ */
+function aacArgs(settings: AppSettings, loudness: string[] | null): string[] {
+  const filters = [...(loudness ?? []), `aformat=channel_layouts=${AAC_CHANNEL_LAYOUTS}`]
+  return ['-c:a', 'aac', '-b:a', settings.transcodeAudioBitrate, '-af', filters.join(',')]
 }
 
 /**
@@ -631,19 +663,28 @@ function aacArgs(settings: AppSettings): string[] {
  *
  * The channel count is left alone deliberately: a 5.1 AC3 track becomes 5.1 AAC
  * rather than being silently folded to stereo.
+ *
+ * Loudness equalization is the one thing that can take the copy away. A filter
+ * cannot ride a stream copy, so an episode whose audio would have been copied
+ * verbatim gets the audio-encode branch instead while the setting is on — still
+ * `-c:v copy`, still no video encoder, just an AAC pass the file didn't
+ * previously need.
  */
 export function remuxArgs(
   file: string,
   seekS: number,
   audioCodecOk: boolean,
-  settings: AppSettings
+  settings: AppSettings,
+  loudness: string[] | null = null
 ): string[] {
   return [
     ...inputArgs(file, seekS),
     ...MAP_ARGS,
-    // `-af` cannot coexist with a stream copy, which is exactly why the filter
-    // lives on the encode branch only.
-    ...(audioCodecOk ? ['-c', 'copy'] : ['-c:v', 'copy', ...aacArgs(settings)]),
+    // `-af` cannot coexist with a stream copy, which is exactly why the filters
+    // live on the encode branch only.
+    ...(audioCodecOk && loudness === null
+      ? ['-c', 'copy']
+      : ['-c:v', 'copy', ...aacArgs(settings, loudness)]),
     ...FMP4_OUTPUT_ARGS
   ]
 }
@@ -654,7 +695,12 @@ export function remuxArgs(
  * preset/CRF/audio bitrate come from Settings, and `-pix_fmt yuv420p` forces
  * 8-bit 4:2:0 because that is what Chromium's H.264 decoder accepts.
  */
-export function transcodeArgs(file: string, seekS: number, settings: AppSettings): string[] {
+export function transcodeArgs(
+  file: string,
+  seekS: number,
+  settings: AppSettings,
+  loudness: string[] | null = null
+): string[] {
   return [
     ...inputArgs(file, seekS),
     ...MAP_ARGS,
@@ -666,7 +712,7 @@ export function transcodeArgs(file: string, seekS: number, settings: AppSettings
     String(settings.transcodeCrf),
     '-pix_fmt',
     'yuv420p',
-    ...aacArgs(settings),
+    ...aacArgs(settings, loudness),
     ...FMP4_OUTPUT_ARGS
   ]
 }
