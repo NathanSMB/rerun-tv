@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "npm run rebuild:node --silent && vitest run",
     "test:watch": "vitest",
+    "soak": "node scripts/soak.mjs",
     "rebuild:node": "npm rebuild better-sqlite3",
     "rebuild:electron": "electron-rebuild -f -m . -o better-sqlite3",
     "dist": "npm run build && electron-builder --linux AppImage",

@@ -14,7 +14,7 @@ import type {
   LibraryShow,
   PlaybackPath
 } from '@shared/types.js'
-import { decidePlaybackPath } from '@shared/playback.js'
+import { SUPPORTED_AUDIO_CODECS, decidePlaybackPath } from '@shared/playback.js'
 import type { Db } from '../db/index.js'
 import {
   countArcsByShow,
@@ -34,7 +34,18 @@ interface ShowAggregateRow {
   direct: number
   remux: number
   transcode: number
+  remux_audio_encode: number
 }
+
+/**
+ * `'aac','mp3',…,'none'` — the soundtracks that pass through the remux pipe
+ * untouched, as a SQL list. Built from the shared codec set rather than spelled
+ * out here, so the aggregate and `needsAudioTranscode` can never drift; `none`
+ * joins them because a silent file has no audio to encode.
+ */
+const AUDIO_COPY_SQL_LIST = [...SUPPORTED_AUDIO_CODECS, 'none']
+  .map((codec) => `'${codec}'`)
+  .join(', ')
 
 /**
  * Everything the Library screen renders in one shot: per-show aggregates, the
@@ -54,7 +65,9 @@ export function getLibraryOverview(db: Db): LibraryOverview {
          COUNT(DISTINCT e.season)                                      AS season_count,
          COALESCE(SUM(e.playback_path = 'direct'), 0)                  AS direct,
          COALESCE(SUM(e.playback_path = 'remux'), 0)                   AS remux,
-         COALESCE(SUM(e.playback_path = 'transcode'), 0)               AS transcode
+         COALESCE(SUM(e.playback_path = 'transcode'), 0)               AS transcode,
+         COALESCE(SUM(e.playback_path = 'remux'
+                      AND LOWER(e.acodec) NOT IN (${AUDIO_COPY_SQL_LIST})), 0) AS remux_audio_encode
        FROM shows s
        LEFT JOIN episodes e ON e.show_id = s.id
        GROUP BY s.id
@@ -74,7 +87,8 @@ export function getLibraryOverview(db: Db): LibraryOverview {
       direct: r.direct,
       remux: r.remux,
       transcode: r.transcode
-    } satisfies Record<PlaybackPath, number>
+    } satisfies Record<PlaybackPath, number>,
+    remuxAudioEncode: r.remux_audio_encode
   }))
 
   return {

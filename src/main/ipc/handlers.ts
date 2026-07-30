@@ -220,8 +220,28 @@ export function registerHandlers(ctx: HandlerContext): void {
 
   handle(IPC.player.next, (channelId: number): NowPlaying | null => {
     // Kill the outgoing job the moment the channel advances, so a skip never
-    // leaves a second ffmpeg running.
+    // leaves a second ffmpeg running. Safe to take the whole channel here: the
+    // renderer only reaches `next` when it has no prewarm to promote.
     ctx.stream.releaseChannel(channelId)
+    const pick = pickNext(db, channelId)
+    if (!pick) return null
+    return toNowPlaying(ctx, channelId, pick.episodeId, pick.arc)
+  })
+
+  /**
+   * The gapless handoff's committing half (docs/stall-fix-plan.html, phase 3).
+   *
+   * Deliberately `pickNext`, not `peekNext`: the standby has to buffer *the*
+   * episode that will air, and for a shuffle show or a multipart arc only a
+   * committed pick is that. It runs through the same transaction as any other
+   * advance, so the arc hand-out and the cursor move exactly once — and the
+   * renderer's contract is therefore that it must promote this result rather
+   * than call `next` again.
+   *
+   * Nothing is released: for the last ~30 seconds this channel legitimately owns
+   * two encoders.
+   */
+  handle(IPC.player.prewarmNext, (channelId: number): NowPlaying | null => {
     const pick = pickNext(db, channelId)
     if (!pick) return null
     return toNowPlaying(ctx, channelId, pick.episodeId, pick.arc)
@@ -234,6 +254,14 @@ export function registerHandlers(ctx: HandlerContext): void {
 
   handle(IPC.player.reportEnded, (channelId: number, episodeId: number, completed: boolean) => {
     channelRepo.markLastAiringCompleted(db, channelId, episodeId, completed)
+    // This episode is done with, so its encoder is too. Only this one: a prewarmed
+    // episode's job has to survive the handoff, which is the whole point.
+    ctx.stream.releaseEpisode(channelId, episodeId)
+  })
+
+  handle(IPC.player.release, (channelId: number, episodeId: number | null) => {
+    if (episodeId == null) ctx.stream.releaseChannel(channelId)
+    else ctx.stream.releaseEpisode(channelId, episodeId)
   })
 
   // ---- settings -----------------------------------------------------------

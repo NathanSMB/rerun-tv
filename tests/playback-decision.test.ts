@@ -11,6 +11,7 @@ import {
   formatDuration,
   isAudioSupported,
   isVideoSupported,
+  needsAudioTranscode,
   normalizeContainer
 } from '@shared/playback.js'
 
@@ -63,11 +64,35 @@ describe('decidePlaybackPath', () => {
     expect(decidePlaybackPath('webm', 'vp9', 'opus')).toBe('direct')
   })
 
-  it('transcodes when either codec is unsupported, whatever the container', () => {
+  it('transcodes only when the *video* codec is unplayable', () => {
     expect(decidePlaybackPath('mkv', 'hevc', 'dts')).toBe('transcode')
-    expect(decidePlaybackPath('mkv', 'h264', 'dts')).toBe('transcode')
     // A native container cannot rescue an unplayable video codec.
     expect(decidePlaybackPath('mp4', 'hevc', 'aac')).toBe('transcode')
+    expect(decidePlaybackPath('mkv', 'mpeg2video', 'aac')).toBe('transcode')
+  })
+
+  /**
+   * Phase 1 of docs/stall-fix-plan.html. This is the case that mattered: 328 of
+   * 386 episodes in the reference library were being fully re-encoded purely
+   * because they carried AC3, and a full re-encode is what turns a dropped
+   * connection into a minute of dead air rather than a second.
+   */
+  it('remuxes playable video with an unplayable soundtrack, whatever the container', () => {
+    expect(decidePlaybackPath('mkv', 'h264', 'ac3')).toBe('remux')
+    expect(decidePlaybackPath('matroska,webm', 'h264', 'eac3')).toBe('remux')
+    expect(decidePlaybackPath('mkv', 'h264', 'dts')).toBe('remux')
+    expect(decidePlaybackPath('mkv', 'h264', 'truehd')).toBe('remux')
+    // Even an MP4 — the container is fine, so only the audio forces the pipe.
+    expect(decidePlaybackPath('mov,mp4,m4a,3gp,3g2,mj2', 'h264', 'ac3')).toBe('remux')
+    // …and the video codec set is the whole video codec set, not just H.264.
+    expect(decidePlaybackPath('mkv', 'vp9', 'ac3')).toBe('remux')
+    expect(decidePlaybackPath('mkv', 'av1', 'dts')).toBe('remux')
+  })
+
+  it('direct-plays a silent native file instead of remuxing audio it hasn’t got', () => {
+    expect(decidePlaybackPath('mp4', 'h264', 'none')).toBe('direct')
+    // An unknown codec is not the same as no codec: stay pessimistic.
+    expect(decidePlaybackPath('mp4', 'h264', 'unknown')).toBe('remux')
   })
 
   it('knows the Chromium codec sets', () => {
@@ -75,6 +100,28 @@ describe('decidePlaybackPath', () => {
     expect(isVideoSupported('mpeg2video')).toBe(false)
     expect(isAudioSupported('FLAC')).toBe(true)
     expect(isAudioSupported('truehd')).toBe(false)
+  })
+})
+
+describe('needsAudioTranscode', () => {
+  it('is true exactly for the soundtracks Chromium cannot decode', () => {
+    expect(needsAudioTranscode('ac3')).toBe(true)
+    expect(needsAudioTranscode('EAC3')).toBe(true)
+    expect(needsAudioTranscode('dts')).toBe(true)
+    expect(needsAudioTranscode('truehd')).toBe(true)
+    expect(needsAudioTranscode('pcm_s16le')).toBe(true)
+  })
+
+  it('is false for the ones that pass through untouched', () => {
+    expect(needsAudioTranscode('aac')).toBe(false)
+    expect(needsAudioTranscode('MP3')).toBe(false)
+    expect(needsAudioTranscode('opus')).toBe(false)
+    expect(needsAudioTranscode('vorbis')).toBe(false)
+    expect(needsAudioTranscode('flac')).toBe(false)
+  })
+
+  it('is false for a file with no audio at all — there is nothing to encode', () => {
+    expect(needsAudioTranscode('none')).toBe(false)
   })
 })
 

@@ -23,7 +23,7 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname } from 'node:path'
-import { normalizeContainer } from '@shared/playback.js'
+import { needsAudioTranscode, normalizeContainer } from '@shared/playback.js'
 import type { AppSettings, PlaybackPath } from '@shared/types.js'
 import type { Db } from '../db/index.js'
 import { FfmpegSupervisor, resolveFfmpeg } from './ffmpeg.js'
@@ -39,10 +39,22 @@ export interface StreamServerOptions {
 
 export interface StreamServer {
   port: number
-  /** `http://127.0.0.1:<port>/stream/<episodeId>` — the one URL shape the `<video>` element ever sees. */
+  /** `http://127.0.0.1:<port>/stream/<episodeId>` — the one URL shape the player ever sees. */
   urlFor(episodeId: number, seekS?: number, channelId?: number): string
-  /** Kill the ffmpeg job serving a channel, e.g. on skip or channel change. */
+  /**
+   * Kill every ffmpeg job for a channel — on a skip with nothing prewarmed, on a
+   * channel change, or on leaving the player. Plural because a channel can hold
+   * two jobs during a handoff (see `FfmpegSupervisor`).
+   */
   releaseChannel(channelId: number): void
+  /**
+   * Kill the job for one episode on one channel, leaving the channel's other job
+   * alone. This is what a promotion needs: the episode that just finished lets
+   * go of its encoder while the prewarmed one plays on.
+   */
+  releaseEpisode(channelId: number, episodeId: number): void
+  /** Live supervisor keys, for tests and diagnostics. */
+  activeKeys(): string[]
   close(): Promise<void>
 }
 
@@ -52,6 +64,13 @@ interface EpisodeRow {
   path: string
   playback_path: PlaybackPath
   container: string
+  /**
+   * Read at serve time rather than baked into `playback_path`, because "copy the
+   * audio" and "encode the audio to AAC" are the same *path* with a different
+   * `-c:a`. Keeping it out of the enum is what lets phase 1 ship without a
+   * CHECK-constraint rebuild on a table with hundreds of rows.
+   */
+  acodec: string
 }
 
 /**
@@ -93,6 +112,34 @@ function contentTypeFor(container: string, filePath: string): string {
   }
   return 'application/octet-stream'
 }
+
+/**
+ * Why a wide-open CORS header on a server whose whole point is that nobody else
+ * can reach it (docs/stall-fix-plan.html, phase 2).
+ *
+ * A `<video src>` fetches media *without* CORS: the element is allowed to load a
+ * cross-origin stream it simply cannot read the bytes of. The MSE pump in
+ * `renderer/player/mse.ts` uses `fetch()` instead — it has to, because reading
+ * the bytes is the entire idea — and that is an ordinary cross-origin request
+ * from the renderer's `app://bundle` origin (see `main/index.ts`). Without this
+ * header the pump gets an opaque failure and every episode falls back to the
+ * plain-`src` path the phase exists to retire.
+ *
+ * The threat model is unchanged and is not carried by CORS: the listener is
+ * bound to 127.0.0.1, `isLoopbackHost` rejects a forged `Host` (DNS rebinding),
+ * and the route takes an episode id the scanner wrote — never a path. A page on
+ * the open web that guessed the port could already *play* these streams through
+ * a `<video>` tag; being able to read the bytes of a file the user already owns
+ * adds nothing to that.
+ */
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  // Range is the only non-simple header the direct path can attract, and
+  // Content-Length/Content-Range are what a reader needs to see on the answer.
+  'Access-Control-Allow-Headers': 'Range',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges'
+} as const
 
 /** A parsed single byte range, or the two failure modes we must answer differently. */
 type ParsedRange =
@@ -155,6 +202,7 @@ function isLoopbackHost(host: string | undefined): boolean {
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
   res.writeHead(status, {
+    ...CORS_HEADERS,
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
     'Cache-Control': 'no-store'
@@ -162,8 +210,13 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload)
 }
 
+/**
+ * Errors carry the CORS header too, so a failed stream surfaces in the pump as
+ * ffmpeg's actual message rather than as an opaque network error.
+ */
 function sendText(res: ServerResponse, status: number, message: string): void {
   res.writeHead(status, {
+    ...CORS_HEADERS,
     'Content-Type': 'text/plain; charset=utf-8',
     'Content-Length': Buffer.byteLength(message),
     'Cache-Control': 'no-store'
@@ -183,7 +236,7 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
   const supervisor = new FfmpegSupervisor()
 
   const selectEpisode = db.prepare<[number], EpisodeRow>(
-    'SELECT id, path, playback_path, container FROM episodes WHERE id = ?'
+    'SELECT id, path, playback_path, container, acodec FROM episodes WHERE id = ?'
   )
 
   const server = createServer((req, res) => {
@@ -218,8 +271,16 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
       sendText(res, 404, 'not found')
       return
     }
+    // A same-origin-ish `fetch()` for a stream sends no non-simple headers, so
+    // Chromium never actually preflights the pump. Answering anyway costs three
+    // lines and means a future caller that *does* preflight isn't a mystery.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { ...CORS_HEADERS, 'Content-Length': 0 })
+      res.end()
+      return
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405, { Allow: 'GET, HEAD' })
+      res.writeHead(405, { ...CORS_HEADERS, Allow: 'GET, HEAD' })
       res.end()
       return
     }
@@ -236,13 +297,13 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     const seekS = Math.max(0, Number(url.searchParams.get('t') ?? 0) || 0)
     const rawChannel = url.searchParams.get('ch')
     const channelId = rawChannel !== null && /^\d+$/.test(rawChannel) ? Number(rawChannel) : null
-    const key = channelId !== null ? channelKey(channelId) : `episode:${row.id}`
+    const key = channelId !== null ? channelKey(channelId, row.id) : `episode:${row.id}`
 
     if (row.playback_path === 'direct') {
       await serveFile(req, res, row)
       return
     }
-    servePipe(req, res, row, seekS, key)
+    servePipe(req, res, row, seekS, key, channelId)
   }
 
   /**
@@ -271,6 +332,7 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
 
     if (range.kind === 'unsatisfiable') {
       res.writeHead(416, {
+        ...CORS_HEADERS,
         'Content-Range': `bytes */${size}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': 0
@@ -284,6 +346,7 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     const length = size === 0 ? 0 : end - start + 1
 
     const headers: Record<string, string | number> = {
+      ...CORS_HEADERS,
       'Content-Type': contentType,
       'Content-Length': length,
       'Accept-Ranges': 'bytes',
@@ -322,7 +385,8 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     res: ServerResponse,
     row: EpisodeRow,
     seekS: number,
-    key: string
+    key: string,
+    channelId: number | null
   ): void {
     const { ffmpegPath, source } = resolveFfmpeg()
     if (!ffmpegPath || source === 'missing') {
@@ -336,6 +400,7 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     }
 
     const headers = {
+      ...CORS_HEADERS,
       'Content-Type': 'video/mp4',
       'Accept-Ranges': 'none',
       'Cache-Control': 'no-store'
@@ -351,7 +416,7 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
 
     const args =
       row.playback_path === 'remux'
-        ? remuxArgs(row.path, seekS)
+        ? remuxArgs(row.path, seekS, !needsAudioTranscode(row.acodec), getSettings())
         : transcodeArgs(row.path, seekS, getSettings())
 
     let headersSent = false
@@ -377,6 +442,11 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
         else if (!res.writableEnded) res.destroy()
       }
     })
+
+    // Cap the channel after the spawn, never before: whatever was just asked for
+    // is by definition the job to keep, and anything above the cap is a leftover
+    // whose client went away without us hearing about it.
+    if (channelId !== null) supervisor.trimGroup(channelPrefix(channelId), MAX_JOBS_PER_CHANNEL)
 
     const stdout = child.stdout
     if (!stdout) {
@@ -427,7 +497,13 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
       return url.toString()
     },
     releaseChannel(channelId: number): void {
-      supervisor.kill(channelKey(channelId))
+      supervisor.killByPrefix(channelPrefix(channelId))
+    },
+    releaseEpisode(channelId: number, episodeId: number): void {
+      supervisor.kill(channelKey(channelId, episodeId))
+    },
+    activeKeys(): string[] {
+      return supervisor.activeKeys()
     },
     async close(): Promise<void> {
       supervisor.killAll()
@@ -436,63 +512,152 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
   }
 }
 
-/** The supervisor slot for a channel — one running job per channel, by construction. */
-function channelKey(channelId: number): string {
-  return `channel:${channelId}`
+/**
+ * How many encoders one channel may own at once.
+ *
+ * Two, not one (docs/stall-fix-plan.html, phase 3): the episode on air, plus the
+ * next one prewarming behind it for the last ~30 seconds of a handoff. After
+ * phase 1 both are stream copies, so the overlap is nearly free.
+ */
+const MAX_JOBS_PER_CHANNEL = 2
+
+/** Every supervisor key belonging to one channel shares this prefix. */
+function channelPrefix(channelId: number): string {
+  return `channel:${channelId}:`
 }
 
 /**
- * Remux: no re-encoding at all, so this starts in milliseconds and costs almost
- * no CPU — the expected path for a typical H.264/AAC MKV library.
- *
- * `-ss` goes *before* `-i` for a fast keyframe-aligned seek (plan §10 accepts
- * the resulting coarse seek in the MVP). Streams are mapped explicitly because
- * ffmpeg's default selection would also pick up a subtitle track that MP4
- * cannot hold, which would fail the whole mux; the audio map is optional (`?`)
- * so a silent file still plays.
+ * The supervisor slot for one episode on one channel. Keyed by episode as well as
+ * channel so the current stream and the prewarming one occupy different slots,
+ * while a *seek* — same channel, same episode — correctly replaces its own job.
  */
-function remuxArgs(file: string, seekS: number): string[] {
+function channelKey(channelId: number, episodeId: number): string {
+  return `${channelPrefix(channelId)}${episodeId}`
+}
+
+/** Everything before the input, shared by both piped paths. */
+function inputArgs(file: string, seekS: number): string[] {
   return [
     '-hide_banner',
     '-nostdin',
     '-loglevel',
     'error',
+    // `-ss` before `-i` for a fast keyframe-aligned seek (plan §10 accepts the
+    // resulting coarse seek in the MVP).
     ...(seekS > 0 ? ['-ss', String(seekS)] : []),
     '-i',
-    file,
-    '-map',
-    '0:v:0',
-    '-map',
-    '0:a:0?',
-    '-c',
-    'copy',
-    '-movflags',
-    'frag_keyframe+empty_moov+default_base_moof',
-    '-f',
-    'mp4',
-    'pipe:1'
+    file
   ]
 }
 
 /**
- * Transcode: the fallback for HEVC, DTS, 10-bit and friends. Sized for one
- * stream at a time — preset/CRF/audio bitrate come from Settings, and
- * `-pix_fmt yuv420p` forces 8-bit 4:2:0 because that is what Chromium's H.264
- * decoder accepts.
+ * Exactly one video track and at most one audio track — nothing else.
+ *
+ * The two `-map`s are explicit because ffmpeg's default selection would also pick
+ * up a subtitle track that MP4 cannot hold, which would fail the whole mux; the
+ * audio map is optional (`?`) so a silent file still plays.
+ *
+ * `-map_chapters -1` is not covered by either of those, and it matters more than
+ * it looks. The mov muxer copies a source's chapters into a **third track** — a
+ * `text` track with a `gmhd`, plus `tref` boxes on the other two pointing at it.
+ * Chromium's progressive demuxer shrugs at that; its *MediaSource* parser rejects
+ * the whole initialisation segment with
+ * `CHUNK_DEMUXER_ERROR_APPEND_FAILED: RunSegmentParserLoop: stream parsing failed`,
+ * which takes down every episode ripped with chapter markers. There is no use for
+ * a chapter track here — nothing in the app reads one — so it is dropped at the
+ * source rather than tolerated downstream.
  */
-function transcodeArgs(file: string, seekS: number, settings: AppSettings): string[] {
+const MAP_ARGS = ['-map', '0:v:0', '-map', '0:a:0?', '-map_chapters', '-1']
+
+/**
+ * The fragmented-MP4 pipe. `frag_keyframe+empty_moov+default_base_moof` is what
+ * lets the muxer emit a playable stream without ever seeking back to write a
+ * header — and, not by coincidence, is exactly the shape MediaSource wants.
+ */
+const FMP4_OUTPUT_ARGS = [
+  '-movflags',
+  'frag_keyframe+empty_moov+default_base_moof',
+  '-f',
+  'mp4',
+  'pipe:1'
+]
+
+/**
+ * Channel layouts AAC can name with a standard `channelConfiguration`, in
+ * ffmpeg's spelling. Everything else is remapped to the nearest of these.
+ *
+ * This is not about how many speakers anyone has. AAC's AudioSpecificConfig can
+ * describe these seven layouts with a single 4-bit `channelConfiguration`; for
+ * anything else it must set that field to 0 and append a **Program Config
+ * Element**, and Chromium's MediaSource AAC parser rejects `channelConfiguration
+ * = 0` outright. The result was a whole class of episode that appended its video
+ * track fine and then failed the init segment on its audio.
+ *
+ * The layout that actually triggers it is ordinary: a disc rip carrying AC3
+ * `5.1(side)`. AAC's standard 5.1 is *back*-based, so the side variant has no
+ * configuration number and ffmpeg reaches for a PCE. Constraining the layout
+ * turns that into plain `5.1` — a relabel, not a downmix, and still six channels.
+ * Surround survives; a 26-byte AudioSpecificConfig becomes a 5-byte one.
+ *
+ * A file that already has one of these layouts is unaffected, and a file with no
+ * audio at all is fine too — the filter simply goes unused.
+ */
+const AAC_CHANNEL_LAYOUTS = 'mono|stereo|3.0|4.0|5.0|5.1|7.1'
+
+/** Encode the soundtrack to AAC at the Settings bitrate, in a layout AAC can name. */
+function aacArgs(settings: AppSettings): string[] {
   return [
-    '-hide_banner',
-    '-nostdin',
-    '-loglevel',
-    'error',
-    ...(seekS > 0 ? ['-ss', String(seekS)] : []),
-    '-i',
-    file,
-    '-map',
-    '0:v:0',
-    '-map',
-    '0:a:0?',
+    '-c:a',
+    'aac',
+    '-b:a',
+    settings.transcodeAudioBitrate,
+    '-af',
+    `aformat=channel_layouts=${AAC_CHANNEL_LAYOUTS}`
+  ]
+}
+
+/**
+ * Remux: the video stream is always a byte copy, so this starts in milliseconds
+ * and costs almost no CPU — the path for the overwhelming majority of a typical
+ * library.
+ *
+ * `audioCodecOk` is the one knob. When the soundtrack is something Chromium
+ * decodes it is copied too (`-c copy`, exactly as before). When it isn't — AC3,
+ * E-AC3, DTS, TrueHD, PCM: the common case for anything ripped from a disc — only
+ * the *audio* is encoded, to AAC at the Settings bitrate, while `-c:v copy`
+ * keeps the expensive half free. That is the whole of phase 1: the same fMP4
+ * pipe, the same `-ss` keyframe seek, roughly 1/50th of the CPU of the full
+ * transcode these files used to get.
+ *
+ * The channel count is left alone deliberately: a 5.1 AC3 track becomes 5.1 AAC
+ * rather than being silently folded to stereo.
+ */
+export function remuxArgs(
+  file: string,
+  seekS: number,
+  audioCodecOk: boolean,
+  settings: AppSettings
+): string[] {
+  return [
+    ...inputArgs(file, seekS),
+    ...MAP_ARGS,
+    // `-af` cannot coexist with a stream copy, which is exactly why the filter
+    // lives on the encode branch only.
+    ...(audioCodecOk ? ['-c', 'copy'] : ['-c:v', 'copy', ...aacArgs(settings)]),
+    ...FMP4_OUTPUT_ARGS
+  ]
+}
+
+/**
+ * Transcode: the fallback for HEVC, MPEG-2, 10-bit and friends — the files whose
+ * *video* Chromium genuinely cannot decode. Sized for one stream at a time —
+ * preset/CRF/audio bitrate come from Settings, and `-pix_fmt yuv420p` forces
+ * 8-bit 4:2:0 because that is what Chromium's H.264 decoder accepts.
+ */
+export function transcodeArgs(file: string, seekS: number, settings: AppSettings): string[] {
+  return [
+    ...inputArgs(file, seekS),
+    ...MAP_ARGS,
     '-c:v',
     'libx264',
     '-preset',
@@ -501,15 +666,8 @@ function transcodeArgs(file: string, seekS: number, settings: AppSettings): stri
     String(settings.transcodeCrf),
     '-pix_fmt',
     'yuv420p',
-    '-c:a',
-    'aac',
-    '-b:a',
-    settings.transcodeAudioBitrate,
-    '-movflags',
-    'frag_keyframe+empty_moov+default_base_moof',
-    '-f',
-    'mp4',
-    'pipe:1'
+    ...aacArgs(settings),
+    ...FMP4_OUTPUT_ARGS
   ]
 }
 

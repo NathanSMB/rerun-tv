@@ -28,6 +28,16 @@
     "src/shared/**/*.ts",
     "tests/**/*.ts",
     "electron.vite.config.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    // The MSE pump is renderer code, but it is deliberately DOM-free so its box
+    // scanner and read-pacing state machine can be unit-tested in Node. Listing
+    // it here is what enforces that: a stray DOM reference fails this project,
+    // whose `lib` has no DOM at all. The DOM-touching half lives in
+    // `player/VideoSurface.tsx`, which is renderer-only.
+    "src/renderer/src/player/mse.ts",
+    // Likewise the store: it reaches the preload bridge through `globalThis`
+    // rather than `window` so its schedule-advance logic — the part that must
+    // never double-spend a pick — can be driven against a fake bridge in Node.
+    "src/renderer/src/store.ts"
   ]
 }

@@ -37,8 +37,12 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
   either one episode or a whole multipart arc, which is what makes arcs
   uninterruptible **and** exactly as likely to air as any single episode.
 - **Play** — a loopback HTTP server fronts ffmpeg and picks the cheapest path
-  that works: serve the file directly, remux losslessly into fragmented MP4, or
-  transcode. The decision is made at scan time, so tuning in is instant.
+  that works: serve the file directly, copy the video into fragmented MP4 and
+  encode only the audio if it has to, or re-encode outright. The decision is made
+  at scan time, so tuning in is instant. The player feeds those pipes to a
+  `MediaSource` it drives itself, which is what keeps a long session from
+  stalling, and it double-buffers the next episode so handoffs cut rather than
+  pause.
 - **Back up** — channels, lineups and progress are one SQLite file, and Settings
   will both write a copy of it and put one back. Restoring validates the file
   first, keeps an automatic copy of the database it replaces, and swaps it in at

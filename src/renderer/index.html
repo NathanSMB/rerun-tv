@@ -6,10 +6,18 @@
     <!--
       Locked down: the renderer only ever loads its own bundle, its own fonts,
       and media from the loopback stream server.
+
+      `media-src` also allows `blob:`, which is not a loosening so much as the
+      other half of `connect-src`: the MSE pump (src/renderer/src/player/mse.ts)
+      fetches a stream itself and hands the bytes to a MediaSource, and a
+      MediaSource is attached to a <video> through an object URL. Without `blob:`
+      here every remuxed and transcoded episode falls back to the plain-src path
+      the pump exists to replace. The bytes still only ever come from
+      127.0.0.1 — that is what `connect-src` pins.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; media-src 'self' http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:*"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; media-src 'self' blob: http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:*"
     />
     <title>Rerun TV</title>
   </head>

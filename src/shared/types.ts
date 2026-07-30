@@ -212,6 +212,13 @@ export interface LibraryShow {
   seasonCount: number
   arcCount: number
   paths: Record<PlaybackPath, number>
+  /**
+   * How many of the `remux` episodes need their soundtrack encoded to AAC on the
+   * way through (AC3, DTS and friends). The video is still a byte copy for all
+   * of them — this is only here so the REMUX tag can stay honest about what
+   * ffmpeg is actually doing.
+   */
+  remuxAudioEncode: number
 }
 
 export interface LibraryOverview {

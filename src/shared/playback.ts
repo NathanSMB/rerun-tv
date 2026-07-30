@@ -16,11 +16,23 @@ import type { PlaybackPath } from './types.js'
 /** Containers Chromium can demux directly. */
 const DIRECT_CONTAINERS = new Set(['mp4', 'm4v', 'mov', 'webm'])
 
-/** Video codecs Chromium decodes in official Electron builds. */
-const SUPPORTED_VIDEO = new Set(['h264', 'avc1', 'vp8', 'vp9', 'av1'])
+/**
+ * Video codecs Chromium decodes in official Electron builds.
+ *
+ * Exported as an array because `db/schema.ts` interpolates it into migration 3's
+ * `UPDATE`, and `services/library.ts` into the Library aggregate — one list, so
+ * the SQL and the decision can never disagree about what "playable" means.
+ */
+export const SUPPORTED_VIDEO_CODECS = ['h264', 'avc1', 'vp8', 'vp9', 'av1'] as const
 
 /** Audio codecs Chromium decodes in official Electron builds. */
-const SUPPORTED_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac'])
+export const SUPPORTED_AUDIO_CODECS = ['aac', 'mp3', 'opus', 'vorbis', 'flac'] as const
+
+const SUPPORTED_VIDEO: ReadonlySet<string> = new Set(SUPPORTED_VIDEO_CODECS)
+const SUPPORTED_AUDIO: ReadonlySet<string> = new Set(SUPPORTED_AUDIO_CODECS)
+
+/** ffprobe reports a stream-less track as `none` (see `library/ffprobe.ts`). */
+const NO_STREAM = 'none'
 
 /**
  * ffprobe names the *demuxer*, not the container, and reports it as a
@@ -71,21 +83,47 @@ export function isAudioSupported(acodec: string): boolean {
 }
 
 /**
+ * Does the audio stream have to be re-encoded on the way into the MP4 pipe?
+ *
+ * A file with no audio at all answers *no*: there is nothing to encode, and the
+ * REMUX tag in the Library would otherwise promise an AAC conversion that never
+ * happens.
+ */
+export function needsAudioTranscode(acodec: string): boolean {
+  const codec = acodec.toLowerCase()
+  if (codec === NO_STREAM) return false
+  return !SUPPORTED_AUDIO.has(codec)
+}
+
+/**
  * - **direct** — a Chromium-native container *and* codec pair: serve the file
  *   with HTTP range support, seeking is native.
- * - **remux** — codecs are fine but the container isn't (the common MKV case):
- *   `ffmpeg -c copy` into a fragmented MP4 pipe, starts in milliseconds.
- * - **transcode** — anything else (HEVC, DTS, 10-bit …): re-encode to
- *   H.264 + AAC.
+ * - **remux** — the video codec is one Chromium decodes, but something else
+ *   isn't: the container (the common MKV case) or the audio codec (the even
+ *   more common AC3 case). ffmpeg copies the video stream into a fragmented MP4
+ *   pipe and, when it has to, encodes *only* the audio to AAC. Either way the
+ *   expensive half — the video — is a byte copy, so this starts in
+ *   milliseconds and costs a few percent of one core.
+ * - **transcode** — the video codec itself is unplayable (HEVC, MPEG-2,
+ *   10-bit …): re-encode to H.264 + AAC.
+ *
+ * The video codec alone decides between remux and transcode, because it is the
+ * only stream whose re-encode is expensive. Before this split, 328 of the 386
+ * episodes in the reference library were being fully re-encoded purely because
+ * they carried AC3 audio — and a full re-encode is what makes a dropped
+ * connection cost a minute of dead air instead of a second (see
+ * `docs/stall-fix-plan.html`).
  */
 export function decidePlaybackPath(
   container: string,
   vcodec: string,
   acodec: string
 ): PlaybackPath {
-  const codecsOk = isVideoSupported(vcodec) && isAudioSupported(acodec)
-  if (!codecsOk) return 'transcode'
-  return DIRECT_CONTAINERS.has(normalizeContainer(container)) ? 'direct' : 'remux'
+  if (!isVideoSupported(vcodec)) return 'transcode'
+  const containerOk = DIRECT_CONTAINERS.has(normalizeContainer(container))
+  // `needsAudioTranscode` rather than `isAudioSupported`, so a genuinely silent
+  // file direct-plays instead of being remuxed for an audio track it hasn't got.
+  return containerOk && !needsAudioTranscode(acodec) ? 'direct' : 'remux'
 }
 
 /** `S04E11`, or `S01E03-E04` for a file holding a double episode. */

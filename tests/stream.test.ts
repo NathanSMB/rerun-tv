@@ -18,7 +18,12 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { openDatabase, type Db } from '@main/db/index.js'
 import { checkCodecs, FfmpegSupervisor, resolveFfmpeg } from '@main/stream/ffmpeg.js'
-import { startStreamServer, type StreamServer } from '@main/stream/server.js'
+import {
+  remuxArgs,
+  startStreamServer,
+  transcodeArgs,
+  type StreamServer
+} from '@main/stream/server.js'
 import { DEFAULT_SETTINGS } from '@shared/types.js'
 
 const DIRECT_BODY = Buffer.from('0123456789'.repeat(100)) // 1000 bytes, easy to index
@@ -33,6 +38,7 @@ let directId: number
 let missingFileId: number
 let remuxId = 0
 let transcodeId = 0
+let remuxAc3Id = 0
 
 /** Insert an episode row directly — the scanner owns the real write path. */
 function insertEpisode(
@@ -40,14 +46,15 @@ function insertEpisode(
   playbackPath: string,
   container: string,
   season: number,
-  episode: number
+  episode: number,
+  acodec = 'aac'
 ): number {
   const info = db
     .prepare(
       `INSERT INTO episodes (show_id, season, episode, path, duration_s, container, vcodec, acodec, playback_path)
-       VALUES (1, ?, ?, ?, 1, ?, 'h264', 'aac', ?)`
+       VALUES (1, ?, ?, ?, 1, ?, 'h264', ?, ?)`
     )
-    .run(season, episode, path, container, playbackPath)
+    .run(season, episode, path, container, acodec, playbackPath)
   return Number(info.lastInsertRowid)
 }
 
@@ -98,6 +105,35 @@ beforeAll(async () => {
     const copy = join(dir, 'sample-transcode.mkv')
     copyFileSync(sample, copy)
     transcodeId = insertEpisode(copy, 'transcode', 'matroska,webm', 1, 4)
+
+    // The phase-1 case: H.264 Chromium can decode, wrapped around a soundtrack
+    // it can't. Video is copied, only the audio is encoded.
+    const ac3 = join(dir, 'sample-ac3.mkv')
+    execFileSync(ffmpeg.ffmpegPath as string, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=160x120:rate=10:duration=1',
+      '-f',
+      'lavfi',
+      '-i',
+      'anullsrc=r=48000:cl=stereo',
+      '-shortest',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'ac3',
+      ac3
+    ])
+    remuxAc3Id = insertEpisode(ac3, 'remux', 'matroska,webm', 1, 5, 'ac3')
   }
 
   server = await startStreamServer({ db, getSettings: () => DEFAULT_SETTINGS })
@@ -195,6 +231,43 @@ describe('direct path', () => {
   })
 })
 
+/**
+ * The MSE pump reads stream bytes with `fetch()` from a `file://`-origin
+ * renderer, which — unlike a `<video src>` — is same-origin-policy gated. Without
+ * these headers every piped episode silently falls back to the old plain-`src`
+ * path that phase 2 exists to retire.
+ */
+describe('CORS', () => {
+  it('allows the renderer to read a direct file', async () => {
+    const res = await fetch(server.urlFor(directId))
+    await res.arrayBuffer()
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+    // A pump on the direct path would still want the length it was told.
+    expect(res.headers.get('access-control-expose-headers')).toMatch(/Content-Length/)
+  })
+
+  it.skipIf(noFfmpeg)('allows the renderer to read a piped stream', async () => {
+    const res = await fetch(server.urlFor(remuxId, 0, 21))
+    await res.arrayBuffer()
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+  })
+
+  it('allows the renderer to read an error body, so ffmpeg’s message survives', async () => {
+    const res = await fetch(server.urlFor(999_999))
+    await res.text()
+    expect(res.status).toBe(404)
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+  })
+
+  it('answers a preflight', async () => {
+    const res = await fetch(server.urlFor(directId), { method: 'OPTIONS' })
+    expect(res.status).toBe(204)
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+    expect(res.headers.get('access-control-allow-methods')).toMatch(/GET/)
+    expect(res.headers.get('access-control-allow-headers')).toMatch(/Range/)
+  })
+})
+
 describe('routing and access control', () => {
   it('404s an unknown episode id', async () => {
     const res = await fetch(server.urlFor(999_999))
@@ -270,6 +343,14 @@ describe.skipIf(noFfmpeg)('piped paths', () => {
     expect(() => server.releaseChannel(9)).not.toThrow()
   })
 
+  it('serves H.264+AC3 down the remux pipe, encoding only the audio', async () => {
+    const res = await fetch(server.urlFor(remuxAc3Id, 0, 11))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('video/mp4')
+    const body = Buffer.from(await res.arrayBuffer())
+    expect(body.subarray(4, 8).toString('latin1')).toBe('ftyp')
+  })
+
   it('surfaces ffmpeg failure as a 500 rather than an empty 200', async () => {
     const broken = join(dir, 'broken.mkv')
     writeFileSync(broken, Buffer.from('this is not a matroska file'))
@@ -277,6 +358,103 @@ describe.skipIf(noFfmpeg)('piped paths', () => {
     const res = await fetch(server.urlFor(id))
     expect(res.status).toBe(500)
     expect(await res.text()).toMatch(/ffmpeg/i)
+  })
+})
+
+/**
+ * The arg builders are the whole of phase 1's cost model, so they are asserted
+ * directly rather than only through a served response: what matters is that the
+ * *video* is never handed to an encoder when Chromium could have decoded it.
+ */
+describe('remuxArgs', () => {
+  const settings = { ...DEFAULT_SETTINGS, transcodeAudioBitrate: '192k' }
+
+  it('copies both streams when the soundtrack is already playable', () => {
+    const args = remuxArgs('/tv/ep.mkv', 0, true, settings)
+    expect(args).toContain('-c')
+    expect(args).toContain('copy')
+    expect(args).not.toContain('aac')
+    expect(args).not.toContain('libx264')
+  })
+
+  it('copies the video and encodes only the audio when it is not', () => {
+    const args = remuxArgs('/tv/ep.mkv', 0, false, settings)
+    const joined = args.join(' ')
+    expect(joined).toContain('-c:v copy')
+    expect(joined).toContain('-c:a aac')
+    expect(joined).toContain('-b:a 192k')
+    // The point of the whole exercise: no video encoder, ever, on this path.
+    expect(args).not.toContain('libx264')
+    expect(args).not.toContain('-crf')
+  })
+
+  it('keeps the fMP4 mux and the pre-input keyframe seek either way', () => {
+    for (const audioOk of [true, false]) {
+      const args = remuxArgs('/tv/ep.mkv', 90, audioOk, settings)
+      expect(args.join(' ')).toContain('-movflags frag_keyframe+empty_moov+default_base_moof')
+      expect(args.at(-1)).toBe('pipe:1')
+      // `-ss` before `-i`, which is what makes the seek fast.
+      expect(args.indexOf('-ss')).toBeLessThan(args.indexOf('-i'))
+      expect(args[args.indexOf('-ss') + 1]).toBe('90')
+    }
+  })
+
+  it('omits -ss entirely at position zero', () => {
+    expect(remuxArgs('/tv/ep.mkv', 0, false, settings)).not.toContain('-ss')
+  })
+
+  /**
+   * The mov muxer copies a source's chapters into a third, `text`-handler track.
+   * Chromium's progressive demuxer ignores it; its MediaSource parser rejects the
+   * whole init segment, which took out every chapter-marked rip until this flag
+   * was added. Asserted on both piped paths because both feed the pump.
+   */
+  it('drops the source’s chapter track, which MediaSource will not parse', () => {
+    for (const args of [
+      remuxArgs('/tv/ep.mp4', 0, true, settings),
+      remuxArgs('/tv/ep.mp4', 0, false, settings),
+      transcodeArgs('/tv/ep.mkv', 0, settings)
+    ]) {
+      expect(args.join(' ')).toContain('-map_chapters -1')
+    }
+  })
+
+  it('maps exactly one video and at most one audio track', () => {
+    const joined = remuxArgs('/tv/ep.mkv', 0, true, settings).join(' ')
+    expect(joined).toContain('-map 0:v:0')
+    // `?` so a silent file still plays rather than failing the mux.
+    expect(joined).toContain('-map 0:a:0?')
+  })
+
+  /**
+   * AAC can only name seven channel layouts with a standard
+   * `channelConfiguration`; anything else needs a Program Config Element, which
+   * Chromium's MediaSource AAC parser refuses. An AC3 `5.1(side)` disc rip — very
+   * ordinary — lands in exactly that hole.
+   */
+  it('constrains the AAC layout so no Program Config Element is emitted', () => {
+    const encoding = remuxArgs('/tv/ep.mkv', 0, false, settings).join(' ')
+    expect(encoding).toContain('-af aformat=channel_layouts=mono|stereo|3.0|4.0|5.0|5.1|7.1')
+    expect(transcodeArgs('/tv/ep.mkv', 0, settings).join(' ')).toContain(
+      '-af aformat=channel_layouts='
+    )
+  })
+
+  it('never puts a filter on a stream copy, which ffmpeg refuses', () => {
+    const copying = remuxArgs('/tv/ep.mkv', 0, true, settings)
+    expect(copying).not.toContain('-af')
+    expect(copying.join(' ')).toContain('-c copy')
+  })
+})
+
+describe('transcodeArgs', () => {
+  it('is still the full re-encode, for the files that genuinely need one', () => {
+    const args = transcodeArgs('/tv/ep.mkv', 0, DEFAULT_SETTINGS)
+    const joined = args.join(' ')
+    expect(joined).toContain('-c:v libx264')
+    expect(joined).toContain(`-preset ${DEFAULT_SETTINGS.transcodePreset}`)
+    expect(joined).toContain(`-crf ${DEFAULT_SETTINGS.transcodeCrf}`)
+    expect(joined).toContain('-c:a aac')
   })
 })
 
@@ -333,6 +511,78 @@ describe('FfmpegSupervisor', () => {
     sup.killIfCurrent('channel:1', current)
     await new Promise<void>((resolve) => current.once('exit', () => resolve()))
     expect(sup.activeKeys()).toEqual([])
+  })
+
+  /**
+   * Key groups are what carry "at most N encoders per channel" now that a
+   * channel legitimately owns two during a handoff (phase 3).
+   */
+  it('killByPrefix retires a whole channel, both of its jobs included', async () => {
+    const sup = new FfmpegSupervisor()
+    const onAir = spawnSleeper(sup, 'channel:3:41')
+    const prewarm = spawnSleeper(sup, 'channel:3:42')
+    const elsewhere = spawnSleeper(sup, 'channel:4:41')
+
+    sup.killByPrefix('channel:3:')
+    await Promise.all(
+      [onAir, prewarm].map((child) => new Promise<void>((r) => child.once('exit', () => r())))
+    )
+    expect(sup.activeKeys()).toEqual(['channel:4:41'])
+    expect(elsewhere.exitCode).toBeNull()
+
+    sup.killAll()
+    await new Promise<void>((r) => elsewhere.once('exit', () => r()))
+  })
+
+  it('killByPrefixExcept spares the job being promoted', async () => {
+    const sup = new FfmpegSupervisor()
+    const outgoing = spawnSleeper(sup, 'channel:3:41')
+    const promoted = spawnSleeper(sup, 'channel:3:42')
+
+    sup.killByPrefixExcept('channel:3:', 'channel:3:42')
+    await new Promise<void>((r) => outgoing.once('exit', () => r()))
+    expect(sup.activeKeys()).toEqual(['channel:3:42'])
+    expect(promoted.exitCode).toBeNull()
+
+    sup.killAll()
+    await new Promise<void>((r) => promoted.once('exit', () => r()))
+  })
+
+  /**
+   * Newest-wins, and by spawn order rather than by a millisecond clock: two jobs
+   * can start inside the same millisecond, and a tie would make the choice
+   * arbitrary — occasionally killing the stream that was just tuned in.
+   */
+  it('trimGroup kills the oldest jobs in a group, never the newest', async () => {
+    const sup = new FfmpegSupervisor()
+    const oldest = spawnSleeper(sup, 'channel:3:41')
+    const middle = spawnSleeper(sup, 'channel:3:42')
+    const newest = spawnSleeper(sup, 'channel:3:43')
+    const otherChannel = spawnSleeper(sup, 'channel:9:41')
+
+    sup.trimGroup('channel:3:', 2)
+    await new Promise<void>((r) => oldest.once('exit', () => r()))
+
+    expect(sup.activeKeys().sort()).toEqual(['channel:3:42', 'channel:3:43', 'channel:9:41'])
+    expect(middle.exitCode).toBeNull()
+    expect(newest.exitCode).toBeNull()
+    expect(otherChannel.exitCode).toBeNull()
+
+    // A re-spawn makes a key the newest again — which is what a seek does.
+    spawnSleeper(sup, 'channel:3:42')
+    sup.trimGroup('channel:3:', 1)
+    await new Promise<void>((r) => newest.once('exit', () => r()))
+    expect(sup.activeKeys().sort()).toEqual(['channel:3:42', 'channel:9:41'])
+
+    sup.killAll()
+  })
+
+  it('trimGroup is a no-op below the limit', () => {
+    const sup = new FfmpegSupervisor()
+    spawnSleeper(sup, 'channel:3:41')
+    sup.trimGroup('channel:3:', 2)
+    expect(sup.activeKeys()).toEqual(['channel:3:41'])
+    sup.killAll()
   })
 
   it('drops the slot when a job exits on its own', async () => {

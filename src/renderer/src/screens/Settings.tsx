@@ -342,7 +342,8 @@ export default function Settings(): ReactElement {
           <div>
             <div className="set-label">Pre-warm next episode</div>
             <div className="set-hint">
-              Start the next stream in the last 30 s for gapless handoffs
+              Buffer the next episode during the last 30 s so handoffs cut instantly. Runs a
+              second stream for that half-minute.
             </div>
           </div>
           <Toggle

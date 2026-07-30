@@ -10,6 +10,11 @@
  * schema, append a new entry to `MIGRATIONS`; never edit an existing one.
  */
 
+import { SUPPORTED_VIDEO_CODECS } from '@shared/playback.js'
+
+/** `'h264','avc1',…` — the video codecs migration 3 re-labels, as a SQL list. */
+const VIDEO_CODEC_SQL_LIST = SUPPORTED_VIDEO_CODECS.map((codec) => `'${codec}'`).join(', ')
+
 export const MIGRATIONS: string[] = [
   // -- 1 ---------------------------------------------------------------------
   `
@@ -119,5 +124,23 @@ export const MIGRATIONS: string[] = [
     FOREIGN KEY (channel_id, show_id)
       REFERENCES channel_shows(channel_id, show_id) ON DELETE CASCADE
   );
+  `,
+  // -- 3 ---------------------------------------------------------------------
+  //
+  // The audio-only transcode path (docs/stall-fix-plan.html, phase 1). Every
+  // file whose *video* Chromium can decode now goes down the remux pipe, where
+  // the video is a byte copy and only the audio is encoded. Previously an AC3
+  // soundtrack dragged a perfectly playable H.264 stream onto libx264 — which
+  // is what turned a dropped connection into a minute of dead air.
+  //
+  // Re-derived here rather than left to the next rescan, because a rescan
+  // re-probes hundreds of files to reach the same answer this UPDATE knows
+  // already. 'remux' is an existing member of the CHECK constraint, so there is
+  // no table rebuild, and a later full rescan produces identical labels.
+  `
+  UPDATE episodes
+     SET playback_path = 'remux'
+   WHERE playback_path = 'transcode'
+     AND LOWER(vcodec) IN (${VIDEO_CODEC_SQL_LIST});
   `
 ]

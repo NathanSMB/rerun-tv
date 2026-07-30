@@ -140,6 +140,11 @@
   border-color: color-mix(in srgb, var(--amber) 40%, transparent);
 }
 
+/* "· 12 → AAC": a qualifier on the REMUX count, not a count of its own. */
+.pipetag-sub {
+  color: var(--steel-dim);
+}
+
 .s-ok {
   color: var(--signal);
   font-family: var(--mono);

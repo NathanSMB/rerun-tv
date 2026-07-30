@@ -15,9 +15,9 @@
  * the transcode path.
  */
 
-import { app, BrowserWindow, shell } from 'electron'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { app, BrowserWindow, net, protocol, shell } from 'electron'
+import { dirname, join, normalize, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { EVENTS } from '../shared/ipc.js'
 import type { SystemInfo } from '../shared/types.js'
 import { closeDb, openDatabase, setDb } from './db/index.js'
@@ -36,6 +36,77 @@ import { checkCodecs, resolveFfmpeg } from './stream/ffmpeg.js'
 import { broadcast, registerHandlers } from './ipc/handlers.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * The renderer's origin, `app://bundle`.
+ *
+ * A packaged Electron app would ordinarily load its renderer over `file://`, and
+ * this one did. But a `file://` document has an *opaque* origin, and Chromium
+ * refuses blob URLs from one — not just for media, for anything: even
+ * `fetch(URL.createObjectURL(new Blob(['hi'])))` fails. The MSE pump
+ * (`renderer/player/mse.ts`) attaches its `MediaSource` to the `<video>` through
+ * exactly such a URL, and Chromium answers with
+ * `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`.
+ *
+ * (The `srcObject` route is not an escape: `HTMLMediaElement.srcObject` accepts
+ * only a `MediaStream` or a `MediaSourceHandle`, and `MediaSource.handle` is
+ * exposed in workers only — while a worker cannot be loaded from `file://`
+ * either. Verified against this Electron build, not assumed.)
+ *
+ * So the renderer gets a real origin. `standard` makes it URL-parseable and
+ * origin-bearing, `secure` puts it in a secure context (blob URLs, and everything
+ * else that requires one), and `supportFetchAPI`/`corsEnabled` mean the pump's
+ * cross-origin `fetch` to the loopback stream server behaves like an ordinary
+ * CORS request — which the server answers with `Access-Control-Allow-Origin`.
+ *
+ * Nothing about the threat model changes: the scheme serves exactly one
+ * directory, the bundle we shipped.
+ */
+const APP_SCHEME = 'app'
+const APP_ORIGIN = `${APP_SCHEME}://bundle`
+
+// Must run before `app.ready`, hence module scope rather than inside bootstrap.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true
+    }
+  }
+])
+
+/**
+ * Serve the built renderer under `app://bundle/`.
+ *
+ * The path is resolved and then checked to be inside the bundle directory. A
+ * request that escapes it is either a bug or an attack; either way it gets a 404
+ * rather than a file. `..` in a `standard` scheme's URL is normalised away by the
+ * URL parser before we ever see it, so this is belt and braces — which is the
+ * right amount for the one code path that turns a URL into a filesystem read.
+ */
+function registerRendererProtocol(): void {
+  const root = normalize(join(__dirname, '..', 'renderer'))
+
+  protocol.handle(APP_SCHEME, async (request) => {
+    let pathname: string
+    try {
+      pathname = decodeURIComponent(new URL(request.url).pathname)
+    } catch {
+      return new Response('bad request', { status: 400 })
+    }
+
+    const relative = pathname.replace(/^\/+/, '')
+    const target = normalize(join(root, relative === '' ? 'index.html' : relative))
+    if (target !== root && !target.startsWith(root + sep)) {
+      return new Response('not found', { status: 404 })
+    }
+    return net.fetch(pathToFileURL(target).toString())
+  })
+}
 
 let mainWindow: BrowserWindow | null = null
 let streamServer: StreamServer | null = null
@@ -71,9 +142,11 @@ function createWindow(): void {
   })
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
 
+  // Dev already serves the renderer over http://localhost, which is a real origin
+  // too; production gets `app://bundle` for the same reason (see APP_SCHEME).
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) void mainWindow.loadURL(devUrl)
-  else void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  else void mainWindow.loadURL(`${APP_ORIGIN}/index.html`)
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -129,6 +202,7 @@ async function bootstrap(): Promise<void> {
     restart
   })
 
+  registerRendererProtocol()
   createWindow()
 
   // Background work, after the window is on its way.

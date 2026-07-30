@@ -85,7 +85,30 @@ store subscribes to all three once, in `init()`.
 
 The server binds to `127.0.0.1` on an OS-assigned port, rejects non-loopback
 `Host` headers, and takes episode **ids** — never filesystem paths — from the
-client.
+client. Responses carry `Access-Control-Allow-Origin: *`, because the renderer
+reads stream bytes itself now (see below).
+
+## Why the renderer has its own scheme instead of `file://`
+
+The renderer is served from `app://bundle`, a scheme registered as `standard` and
+`secure` and backed by a `protocol.handle` that serves exactly one directory — the
+built bundle.
+
+It used to load over `file://`, which works right up until something needs a real
+origin. A `file://` document has an **opaque** origin, and Chromium refuses blob
+URLs from one — not only for media, for anything; even
+`fetch(URL.createObjectURL(new Blob(['hi'])))` fails. The MSE pump
+(`renderer/player/mse.ts`) attaches its `MediaSource` to the `<video>` element
+through exactly such a URL, so on `file://` every remuxed and transcoded episode
+died with `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`. The
+`srcObject` route is no escape either: it accepts only a `MediaStream` or a
+`MediaSourceHandle`, and `MediaSource.handle` exists in workers alone — while a
+worker cannot be loaded from `file://` in the first place.
+
+A real origin also makes the stream server's CORS story ordinary rather than
+special-cased. Nothing about the threat model changes: `will-navigate` is still
+refused, external links still open in the user's browser, and the scheme serves
+only the bundle we shipped.
 
 ## Layering
 

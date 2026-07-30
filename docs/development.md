@@ -37,6 +37,7 @@ and subsequent installs are non-interactive.)
 | `npm run typecheck` | `tsc --noEmit` over the Node target and the web target |
 | `npm test` | Vitest, once |
 | `npm run test:watch` | Vitest, watching |
+| `npm run soak` | Drive the built app over CDP and fail on playback stalls — see below |
 | `npm run dist` | Build and package a Linux **AppImage** into `release/` |
 
 ## Project layout
@@ -124,3 +125,38 @@ isn't installed.
 because the whole point of that module is filesystem behaviour — what survives a
 rejected import, what gets copied before a swap, what happens to a stale WAL
 sidecar. An in-memory database would test none of it.
+
+`mse.test.ts` drives the MSE pump's box scanner and read/append/evict state
+machine against bytes a real ffmpeg produced, with the exact arguments the stream
+server uses. That works in Node only because `player/mse.ts` is deliberately
+DOM-free and is listed in `tsconfig.node.json`, so a stray DOM reference fails the
+build. `handoff.test.ts` drives the store's schedule-advance logic against the
+real scheduler over a real database, with only the IPC hop faked — the one thing
+worth that much scaffolding, because getting it wrong double-spends the schedule.
+
+## The soak harness
+
+`scripts/soak.mjs` is deliberately *not* part of `npm test`: it needs a real
+library, a display, and minutes rather than milliseconds. It launches the built
+app with `--remote-debugging-port`, tunes a channel, plays several episodes at an
+accelerated `playbackRate`, and fails on any stall over three seconds, on
+sustained over-budget encoder counts, or on an episode airing twice.
+
+```
+npm run build && npm run rebuild:electron   # it runs the real app
+npm run soak
+node scripts/soak.mjs --episodes 4 --rate 12 --channel 2
+```
+
+Two things about it are worth knowing:
+
+- `XDG_DATA_HOME=/tmp/somewhere` runs it against a throwaway copy of the library,
+  so a soak never touches your real database.
+- `--eval '<expression>'` attaches to the renderer, evaluates one expression, and
+  prints it. That is how the three Chromium constraints documented in
+  [playback.md](playback.md) were found — bisecting an init segment inside the
+  real app beats reasoning about the spec.
+
+It also strips `ELECTRON_RUN_AS_NODE` from the child environment. If that variable
+is set, the Electron binary boots as a plain Node interpreter — no window, no
+renderer, no debugger port, and nothing that says so.

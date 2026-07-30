@@ -242,23 +242,36 @@ describe('getLibraryOverview', () => {
     const show = upsertShow(db, 'Gargoyles', '/tv/Gargoyles')
     const a = upsertEpisode(db, episode(show.id, 1, 1, { playbackPath: 'direct' }))
     const b = upsertEpisode(db, episode(show.id, 1, 2, { playbackPath: 'remux' }))
+    // Remux too, but the soundtrack has to be encoded on the way through — the
+    // distinction the REMUX tag reports as "· 1 → AAC".
+    upsertEpisode(db, episode(show.id, 1, 3, { playbackPath: 'remux', acodec: 'ac3' }))
     upsertEpisode(db, episode(show.id, 2, 1, { playbackPath: 'transcode' }))
     createArc(db, show.id, 'Awakening', [a, b], 'auto')
     addUnmatched(db, '/tv/junk.mkv', 'unparsed', 1, 2)
 
     const overview = getLibraryOverview(db)
-    expect(overview.totalEpisodes).toBe(3)
+    expect(overview.totalEpisodes).toBe(4)
     expect(overview.unmatched).toHaveLength(1)
     expect(overview.shows).toEqual([
       {
         id: show.id,
         title: 'Gargoyles',
-        episodeCount: 3,
+        episodeCount: 4,
         seasonCount: 2,
         arcCount: 1,
-        paths: { direct: 1, remux: 1, transcode: 1 }
+        paths: { direct: 1, remux: 2, transcode: 1 },
+        remuxAudioEncode: 1
       }
     ])
+  })
+
+  it('does not count a silent remuxed file as needing an audio encode', () => {
+    const show = upsertShow(db, 'Silent', '/tv/Silent')
+    upsertEpisode(db, episode(show.id, 1, 1, { playbackPath: 'remux', acodec: 'none' }))
+    expect(getLibraryOverview(db).shows[0]).toMatchObject({
+      paths: { direct: 0, remux: 1, transcode: 0 },
+      remuxAudioEncode: 0
+    })
   })
 
   it('reports zeroes for a show with no episodes', () => {
@@ -267,7 +280,8 @@ describe('getLibraryOverview', () => {
       episodeCount: 0,
       seasonCount: 0,
       arcCount: 0,
-      paths: { direct: 0, remux: 0, transcode: 0 }
+      paths: { direct: 0, remux: 0, transcode: 0 },
+      remuxAudioEncode: 0
     })
   })
 })

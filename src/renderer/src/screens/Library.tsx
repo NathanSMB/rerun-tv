@@ -40,6 +40,22 @@ function byAiring(a: Episode, b: Episode): number {
   return a.season - b.season || a.episode - b.episode
 }
 
+/**
+ * What REMUX actually means for this show. The video is a stream copy either
+ * way; the only variable is whether ffmpeg also has to encode the soundtrack,
+ * which is the common case for anything carrying AC3 or DTS.
+ */
+function remuxHint(show: LibraryShow): string {
+  if (show.paths.remux === 0) return 'No files on the remux path.'
+  const copy = show.paths.remux - show.remuxAudioEncode
+  const parts = [`${plural(show.paths.remux, 'file')} copied straight through, video untouched`]
+  if (show.remuxAudioEncode > 0) {
+    parts.push(`${show.remuxAudioEncode} with the soundtrack encoded to AAC`)
+  }
+  if (copy > 0 && show.remuxAudioEncode > 0) parts.push(`${copy} with the audio copied too`)
+  return `${parts.join(' · ')}.`
+}
+
 export default function Library(): ReactElement {
   const library = useStore((s) => s.library)
   const shows = useStore((s) => s.shows)
@@ -265,7 +281,12 @@ export default function Library(): ReactElement {
                   </span>
                   <span className="pipetags">
                     <span className="pipetag">DIRECT {show.paths.direct}</span>
-                    <span className="pipetag">REMUX {show.paths.remux}</span>
+                    <span className="pipetag" title={remuxHint(show)}>
+                      REMUX {show.paths.remux}
+                      {show.remuxAudioEncode > 0 && (
+                        <span className="pipetag-sub"> · {show.remuxAudioEncode} → AAC</span>
+                      )}
+                    </span>
                     <span className="pipetag warn">TRANSCODE {show.paths.transcode}</span>
                   </span>
                   <span className="s-ok">✓ READY</span>

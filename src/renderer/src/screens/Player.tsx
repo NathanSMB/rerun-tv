@@ -4,32 +4,54 @@
  * Full-bleed video with an OSD layer that rises on mouse move or key press and
  * fades after `settings.osdHideAfterS` seconds of idle.
  *
- * Two decisions in here are load-bearing and non-obvious:
+ * Four decisions in here are load-bearing and non-obvious:
  *
- * 1. **Fullscreen is requested on the stage wrapper, never on the `<video>`.**
- *    The wrapper holds both the video and the OSD, so an episode handoff — which
- *    is just a `src` swap on the video inside it — cannot take the fullscreen
- *    element away with it. Requesting fullscreen on the video itself would drop
- *    out of fullscreen on every auto-advance, and would also hide our OSD behind
- *    Chromium's native controls.
+ * 1. **Fullscreen is requested on the stage wrapper, never on a `<video>`.**
+ *    The wrapper holds both videos and the OSD, so an episode handoff — which
+ *    swaps which element is on top — cannot take the fullscreen element away with
+ *    it. Requesting fullscreen on a video would drop out of fullscreen on every
+ *    auto-advance, and would also hide our OSD behind Chromium's native controls.
  *
  * 2. **Seeking is done by loading a new URL, not by setting `currentTime`.**
  *    The remux and transcode paths (plan §6) are open-ended ffmpeg pipes with no
  *    byte ranges and no known length, so the browser cannot seek them. The
  *    stream server's contract is `/stream/<id>?t=<seconds>`: it restarts ffmpeg
  *    at `-ss`. Because the fresh stream then reports `currentTime` from zero, we
- *    keep the requested position in `seekOffset` and render
- *    `seekOffset + video.currentTime` everywhere a position is shown. Only the
- *    `direct` path — a real file served with range requests — seeks natively.
+ *    keep the requested position in the slot's `offset` and render
+ *    `offset + videoTime` everywhere a position is shown. Only the `direct` path
+ *    — a real file served with range requests — seeks natively.
+ *
+ * 3. **The pipes are played through MediaSource, not through `src`.**
+ *    See `player/mse.ts`. Handing an unseekable pipe to Chromium's progressive
+ *    loader is what produced the minute-long freezes; the pump owns read pace so
+ *    the connection is never abandoned. That lives entirely in `VideoSurface`,
+ *    which this screen treats as "a `<video>` that knows how to play our URLs".
+ *
+ * 4. **There are two video elements, and a handoff is a swap, not a load.**
+ *    Thirty seconds before the end of an episode the store commits the next pick
+ *    and this screen starts buffering it in a hidden standby surface. On `ended`
+ *    the store promotes that pick, the stage flips which surface is on top, and
+ *    the already-buffered element simply starts playing — no tune-in latency, no
+ *    black frame. With `prewarmNext` off nothing is prewarmed and the second
+ *    surface stays empty, which is exactly the single-element behaviour.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX, KeyboardEvent, PointerEvent } from 'react'
 import { formatDuration } from '@shared/playback.js'
+import type { NowPlaying } from '@shared/types.js'
+import VideoSurface, {
+  type VideoSource,
+  type VideoSurfaceHandle
+} from '../player/VideoSurface.js'
 import { useStore } from '../store.js'
 import './Player.css'
 
-/** Seconds of remaining runtime that trigger the "up next" toast (plan §6). */
+/**
+ * Seconds of remaining runtime that trigger the "up next" toast *and* the
+ * prewarm (plan §6). One window, deliberately: the toast is the user-visible
+ * promise that the next episode is ready, and now it actually is.
+ */
 const UP_NEXT_WINDOW_S = 30
 
 /** How long the channel banner stays up after a tune-in or a handoff. */
@@ -187,42 +209,114 @@ function Slider({
 }
 
 // ---------------------------------------------------------------------------
+// The stage
+// ---------------------------------------------------------------------------
+
+/** Which of the two surfaces we mean. */
+type SlotId = 'a' | 'b'
+
+/** What one surface is playing, plus the display offset a URL-seek left behind. */
+interface Slot {
+  episodeId: number
+  url: string
+  /** Seconds the stream was started at; added to `currentTime` for display. */
+  offset: number
+  source: VideoSource
+}
+
+interface StageState {
+  active: SlotId
+  a: Slot | null
+  b: Slot | null
+  /** Per-slot reload counter: Retry re-opens one stream without touching the other. */
+  generation: { a: number; b: number }
+}
+
+const other = (slot: SlotId): SlotId => (slot === 'a' ? 'b' : 'a')
+
+function slotFor(playing: NowPlaying, offset = 0, url?: string): Slot {
+  const streamUrl = url ?? playing.streamUrl
+  return {
+    episodeId: playing.episode.id,
+    url: streamUrl,
+    offset,
+    source: {
+      // Identity of the stream, not of the episode: a seek must open a new one.
+      key: `${playing.episode.id}@${offset}`,
+      url: streamUrl,
+      playbackPath: playing.episode.playbackPath,
+      // What is left of the episode from where this stream starts — the pipe's
+      // own timestamps restart at zero after an `-ss` seek.
+      durationS: Math.max(1, playing.episode.durationS - offset)
+    }
+  }
+}
+
+function writeSlot(stage: StageState, slot: SlotId, value: Slot | null): StageState {
+  return slot === 'a' ? { ...stage, a: value } : { ...stage, b: value }
+}
+
+const EMPTY_STAGE: StageState = { active: 'a', a: null, b: null, generation: { a: 0, b: 0 } }
+
+/**
+ * Fold a new `nowPlaying` into the stage.
+ *
+ * The important branch is the first one: when the standby already holds the
+ * episode the store just promoted, the handoff is a *flip* — the element keeps
+ * its buffer and its ffmpeg, and playback starts on the next frame. Anything
+ * else is an ordinary load into the active surface, which also discards a
+ * standby that is now stale (a skip mid-prewarm, say).
+ */
+function reconcile(stage: StageState, playing: NowPlaying | null): StageState {
+  if (playing === null) return { ...EMPTY_STAGE, active: stage.active, generation: stage.generation }
+
+  const standbySlot = other(stage.active)
+  const standby = stage[standbySlot]
+  if (standby !== null && standby.episodeId === playing.episode.id) {
+    return writeSlot({ ...stage, active: standbySlot }, stage.active, null)
+  }
+  return writeSlot(writeSlot(stage, stage.active, slotFor(playing)), standbySlot, null)
+}
+
+// ---------------------------------------------------------------------------
 // Player
 // ---------------------------------------------------------------------------
 
 export default function Player(): JSX.Element | null {
   const nowPlaying = useStore((s) => s.nowPlaying)
+  const pendingNext = useStore((s) => s.pendingNext)
   const upNext = useStore((s) => s.upNext)
   const volume = useStore((s) => s.volume)
   const muted = useStore((s) => s.muted)
   const osdHideAfterS = useStore((s) => s.settings.osdHideAfterS)
   const prewarmNext = useStore((s) => s.settings.prewarmNext)
   const advance = useStore((s) => s.advance)
+  const prewarm = useStore((s) => s.prewarm)
   const leavePlayer = useStore((s) => s.leavePlayer)
   const setVolume = useStore((s) => s.setVolume)
   const toggleMute = useStore((s) => s.toggleMute)
 
   const stageRef = useRef<HTMLDivElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const surfaceA = useRef<VideoSurfaceHandle | null>(null)
+  const surfaceB = useRef<VideoSurfaceHandle | null>(null)
 
   const episodeId = nowPlaying?.episode.id ?? null
-  const streamUrl = nowPlaying?.streamUrl ?? ''
   const totalS = nowPlaying?.episode.durationS ?? 0
 
-  /**
-   * The source actually rendered, plus the offset it was started at. Both are
-   * replaced atomically by a seek, and reset together whenever the episode
-   * changes — an offset left over from the previous episode would poison every
-   * timecode on screen.
-   */
-  const [source, setSource] = useState({ episodeId, url: streamUrl, offset: 0 })
-  if (source.episodeId !== episodeId) {
-    // Adjusting state during render (rather than in an effect) so the `<video>`
-    // never commits one frame still pointing at the previous episode's stream.
-    setSource({ episodeId, url: streamUrl, offset: 0 })
+  const [stage, setStage] = useState<StageState>(() => reconcile(EMPTY_STAGE, nowPlaying))
+  const [videoTime, setVideoTime] = useState(0)
+
+  if ((stage[stage.active]?.episodeId ?? null) !== episodeId) {
+    // Adjusting state during render (rather than in an effect) so no surface ever
+    // commits a frame still pointing at the previous episode's stream. A promoted
+    // standby is paused at zero, so the timecode resets with it.
+    setStage(reconcile(stage, nowPlaying))
+    setVideoTime(0)
   }
 
-  const [videoTime, setVideoTime] = useState(0)
+  const activeSlot = stage[stage.active]
+  const standbySlot = stage[other(stage.active)]
+
   const [scrubPreview, setScrubPreview] = useState<number | null>(null)
   const [paused, setPaused] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -242,13 +336,22 @@ export default function Player(): JSX.Element | null {
   const wantsPlayRef = useRef(true)
   /** Timestamp of the last browser-initiated fullscreen exit — see the Esc map. */
   const leftFullscreenAtRef = useRef(0)
+  /** The episode we have already asked to prewarm after, so we ask exactly once. */
+  const prewarmedAfterRef = useRef<number | null>(null)
 
-  const position = scrubPreview ?? source.offset + videoTime
+  const offset = activeSlot?.offset ?? 0
+  const position = scrubPreview ?? offset + videoTime
   const remainingS = totalS - position
   const chromeVisible = osdVisible || failed
   const showBanner = bannerFlash || chromeVisible
-  const showToast =
-    prewarmNext && upNext != null && !failed && remainingS <= UP_NEXT_WINDOW_S && remainingS > 0
+  const inUpNextWindow = remainingS <= UP_NEXT_WINDOW_S && remainingS > 0
+  const showToast = prewarmNext && upNext != null && !failed && inUpNextWindow
+
+  /** The element on air. Everything transport-related goes through this. */
+  const activeVideo = useCallback((): HTMLVideoElement | null => {
+    const handle = stage.active === 'a' ? surfaceA.current : surfaceB.current
+    return handle?.element ?? null
+  }, [stage.active])
 
   // ---- OSD visibility -----------------------------------------------------
 
@@ -281,28 +384,92 @@ export default function Player(): JSX.Element | null {
     setBannerFlash(true)
     setFailed(false)
     wantsPlayRef.current = true
+    prewarmedAfterRef.current = null
     const id = window.setTimeout(() => setBannerFlash(false), BANNER_MS)
     return () => window.clearTimeout(id)
   }, [episodeId])
 
+  // ---- prewarm and handoff ------------------------------------------------
+
+  /**
+   * T−30s: ask the store to commit the next pick and start its encoder. Keyed on
+   * the *boolean* window rather than on `remainingS`, so this fires once per
+   * episode instead of four times a second, and guarded by episode id so a seek
+   * back into the window cannot ask twice.
+   */
+  useEffect(() => {
+    if (!prewarmNext || !inUpNextWindow || failed) return
+    if (episodeId == null || prewarmedAfterRef.current === episodeId) return
+    prewarmedAfterRef.current = episodeId
+    void prewarm()
+  }, [prewarmNext, inUpNextWindow, failed, episodeId, prewarm])
+
+  /** Mirror the store's pending pick into the standby surface, and drop it when it goes. */
+  useEffect(() => {
+    setStage((current) => {
+      const slot = other(current.active)
+      const clear = current[slot] === null ? current : writeSlot(current, slot, null)
+      if (pendingNext === null) return clear
+
+      /**
+       * A channel whose lineup has exactly one playable unit picks the episode it
+       * is already playing. There is nothing to prewarm — and worse, the standby
+       * would request the same stream URL on the same channel, which is the same
+       * encoder slot, and taking that slot would kill the stream on screen. The
+       * handoff for this case is an ordinary reload, which costs tune-in latency
+       * on a channel with one episode in it. Fine.
+       */
+      if (pendingNext.episode.id === current[current.active]?.episodeId) return clear
+
+      if (current[slot]?.episodeId === pendingNext.episode.id) return current
+      return writeSlot(current, slot, slotFor(pendingNext))
+    })
+  }, [pendingNext])
+
+  /**
+   * The swap itself. Runs when `stage.active` changes — i.e. after a promotion —
+   * and is what turns a buffered standby into the picture: raise its pump to the
+   * full read targets, re-assert volume (it was muted while hidden), and play.
+   */
+  useEffect(() => {
+    const handle = stage.active === 'a' ? surfaceA.current : surfaceB.current
+    const video = handle?.element
+    if (!video) return
+    handle.promote()
+    // The standby was muted while hidden; it is the picture now.
+    applyVolume(video)
+    if (wantsPlayRef.current && video.paused) void video.play().catch(() => undefined)
+    // Keyed on the swap alone: `applyVolume` changing is the volume effect's job,
+    // and re-running this on it would fight the transport.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage.active])
+
   // ---- volume -------------------------------------------------------------
 
   /**
-   * The store owns volume/mute (it persists them); the media element is a
-   * mirror of it, re-applied after every source swap because a fresh load
-   * resets nothing but is cheap to re-assert.
+   * The store owns volume/mute (it persists them); the element on air is a
+   * mirror of it. Applied here when the *store* changes, and again from
+   * `loadedmetadata` when a fresh element arrives — an effect cannot cover that
+   * second case, because a surface's element appears through a ref callback and
+   * none of this effect's dependencies change when it does.
    */
+  const applyVolume = useCallback(
+    (video: HTMLVideoElement) => {
+      video.volume = volume
+      video.muted = muted
+    },
+    [volume, muted]
+  )
+
   useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-    video.volume = volume
-    video.muted = muted
-  }, [volume, muted, source.url])
+    const video = activeVideo()
+    if (video) applyVolume(video)
+  }, [applyVolume, activeVideo, activeSlot?.source.key])
 
   // ---- transport ----------------------------------------------------------
 
   const togglePlay = useCallback(() => {
-    const video = videoRef.current
+    const video = activeVideo()
     if (!video) return
     if (video.paused) {
       wantsPlayRef.current = true
@@ -311,7 +478,7 @@ export default function Player(): JSX.Element | null {
       wantsPlayRef.current = false
       video.pause()
     }
-  }, [])
+  }, [activeVideo])
 
   /**
    * Perform the seek. `direct` files are real files behind range requests, so
@@ -320,7 +487,7 @@ export default function Player(): JSX.Element | null {
    */
   const performSeek = useCallback(
     (seconds: number) => {
-      const video = videoRef.current
+      const video = activeVideo()
       if (!video || !nowPlaying) return
       const target = clamp(seconds, Math.max(0, totalS - 1))
 
@@ -335,16 +502,15 @@ export default function Player(): JSX.Element | null {
 
       const base = nowPlaying.streamUrl
       const sep = base.includes('?') ? '&' : '?'
+      const at = Math.floor(target)
       wantsPlayRef.current = true
       setVideoTime(0)
       setScrubPreview(null)
-      setSource({
-        episodeId: nowPlaying.episode.id,
-        url: `${base}${sep}t=${Math.floor(target)}`,
-        offset: Math.floor(target)
-      })
+      setStage((current) =>
+        writeSlot(current, current.active, slotFor(nowPlaying, at, `${base}${sep}t=${at}`))
+      )
     },
-    [nowPlaying, totalS]
+    [activeVideo, nowPlaying, totalS]
   )
 
   const commitSeek = useCallback(
@@ -384,12 +550,17 @@ export default function Player(): JSX.Element | null {
   const skip = useCallback(() => runAdvance(false), [runAdvance])
   const handleEnded = useCallback(() => runAdvance(true), [runAdvance])
 
+  /** Re-open the active surface's stream from scratch, standby untouched. */
   const retry = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
     setFailed(false)
     wantsPlayRef.current = true
-    video.load()
+    setStage((current) => ({
+      ...current,
+      generation: {
+        ...current.generation,
+        [current.active]: current.generation[current.active] + 1
+      }
+    }))
   }, [])
 
   // ---- fullscreen ---------------------------------------------------------
@@ -398,7 +569,7 @@ export default function Player(): JSX.Element | null {
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined)
     } else {
-      // The stage, never the video — see the file header.
+      // The stage, never a video — see the file header.
       void stageRef.current?.requestFullscreen().catch(() => undefined)
     }
   }, [])
@@ -498,6 +669,39 @@ export default function Player(): JSX.Element | null {
 
   const volumePct = Math.round((muted ? 0 : volume) * 100)
 
+  /**
+   * Both surfaces are always mounted, so promoting one is a class change rather
+   * than a mount — a mount would throw away the buffer the standby exists to
+   * have built. The inactive one is `opacity: 0` rather than `display: none`, so
+   * Chromium keeps its decoder warm.
+   */
+  const surface = (slot: SlotId): JSX.Element => {
+    const isActive = stage.active === slot
+    return (
+      <VideoSurface
+        key={slot}
+        source={stage[slot]?.source ?? null}
+        active={isActive}
+        standby={!isActive}
+        generation={stage.generation[slot]}
+        handleRef={slot === 'a' ? surfaceA : surfaceB}
+        className={`video${isActive ? ' is-active' : ''}`}
+        onStreamError={() => setFailed(true)}
+        onLoadStart={() => setVideoTime(0)}
+        onLoadedMetadata={(video) => {
+          applyVolume(video)
+          if (wantsPlayRef.current) void video.play().catch(() => undefined)
+        }}
+        onLoadedData={() => setFailed(false)}
+        onTimeUpdate={setVideoTime}
+        onPlay={() => setPaused(false)}
+        onPause={() => setPaused(true)}
+        onEnded={handleEnded}
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+
   return (
     <div
       ref={stageRef}
@@ -505,25 +709,8 @@ export default function Player(): JSX.Element | null {
       onMouseMove={reveal}
       onPointerDown={reveal}
     >
-      <video
-        ref={videoRef}
-        className="video"
-        src={source.url}
-        autoPlay
-        playsInline
-        preload="auto"
-        onLoadStart={() => setVideoTime(0)}
-        onLoadedMetadata={() => {
-          const video = videoRef.current
-          if (video && wantsPlayRef.current) void video.play().catch(() => undefined)
-        }}
-        onLoadedData={() => setFailed(false)}
-        onTimeUpdate={(e) => setVideoTime(e.currentTarget.currentTime)}
-        onPlay={() => setPaused(false)}
-        onPause={() => setPaused(true)}
-        onEnded={handleEnded}
-        onError={() => setFailed(true)}
-      />
+      {surface('a')}
+      {surface('b')}
 
       <div className={`banner${showBanner ? '' : ' is-hidden'}`}>
         <span className="b-num">{dial}</span>
@@ -543,6 +730,7 @@ export default function Player(): JSX.Element | null {
         <div className="toast" role="status">
           Up next on CH {dial} · <b>{upNext.showTitle}</b> <code>{upNext.code}</code>
           {upNext.title ? ` “${upNext.title}”` : ''}
+          {standbySlot !== null && <span className="toast-ready"> · ready</span>}
         </div>
       )}
 

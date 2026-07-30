@@ -76,12 +76,40 @@ export interface RerunApi {
   player: {
     /** Tune in: commit the scheduler's next pick and start playing it. */
     tune(channelId: number): Promise<NowPlaying | null>
-    /** Advance — auto-advance on `ended`, or a user skip. */
+    /**
+     * Advance — a user skip, or an auto-advance on `ended` with nothing
+     * prewarmed. **Commits a pick**, so it must not be called when the store is
+     * holding a `pendingNext`: that would spend two schedule steps for one
+     * episode watched.
+     */
     next(channelId: number): Promise<NowPlaying | null>
+    /**
+     * Commit the *next* pick early, ~30s before the current episode ends, and
+     * return everything the standby player needs to start buffering it
+     * (docs/stall-fix-plan.html, phase 3).
+     *
+     * This runs the same committing `pickNext` as `next` — cursor, shuffle bag,
+     * arc hand-out and play-log entry, exactly once — which is why the renderer
+     * must promote the result rather than asking again. Nothing here releases the
+     * current encoder: the point is for both to run for the last half-minute.
+     */
+    prewarmNext(channelId: number): Promise<NowPlaying | null>
     /** What the scheduler *would* pick next, without committing it. */
     peekNext(channelId: number): Promise<EpisodeView | null>
-    /** Log the outcome of the episode that just finished or was abandoned. */
+    /**
+     * Log the outcome of the episode that just finished or was abandoned, and let
+     * go of its encoder. A prewarmed episode's job is deliberately untouched.
+     */
     reportEnded(channelId: number, episodeId: number, completed: boolean): Promise<void>
+    /**
+     * Drop encoders without touching the schedule.
+     *
+     * With no `episodeId`, the whole channel goes — what leaving the player or
+     * changing channel wants. With one, only that episode's job goes, which is
+     * how a prewarm that will never be promoted is abandoned *without* killing
+     * the stream still playing on the same channel.
+     */
+    release(channelId: number, episodeId?: number): Promise<void>
   }
 
   settings: {
@@ -146,8 +174,10 @@ export const IPC = {
   player: {
     tune: 'player:tune',
     next: 'player:next',
+    prewarmNext: 'player:prewarmNext',
     peekNext: 'player:peekNext',
-    reportEnded: 'player:reportEnded'
+    reportEnded: 'player:reportEnded',
+    release: 'player:release'
   },
   settings: {
     getAll: 'settings:getAll',

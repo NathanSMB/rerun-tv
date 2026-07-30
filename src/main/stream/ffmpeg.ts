@@ -210,7 +210,7 @@ const STDERR_LINES = 50
 /** SIGTERM lets ffmpeg flush and unlink; SIGKILL is the guarantee it dies anyway. */
 const SIGKILL_GRACE_MS = 750
 
-/** One running ffmpeg, owned by the key it was spawned under (`channel:3`). */
+/** One running ffmpeg, owned by the key it was spawned under (`channel:3:41`). */
 export interface StreamJob {
   key: string
   child: ChildProcess
@@ -225,12 +225,25 @@ export interface JobHooks {
 }
 
 /**
- * The ffmpeg job supervisor (plan §6: "never more than one job per channel").
+ * The ffmpeg job supervisor.
  *
  * Every spawn is keyed. Spawning under a key that is already busy kills the
  * previous job first, which is exactly the semantics a channel change, a skip
  * or a seek needs — the client just requests the new URL and the old encoder
  * goes away without any explicit teardown call.
+ *
+ * Keys are grouped by prefix, which is what carries plan §6's "never more than
+ * one job per channel" — and its relaxation for the gapless handoff
+ * (docs/stall-fix-plan.html, phase 3). A key is now
+ * `channel:<channelId>:<episodeId>`, so one channel can legitimately hold two
+ * live jobs for the ~30 seconds while the next episode prewarms behind the
+ * current one, and `killByPrefix` retires the whole channel at once. After
+ * phase 1 both of those jobs are stream copies, so the overlap costs almost
+ * nothing.
+ *
+ * `trimGroup` is the backstop: the *newest* jobs in a group win, so a client
+ * that vanished without its `close` handler firing cannot leave a third encoder
+ * running behind a channel forever.
  */
 export class FfmpegSupervisor {
   private readonly jobs = new Map<string, StreamJob>()
@@ -307,6 +320,46 @@ export class FfmpegSupervisor {
    */
   killIfCurrent(key: string, child: ChildProcess): void {
     if (this.jobs.get(key)?.child === child) this.kill(key)
+  }
+
+  /**
+   * Stop every job whose key starts with `prefix` — how a channel is retired
+   * now that it can own more than one (`channel:3:` catches both the episode on
+   * air and the one prewarming behind it).
+   */
+  killByPrefix(prefix: string): void {
+    for (const key of [...this.jobs.keys()]) {
+      if (key.startsWith(prefix)) this.kill(key)
+    }
+  }
+
+  /**
+   * Stop every job under `prefix` except `keep` — used when a prewarmed episode
+   * is promoted: the outgoing encoder goes, the incoming one carries on with the
+   * buffer it has already built.
+   */
+  killByPrefixExcept(prefix: string, keep: string): void {
+    for (const key of [...this.jobs.keys()]) {
+      if (key !== keep && key.startsWith(prefix)) this.kill(key)
+    }
+  }
+
+  /**
+   * Cap a key group at `limit` live jobs, killing the oldest first.
+   *
+   * Newest-wins is the only safe rule here: the oldest job under a channel
+   * prefix is the episode furthest from being watched — the one just handed off
+   * from, or a request whose client went away. Killing the *newest* would take
+   * out the stream that was just tuned in.
+   *
+   * Spawn order comes from the Map's own insertion order rather than from
+   * `startedAt`, because two jobs can easily start inside the same millisecond
+   * and a tie there would make the choice arbitrary. Re-spawning under an
+   * existing key deletes and re-inserts, which correctly makes it the newest.
+   */
+  trimGroup(prefix: string, limit: number): void {
+    const group = [...this.jobs.values()].filter((job) => job.key.startsWith(prefix))
+    for (const job of group.slice(0, Math.max(0, group.length - limit))) this.kill(job.key)
   }
 
   /** Called on app quit and on server close — no orphaned encoders, ever. */

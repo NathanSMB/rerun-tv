@@ -24,6 +24,13 @@
   cursor: none;
 }
 
+/*
+ * Two stacked surfaces, one on air and one buffering the next episode (see the
+ * header of Player.tsx). The standby is `opacity: 0` rather than `display: none`
+ * on purpose: a hidden element still decodes, and the whole point of prewarming
+ * is to have frames ready when the swap happens. There is no transition — a
+ * handoff should look like a cut, not a dissolve.
+ */
 .stage .video {
   position: absolute;
   inset: 0;
@@ -31,6 +38,13 @@
   height: 100%;
   object-fit: contain;
   background: #000;
+  opacity: 0;
+  z-index: 0;
+}
+
+.stage .video.is-active {
+  opacity: 1;
+  z-index: 1;
 }
 
 /* ---- fade ---- */
@@ -111,6 +125,11 @@
   font-family: var(--mono);
   font-size: 11px;
   color: var(--amber);
+}
+
+/* Shown only when the next episode is genuinely buffered and ready to cut to. */
+.stage .toast .toast-ready {
+  color: var(--signal);
 }
 
 /* ---- osd ---- */
