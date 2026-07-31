@@ -11,6 +11,7 @@
 
 import { useEffect, useState, type ReactElement } from 'react'
 import type { AppSettings, ScanRoot } from '@shared/types.js'
+import { SLEEP_MAX_MIN } from '@shared/types.js'
 import { useStore } from '../store.js'
 import './Settings.css'
 
@@ -33,8 +34,21 @@ const START_SCREENS: { value: AppSettings['startScreen']; label: string }[] = [
 
 const OSD_DELAYS = [2, 3, 5, 10]
 
-/** Must stay in step with `SLEEP_PRESETS` in Player.tsx, which cycles through it. */
-const SLEEP_DURATIONS = [15, 30, 45, 60, 90, 120]
+/**
+ * Where the sleep dial opens. Only a starting point now — the panel's dial goes
+ * anywhere up to `SLEEP_MAX_MIN` in five-minute steps — so this list is a set of
+ * likely answers rather than the whole range the player can reach.
+ */
+const SLEEP_DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240, SLEEP_MAX_MIN]
+
+/** "45 minutes", "1 h 30 min", "5 hours" — the dropdown's labels. */
+function sleepDurationLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes} minutes`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  const hoursLabel = hours === 1 ? '1 hour' : `${hours} hours`
+  return rest === 0 ? hoursLabel : `${hours} h ${rest} min`
+}
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -429,8 +443,8 @@ export default function Settings(): ReactElement {
               Sleep timer starts at
             </label>
             <div className="set-hint">
-              First press of <kbd>S</kbd> in the player; it stops at the end of the episode
-              or arc
+              Where the dial opens on the first press of <kbd>S</kbd>; drag it anywhere up
+              to 5 hours. Playback stops at the end of the episode or arc
             </div>
           </div>
           <select
@@ -442,12 +456,12 @@ export default function Settings(): ReactElement {
           >
             {!SLEEP_DURATIONS.includes(settings.sleepTimerDefaultMin) && (
               <option value={String(settings.sleepTimerDefaultMin)}>
-                {settings.sleepTimerDefaultMin} minutes
+                {sleepDurationLabel(settings.sleepTimerDefaultMin)}
               </option>
             )}
             {SLEEP_DURATIONS.map((minutes) => (
               <option key={minutes} value={String(minutes)}>
-                {minutes} minutes
+                {sleepDurationLabel(minutes)}
               </option>
             ))}
           </select>

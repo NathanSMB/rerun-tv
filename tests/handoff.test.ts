@@ -19,7 +19,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { RerunApi } from '@shared/ipc.js'
 import type { EpisodeView, NowPlaying } from '@shared/types.js'
-import { DEFAULT_SETTINGS } from '@shared/types.js'
+import { DEFAULT_SETTINGS, SLEEP_MAX_MIN } from '@shared/types.js'
 import { openDatabase, type Db } from '@main/db/index.js'
 import {
   addChannelShow,
@@ -437,6 +437,129 @@ describe('sleep timer', () => {
     expect(commits).toBe(1)
   })
 
+  /**
+   * The dial's far end (docs/sleep-dial-plan.html). A five-hour timer is one a
+   * whole evening runs underneath, so what is checked here is that nothing about
+   * the handoff path treats a long deadline differently: episodes keep airing,
+   * one log entry each, and the stop lands on the unit that crosses expiry.
+   */
+  it('runs a five-hour timer through handoffs and stops at the unit that crosses it', async () => {
+    await store().tune(channelId)
+    store().armSleep(SLEEP_MAX_MIN)
+    const armedUntil = store().sleepUntil!
+
+    for (let handoff = 0; handoff < 3; handoff++) {
+      await store().prewarm()
+      await store().advance(true)
+      expect(store().screen).toBe('player')
+    }
+    // Untouched by the handoffs — the deadline is wall-clock, not per-episode.
+    expect(store().sleepUntil).toBe(armedUntil)
+
+    expireSleepTimer()
+    await store().advance(true)
+
+    expect(store().screen).toBe('blackout')
+    // Four episodes watched to the end, one entry each, all complete.
+    const log = playLog()
+    expect(log).toHaveLength(4)
+    expect(log.every((row) => row.completed === 1)).toBe(true)
+    expect(commits).toBe(4)
+  })
+
+  it('clamps an armed duration to the five-hour ceiling', async () => {
+    await store().tune(channelId)
+    const before = Date.now()
+
+    store().armSleep(900)
+
+    expect(store().sleepMinutes).toBe(SLEEP_MAX_MIN)
+    expect(store().sleepUntil!).toBeLessThanOrEqual(before + SLEEP_MAX_MIN * 60_000 + 1000)
+  })
+
+  /**
+   * The reason `adjustSleep` exists. A viewer who armed an hour and comes back
+   * forty minutes later to scroll the wheel is asking for more television *from
+   * now* — resolving the nudge against the armed hour instead of the twenty
+   * minutes left would hand them a deadline they have already passed.
+   */
+  it('adds scrolled minutes to the time remaining, not to the armed figure', async () => {
+    await store().tune(channelId)
+    store().armSleep(60)
+    // Forty minutes in: twenty left of the armed hour.
+    useStore.setState({ sleepUntil: Date.now() + 20 * 60_000 })
+
+    store().adjustSleep(5)
+
+    expect(store().sleepMinutes).toBe(25)
+    const remainingMin = (store().sleepUntil! - Date.now()) / 60_000
+    expect(remainingMin).toBeGreaterThan(24)
+    expect(remainingMin).toBeLessThanOrEqual(25)
+  })
+
+  it('arms from now when the wheel is scrolled with the timer off', async () => {
+    await store().tune(channelId)
+    expect(store().sleepUntil).toBeNull()
+
+    store().adjustSleep(5)
+
+    expect(store().sleepMinutes).toBe(5)
+    expect(store().sleepUntil).not.toBeNull()
+  })
+
+  it('switches a running timer off when it is wound below zero', async () => {
+    await store().tune(channelId)
+    store().armSleep(5)
+
+    store().adjustSleep(-5)
+
+    expect(store().sleepUntil).toBeNull()
+    expect(store().sleepMinutes).toBeNull()
+  })
+
+  /**
+   * An expired timer is waiting on a unit boundary, and there is no remaining
+   * time left to take away — winding it down must not quietly disarm the stop
+   * the viewer is counting on.
+   */
+  it('leaves an expired timer armed when it is wound down', async () => {
+    await store().tune(channelId)
+    expireSleepTimer()
+    const due = store().sleepUntil
+
+    store().adjustSleep(-5)
+
+    expect(store().sleepUntil).toBe(due)
+  })
+
+  it('clamps the wheel to the ceiling instead of running past it', async () => {
+    await store().tune(channelId)
+    store().armSleep(SLEEP_MAX_MIN)
+
+    store().adjustSleep(30)
+
+    expect(store().sleepMinutes).toBe(SLEEP_MAX_MIN)
+  })
+
+  /**
+   * The "after this ep" chip. It arms zero minutes — an already-due timer — so
+   * the stop is produced by the same unit boundary as every other expiry, with
+   * no second code path to keep in step.
+   */
+  it('stops at the end of the current episode when armed with zero minutes', async () => {
+    await store().tune(channelId)
+    const first = store().nowPlaying!
+
+    store().armSleep(0)
+    expect(store().sleepUntil).not.toBeNull()
+
+    await store().advance(true)
+
+    expect(store().screen).toBe('blackout')
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 1 }])
+    expect(commits).toBe(1)
+  })
+
   it('disarms when the viewer leaves the player themselves', async () => {
     await store().tune(channelId)
     store().armSleep(30)
@@ -562,6 +685,30 @@ describe('prewarm inside a multipart arc', () => {
     const log = playLog()
     expect(log).toHaveLength(3)
     expect(log.every((row) => row.completed === 1)).toBe(true)
+    expect(getChannel(db, channelId)?.activeGroupId).toBeNull()
+  })
+
+  /**
+   * "After this ep" pressed in the middle of a two-parter. The chip is worded
+   * for the common case, but the boundary it arms is the *unit's* — so it plays
+   * the arc out rather than stranding the viewer between parts. This is the case
+   * that would break if zero minutes were ever special-cased into "stop here".
+   */
+  it('plays a zero-minute timer out to the end of the arc', async () => {
+    await store().tune(channelId)
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 1, partCount: 3 })
+
+    store().armSleep(0)
+
+    await store().advance(true)
+    expect(store().screen).toBe('player')
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 2, partCount: 3 })
+
+    await store().advance(true)
+    await store().advance(true)
+
+    expect(store().screen).toBe('blackout')
+    expect(playLog()).toHaveLength(3)
     expect(getChannel(db, channelId)?.activeGroupId).toBeNull()
   })
 

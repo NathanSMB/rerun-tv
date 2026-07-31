@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleep Dial — UX Plan · Rerun TV</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f9f9f7;
+    --surface-1:   #fcfcfb;
+    --surface-2:   #f3f2ef;
+    --ink:         #0b0b0b;
+    --ink-2:       #52514e;
+    --muted:       #898781;
+    --grid:        #e1e0d9;
+    --baseline:    #c3c2b7;
+    --border:      rgba(11,11,11,0.10);
+    --s1:          #2a78d6;   /* today's presets */
+    --s2:          #eb6834;   /* proposed continuous range */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:        #0d0d0d;
+      --surface-1:   #1a1a19;
+      --surface-2:   #242422;
+      --ink:         #ffffff;
+      --ink-2:       #c3c2b7;
+      --muted:       #898781;
+      --grid:        #2c2c2a;
+      --baseline:    #383835;
+      --border:      rgba(255,255,255,0.10);
+      --s1:          #3987e5;
+      --s2:          #d95926;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface-1:   #1a1a19;
+    --surface-2:   #242422;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --muted:       #898781;
+    --grid:        #2c2c2a;
+    --baseline:    #383835;
+    --border:      rgba(255,255,255,0.10);
+    --s1:          #3987e5;
+    --s2:          #d95926;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header.doc { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--ink-2); margin: 0; max-width: 660px; }
+  h2 { font-size: 18px; font-weight: 650; margin: 48px 0 8px; letter-spacing: -0.005em; }
+  h3 { font-size: 14px; font-weight: 650; margin: 24px 0 6px; }
+  p  { margin: 8px 0; color: var(--ink-2); }
+  p strong, li strong, td strong { color: var(--ink); font-weight: 600; }
+  code { font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+         background: var(--surface-2); border: 1px solid var(--border);
+         border-radius: 4px; padding: 1px 5px; color: var(--ink); white-space: nowrap; }
+  ul, ol { color: var(--ink-2); margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--muted); }
+  kbd { font: 11.5px ui-monospace, Menlo, monospace; background: var(--surface-2);
+        border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+        padding: 1px 6px; color: var(--ink); }
+
+  .theme-btn {
+    flex: none; border: 1px solid var(--border); background: var(--surface-1); color: var(--ink-2);
+    border-radius: 8px; padding: 6px 12px; font: 13px system-ui, sans-serif; cursor: pointer;
+  }
+  .theme-btn:hover { color: var(--ink); }
+
+  /* KPI row */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0 0; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .lab { font-size: 12.5px; color: var(--ink-2); }
+  .tile .val { font-size: 30px; font-weight: 600; line-height: 1.15; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+
+  /* Figure card */
+  figure.viz { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+               margin: 16px 0; padding: 18px 18px 12px; }
+  figure.viz > .fig-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  figure.viz .fig-title { font-size: 14px; font-weight: 650; }
+  figcaption { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); }
+  .legend .k { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .t-lab   { font-size: 12px; fill: var(--ink-2); }
+  .t-node  { font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .t-tick  { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .grid-l  { stroke: var(--grid); stroke-width: 1; }
+  .hit     { fill: transparent; cursor: default; outline-offset: 2px; }
+  .hit:focus-visible { outline: 2px solid var(--s1); }
+
+  .tbl-btn { border: 1px solid var(--border); background: none; color: var(--ink-2); font-size: 12px;
+             border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .tbl-btn:hover { color: var(--ink); }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0; }
+  table.data th { text-align: left; font-weight: 600; color: var(--ink); border-bottom: 1px solid var(--baseline); padding: 6px 10px; }
+  table.data td { color: var(--ink-2); border-bottom: 1px solid var(--grid); padding: 6px 10px; font-variant-numeric: tabular-nums; }
+  .hidden { display: none; }
+
+  #tip { position: fixed; pointer-events: none; z-index: 30; background: var(--surface-1);
+         border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+         font-size: 12.5px; color: var(--ink); box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+         opacity: 0; transition: opacity 80ms linear; max-width: 260px; }
+  #tip .tl { color: var(--muted); font-size: 11.5px; }
+
+  /* ============ the player mockup (always dark — it IS the app) ============ */
+  .mock {
+    --m-tube:   #05070c;
+    --m-amber:  #ffb454;
+    --m-amber-dim: rgba(255, 180, 84, 0.14);
+    --m-white:  #f0efe6;
+    --m-steel:  #8d97b8;
+    --m-steel-dim: #5a6485;
+    --m-line:   rgba(141, 151, 184, 0.18);
+    --m-mono:   'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background:
+      radial-gradient(120% 90% at 30% 20%, #101a30 0%, #070b14 55%, #05070c 100%);
+    aspect-ratio: 16 / 8.2;
+    min-height: 430px;
+    margin: 16px 0 8px;
+    user-select: none;
+    color-scheme: dark;
+  }
+  .mock:focus { outline: none; }
+  .mock:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+  .mock .film {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(60% 50% at 62% 38%, rgba(255, 190, 120, 0.10), transparent 70%),
+      radial-gradient(45% 60% at 25% 70%, rgba(80, 120, 200, 0.10), transparent 70%);
+  }
+  .mock .m-banner { position: absolute; top: 20px; left: 22px; }
+  .mock .m-banner .show { font-weight: 700; font-size: 15px; color: var(--m-white);
+                          font-family: system-ui, sans-serif; letter-spacing: -0.01em; }
+  .mock .m-banner .ep { font-family: var(--m-mono); font-size: 11px; color: var(--m-steel); margin-top: 3px; }
+  .mock .m-onair { position: absolute; top: 24px; right: 24px; font-family: var(--m-mono);
+                   font-size: 11px; letter-spacing: 0.2em; color: #59d999;
+                   display: inline-flex; gap: 8px; align-items: center; }
+  .mock .m-onair .dot { width: 7px; height: 7px; border-radius: 50%; background: #59d999; }
+
+  .mock .m-osd { position: absolute; left: 0; right: 0; bottom: 0; padding: 40px 22px 14px;
+                 background: linear-gradient(transparent, rgba(5, 7, 12, 0.88) 55%); }
+  .mock .m-scrub { position: relative; height: 4px; border-radius: 2px;
+                   background: rgba(141, 151, 184, 0.28); margin-bottom: 12px; }
+  .mock .m-scrub .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 38%;
+                         background: var(--m-amber); border-radius: 2px; }
+  .mock .m-row { display: flex; align-items: center; gap: 12px; }
+  .mock .m-btn { width: 38px; height: 38px; border-radius: 8px; border: 1px solid transparent;
+                 background: transparent; color: var(--m-white); cursor: pointer; flex: none;
+                 display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  .mock .m-btn:hover { background: rgba(240, 239, 230, 0.1); }
+  .mock .m-btn svg { width: 19px; height: 19px; fill: currentColor; }
+  .mock .m-btn.primary { background: var(--m-amber); color: #201302; width: 44px; height: 44px; }
+  .mock .m-btn:focus-visible { outline: 2px solid var(--m-amber); outline-offset: 2px; }
+  .mock .m-btn.sleep.armed { color: var(--m-amber); }
+  .mock .m-chip { font-family: var(--m-mono); font-size: 11px; letter-spacing: 0.04em;
+                  color: var(--m-amber); background: var(--m-amber-dim); border-radius: 6px;
+                  padding: 4px 8px; white-space: nowrap; cursor: ns-resize; }
+  .mock .m-time { font-family: var(--m-mono); font-size: 12px; color: var(--m-steel);
+                  margin-left: auto; white-space: nowrap; }
+  .mock .m-time b { color: var(--m-white); font-weight: 500; }
+  .mock .m-hints { display: flex; gap: 14px; margin-left: 12px; }
+  .mock .m-hints span { font-size: 11px; color: var(--m-steel-dim); white-space: nowrap; }
+  .mock .m-hints kbd { background: rgba(141,151,184,0.14); border: 1px solid var(--m-line);
+                       color: var(--m-steel); border-radius: 4px; padding: 0 5px;
+                       font: 10.5px var(--m-mono); }
+  @media (max-width: 860px) { .mock .m-hints { display: none; } }
+
+  /* ---- the sleep panel ---- */
+  .mock .panel {
+    position: absolute; right: 18px; bottom: 84px; width: 460px; max-width: calc(100% - 36px);
+    background: rgba(5, 7, 12, 0.88); border: 1px solid var(--m-line); border-radius: 12px;
+    padding: 16px 18px 14px; backdrop-filter: blur(8px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    opacity: 0; pointer-events: none; transform: translateY(6px);
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  .mock .panel.open { opacity: 1; pointer-events: auto; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .mock .panel { transition: none; } }
+
+  .mock .p-read { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .mock .p-dur { font-family: var(--m-mono); font-size: 26px; font-weight: 500;
+                 color: var(--m-amber); font-variant-numeric: tabular-nums; min-width: 118px; }
+  .mock .p-dur.off { color: var(--m-steel); }
+  .mock .p-until { font-size: 12.5px; color: var(--m-steel); }
+  .mock .p-until b { color: var(--m-white); font-weight: 600; }
+
+  .mock .p-dial { position: relative; height: 40px; margin: 8px 0 2px; cursor: pointer;
+                  touch-action: none; }
+  .mock .p-dial:focus-visible { outline: 2px solid var(--m-amber); outline-offset: 4px; border-radius: 4px; }
+  .mock .p-track { position: absolute; left: 0; right: 0; top: 14px; height: 6px;
+                   border-radius: 3px; background: rgba(141, 151, 184, 0.24); }
+  .mock .p-fill { position: absolute; left: 0; top: 14px; height: 6px; border-radius: 3px;
+                  background: var(--m-amber); }
+  .mock .p-knob { position: absolute; top: 17px; width: 14px; height: 14px;
+                  transform: translate(-50%, -50%); border-radius: 50%;
+                  background: var(--m-amber); box-shadow: 0 0 0 3px rgba(5, 7, 12, 0.85); }
+  .mock .p-ticks { position: absolute; left: 0; right: 0; top: 22px; height: 18px; pointer-events: none; }
+  .mock .p-tick { position: absolute; top: 2px; width: 1px; height: 5px;
+                  background: rgba(141, 151, 184, 0.35); }
+  .mock .p-tick.hour { height: 8px; background: rgba(141, 151, 184, 0.6); }
+  .mock .p-tlab { position: absolute; top: 11px; transform: translateX(-50%);
+                  font: 9.5px var(--m-mono); color: var(--m-steel-dim); }
+
+  .mock .p-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
+  .mock .p-chip { border: 1px solid var(--m-line); background: rgba(141, 151, 184, 0.08);
+                  color: var(--m-steel); border-radius: 999px; padding: 4px 11px;
+                  font: 11.5px var(--m-mono); cursor: pointer; }
+  .mock .p-chip:hover { color: var(--m-white); border-color: rgba(141, 151, 184, 0.45); }
+  .mock .p-chip.active { color: #201302; background: var(--m-amber); border-color: var(--m-amber); }
+  .mock .p-chip:focus-visible { outline: 2px solid var(--m-amber); outline-offset: 2px; }
+
+  .mock .p-hints { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px;
+                   border-top: 1px solid var(--m-line); padding-top: 10px; }
+  .mock .p-hints span { font-size: 10.5px; color: var(--m-steel-dim); }
+  .mock .p-hints kbd { background: rgba(141,151,184,0.14); border: 1px solid var(--m-line);
+                       color: var(--m-steel); border-radius: 4px; padding: 0 4px;
+                       font: 10px var(--m-mono); }
+
+  .try { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+         padding: 10px 14px; font-size: 13px; color: var(--ink-2); margin: 10px 0 4px; }
+
+  /* interaction map table */
+  table.map { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.map th { text-align: left; font-weight: 600; color: var(--ink);
+                 border-bottom: 1px solid var(--baseline); padding: 7px 10px; }
+  table.map td { color: var(--ink-2); border-bottom: 1px solid var(--grid); padding: 7px 10px; vertical-align: top; }
+  table.map td:first-child { white-space: nowrap; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps > li { position: relative; padding: 12px 14px 12px 46px; margin: 8px 0;
+                background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
+  .steps > li::before { counter-increment: step; content: counter(step);
+                        position: absolute; left: 14px; top: 13px; width: 22px; height: 22px;
+                        border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border);
+                        color: var(--ink); font-size: 12px; font-weight: 650;
+                        display: flex; align-items: center; justify-content: center; }
+  .steps h3 { margin: 0 0 4px; }
+  .steps p, .steps ul { font-size: 13.5px; }
+</style>
+</head>
+<body data-palette="#2a78d6,#eb6834">
+<div class="wrap">
+
+<header class="doc">
+  <div>
+    <h1>Sleep Dial — a granular sleep timer</h1>
+    <p class="sub">Replace the press-to-cycle presets (30-minute hops, 2&nbsp;h cap) with a
+    drag-anywhere dial up to 5 hours in 5-minute steps — one gesture to set any duration,
+    plus scroll-wheel and typed-digit shortcuts so common cases need no clicks at all.</p>
+  </div>
+  <button class="theme-btn" id="themeBtn" type="button">Dark mode</button>
+</header>
+
+<div class="kpis">
+  <div class="tile"><div class="lab">Maximum duration</div><div class="val">5 h</div><div class="note">was 2 h</div></div>
+  <div class="tile"><div class="lab">Granularity</div><div class="val">5 min</div><div class="note">was 15–30 min preset gaps</div></div>
+  <div class="tile"><div class="lab">Actions to arm 2 h</div><div class="val">1</div><div class="note">one drag — was 5 presses</div></div>
+  <div class="tile"><div class="lab">Settable durations</div><div class="val">61</div><div class="note">was 6 presets</div></div>
+</div>
+
+<h2>1 · What's wrong today</h2>
+<p>The sleep button (and <kbd>S</kbd>) cycles <code>SLEEP_PRESETS = [15, 30, 45, 60, 90, 120]</code>:
+first press arms the default, each further press jumps to the next preset, and past 120 it wraps
+to off. Setting 2&nbsp;h from cold is five presses; anything over 2&nbsp;h or between presets is
+impossible; overshooting means cycling all the way around again.</p>
+
+<figure class="viz">
+  <div class="fig-head">
+    <div class="fig-title">Reachable sleep durations, today vs. proposed</div>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <div class="legend">
+        <span class="k"><span class="sw" style="background:var(--s1)"></span>Today — 6 presets</span>
+        <span class="k"><span class="sw" style="background:var(--s2)"></span>Proposed — continuous, 5-min detents</span>
+      </div>
+      <button class="tbl-btn" id="figTblBtn" type="button">Table view</button>
+    </div>
+  </div>
+  <div id="figChart">
+    <svg viewBox="0 0 900 190" role="img" aria-labelledby="figATitle" id="figSvg">
+      <title id="figATitle">Today six preset dots end at 120 minutes; the proposed dial covers 0 to 300 minutes continuously.</title>
+      <!-- built by script: gridlines, axis, preset dots, proposed band -->
+    </svg>
+  </div>
+  <div id="figTable" class="hidden">
+    <table class="data">
+      <thead><tr><th>Duration</th><th>Today</th><th>Proposed</th></tr></thead>
+      <tbody>
+        <tr><td>15 min</td><td>preset — reachable only as the configured default</td><td>1 drag / scroll / typed</td></tr>
+        <tr><td>30 min</td><td>1 press (default)</td><td>1 action</td></tr>
+        <tr><td>45 min</td><td>2 presses</td><td>1 action</td></tr>
+        <tr><td>60 min</td><td>3 presses</td><td>1 action</td></tr>
+        <tr><td>90 min</td><td>4 presses</td><td>1 action</td></tr>
+        <tr><td>120 min</td><td>5 presses</td><td>1 action</td></tr>
+        <tr><td>125–300 min</td><td>not settable</td><td>1 action, any 5-min step</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figcaption>Press counts assume the shipped default of 30 min. Hover the marks for details.
+  The timer stays arc-aware in both models: expiry waits for the episode or multi-part arc to finish.</figcaption>
+</figure>
+
+<h2>2 · The new UX — try it</h2>
+<p>The moon button stops cycling and instead opens a <strong>sleep panel</strong> anchored above
+the OSD. The fast path survives: the first press still arms the default immediately — the panel
+just opens alongside, already set, so a second gesture (drag, scroll, arrows, digits) refines it.
+Left edge of the dial is <strong>Off</strong>; the readout always shows the real-world consequence:
+the wall-clock time the TV goes dark, and that it waits for the credits.</p>
+
+<div class="try">🖱 <strong>Interactive:</strong> click the moon (or press <kbd>S</kbd>) to open the panel ·
+drag the dial · scroll the wheel over the panel, the moon, or the countdown chip · use
+<kbd>Left</kbd>/<kbd>Right</kbd> for ±5 min, <kbd>Up</kbd>/<kbd>Down</kbd> for ±30 · type digits like
+<kbd>135</kbd> for 2 h 15 m · <kbd>0</kbd> for off · <kbd>Enter</kbd> closes.</div>
+
+<div class="mock" id="mock" tabindex="0" aria-label="Player mockup with sleep panel. Press S to open the sleep panel.">
+  <div class="film"></div>
+  <div class="m-banner">
+    <div class="show">Deep Space Nine</div>
+    <div class="ep">S4E06 · REJOINED · 22:41 LEFT</div>
+  </div>
+  <div class="m-onair"><span class="dot"></span>ON AIR</div>
+
+  <div class="panel" id="panel" role="dialog" aria-label="Sleep timer">
+    <div class="p-read">
+      <div class="p-dur off" id="pDur">Off</div>
+      <div class="p-until" id="pUntil">TV stays on</div>
+    </div>
+    <div class="p-dial" id="pDial" role="slider" tabindex="0" aria-label="Sleep duration"
+         aria-valuemin="0" aria-valuemax="300" aria-valuenow="0" aria-valuetext="Off">
+      <div class="p-track"></div>
+      <div class="p-fill" id="pFill" style="width:0%"></div>
+      <div class="p-ticks" id="pTicks"></div>
+      <div class="p-knob" id="pKnob" style="left:0%"></div>
+    </div>
+    <div class="p-chips" id="pChips">
+      <button class="p-chip" type="button" data-min="-1">Off</button>
+      <button class="p-chip" type="button" data-min="0">After this ep</button>
+      <button class="p-chip" type="button" data-min="30">30m</button>
+      <button class="p-chip" type="button" data-min="60">1h</button>
+      <button class="p-chip" type="button" data-min="120">2h</button>
+      <button class="p-chip" type="button" data-min="180">3h</button>
+      <button class="p-chip" type="button" data-min="300">5h</button>
+    </div>
+    <div class="p-hints" aria-hidden="true">
+      <span><kbd>Left/Right</kbd> ±5m</span>
+      <span><kbd>Up/Down</kbd> ±30m</span>
+      <span><kbd>0–9</kbd> type minutes</span>
+      <span><kbd>scroll</kbd> ±5m</span>
+      <span><kbd>Enter</kbd> done</span>
+      <span><kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+
+  <div class="m-osd">
+    <div class="m-scrub"><div class="fill"></div></div>
+    <div class="m-row">
+      <button class="m-btn primary" type="button" aria-label="Pause">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+      </button>
+      <button class="m-btn" type="button" aria-label="Skip to next episode">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5l8 7-8 7V5zm10 0h2v14h-2z"/></svg>
+      </button>
+      <button class="m-btn sleep" type="button" id="moonBtn" aria-label="Sleep timer" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9zm0 2.2A5.2 5.2 0 0 0 18.8 12 7 7 0 0 1 12 18.8 6.8 6.8 0 0 1 12 5.2z"/></svg>
+      </button>
+      <span class="m-chip hidden" id="mChip" role="status" title="Scroll to adjust"></span>
+      <div class="m-hints" aria-hidden="true">
+        <span><kbd>Space</kbd>pause</span>
+        <span><kbd>→</kbd>skip</span>
+        <span><kbd>S</kbd>sleep</span>
+        <span><kbd>F</kbd>fullscreen</span>
+      </div>
+      <span class="m-time"><b>08:43</b> / 22:41</span>
+      <button class="m-btn" type="button" aria-label="Toggle fullscreen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h5v2H7v3H5V5zm9 0h5v5h-2V7h-3V5zM5 14h2v3h3v2H5v-5zm12 0h2v5h-5v-2h3v-3z"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+<p style="font-size:12.5px; color:var(--muted); margin-top:4px;">Mockup uses the app's real
+tokens (amber <code>#ffb454</code>, steel <code>#8d97b8</code>, IBM Plex Mono) over the player's
+tube gradient; the panel reuses the up-next toast surface. It is always dark — it previews the
+app, not this document's theme.</p>
+
+<h2>3 · Interaction map</h2>
+<table class="map">
+  <thead><tr><th>Input</th><th>Panel closed</th><th>Panel open</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>S</kbd> / moon click</td>
+        <td>Opens panel. If disarmed, also arms the default (<code>sleepTimerDefaultMin</code>) — the one-tap fast path is unchanged.</td>
+        <td>Closes panel (state already committed live).</td></tr>
+    <tr><td>Scroll wheel over moon / chip / panel</td>
+        <td>Adjusts remaining time ±5 min without opening anything — the countdown chip is the feedback.</td>
+        <td>Same; the dial and readout track it.</td></tr>
+    <tr><td>Drag on dial</td><td>—</td>
+        <td>Sets any duration 0–300 in 5-min detents. Dragging to the left edge disarms. Commits on release; readout previews during the drag.</td></tr>
+    <tr><td><kbd>Left</kbd>/<kbd>Right</kbd></td>
+        <td>Seek / skip (unchanged).</td>
+        <td>±5 min. <strong>Captured by the panel</strong> — they must not fall through to skip-episode.</td></tr>
+    <tr><td><kbd>Up</kbd>/<kbd>Down</kbd></td><td>—</td><td>±30 min.</td></tr>
+    <tr><td>Digits <kbd>0–9</kbd></td><td>—</td>
+        <td>Typed minutes with a ~900 ms commit buffer: <kbd>9</kbd><kbd>0</kbd> → 90 min, <kbd>1</kbd><kbd>3</kbd><kbd>5</kbd> → 2 h 15. <kbd>0</kbd> alone → off. Clamped to 300.</td></tr>
+    <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>—</td><td>Close the panel. Nothing to cancel — changes apply live, matching how volume works.</td></tr>
+    <tr><td>Chips</td><td>—</td>
+        <td><strong>Off · After this ep · 30m · 1h · 2h · 3h · 5h.</strong> “After this ep” arms with 0 minutes — already-expired, so the arc-aware boundary stops playback when the current episode (or arc) ends.</td></tr>
+    <tr><td>Idle ~6 s</td><td>—</td><td>Panel auto-hides with the rest of the OSD chrome.</td></tr>
+  </tbody>
+</table>
+
+<h2>4 · Implementation plan</h2>
+<ol class="steps">
+  <li><h3>Store: clamp + relative adjust — <code>src/renderer/src/store.ts</code></h3>
+    <p><code>armSleep(minutes)</code> already accepts arbitrary minutes; add a
+    <code>clamp(0, 300)</code> and export <code>SLEEP_MAX_MIN = 300</code> from
+    <code>src/shared/types.ts</code>. Add <code>adjustSleep(deltaMin)</code> that shifts
+    <strong><code>sleepUntil</code></strong> (remaining time), not <code>sleepMinutes</code> —
+    extending a timer armed an hour ago must add to what's left, not to the original figure.
+    Disarm when the result drops to ≤ 0 while unexpired. <code>armSleep(0)</code> (already-due)
+    is the “after this episode” path and needs no new store logic.</p></li>
+  <li><h3>New <code>SleepPanel</code> component — <code>src/renderer/src/components/SleepPanel.tsx</code></h3>
+    <p>Dial (reuse the existing <code>Slider</code> with <code>step=5</code>, <code>max=300</code>,
+    <code>onPreview</code>/<code>onCommit</code> — same contract as the volume track), tick marks,
+    chips, live readout (“1 h 35 m · off around 2:41 AM, after the credits”). Rendered inside
+    <code>.stage</code> so it survives <code>requestFullscreen()</code>, styled on the up-next
+    toast surface.</p></li>
+  <li><h3>Player wiring — <code>src/renderer/src/screens/Player.tsx</code></h3>
+    <p>Delete <code>SLEEP_PRESETS</code> and <code>cycleSleep</code>; <kbd>S</kbd>/moon toggles the
+    panel (arming the default on first open when disarmed). While open, route
+    arrows/digits/<kbd>Enter</kbd>/<kbd>Esc</kbd> to the panel before the player's
+    key handler — <kbd>Right</kbd> is skip-episode today, so this scoping is the one sharp edge.
+    Add a <code>wheel</code> handler on moon, chip, and panel calling <code>adjustSleep(±5)</code>.
+    Tie the panel into the existing OSD idle-hide timer.</p></li>
+  <li><h3>Settings — <code>src/renderer/src/screens/Settings.tsx</code></h3>
+    <p>Extend the default-duration control to 300 (replace the <code>SLEEP_DURATIONS</code>
+    dropdown with a 5-min-step number input or the same dial). Delete the “must stay in step
+    with <code>SLEEP_PRESETS</code>” comment — the coupling dies with the presets.</p></li>
+  <li><h3>Tests — <code>tests/handoff.test.ts</code></h3>
+    <ul>
+      <li>Arm 300 min → survives multiple episode handoffs, sleeps after the unit that crosses expiry.</li>
+      <li><code>adjustSleep</code> extends remaining time on a long-armed timer; shrinking below zero disarms.</li>
+      <li><code>armSleep(0)</code> stops at the current unit's end — including mid-arc (blackout waits for the arc).</li>
+      <li>Clamp: <code>armSleep(900)</code> → 300.</li>
+    </ul></li>
+  <li><h3>Docs — <code>docs/ui.md</code>, <code>docs/playback.md</code></h3>
+    <p>Replace the cycle description with the panel + interaction map; note the “after this
+    episode” chip's zero-minute mechanism.</p></li>
+</ol>
+
+<h2>5 · Edge cases &amp; decisions</h2>
+<ul>
+  <li><strong>Live commit, no OK button.</strong> The panel edits the armed timer directly
+  (like volume). Closing never discards — one less click, and the countdown chip always tells
+  the truth.</li>
+  <li><strong>Adjusting an armed timer is relative to now.</strong> The dial reopens showing
+  <em>remaining</em> minutes (snapped up to 5), not the originally armed figure.</li>
+  <li><strong>Expired-but-finishing state</strong> (“Sleeps 12:41”) keeps today's chip behavior;
+  opening the panel from it re-arms from now.</li>
+  <li><strong>Blackout interplay:</strong> unchanged — the panel is player chrome and never
+  outlives <code>leavePlayer</code>/<code>sleepNow</code>.</li>
+  <li><strong>Why 5-min steps, not 1:</strong> 61 detents keep the drag snappy on a ~420 px
+  track (~7 px per detent) and nobody plans bedtime to the minute; typed digits still allow
+  exact values if wanted later.</li>
+  <li><strong>Out of scope, noted for later:</strong> “sleep after N more episodes” chips —
+  the store's unit-boundary logic could support counting units instead of wall time.</li>
+</ul>
+
+</div>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- theme toggle ---------- */
+  var themeBtn = document.getElementById('themeBtn');
+  var root = document.documentElement;
+  function syncThemeBtn() {
+    var dark = root.dataset.theme === 'dark' ||
+      (!root.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    themeBtn.textContent = dark ? 'Light mode' : 'Dark mode';
+  }
+  themeBtn.addEventListener('click', function () {
+    var dark = root.dataset.theme === 'dark' ||
+      (!root.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    root.dataset.theme = dark ? 'light' : 'dark';
+    syncThemeBtn();
+  });
+  syncThemeBtn();
+
+  /* ---------- tooltip ---------- */
+  var tip = document.getElementById('tip');
+  function showTip(html, x, y) {
+    tip.innerHTML = html;
+    tip.style.opacity = '1';
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = Math.min(Math.max(8, x + 14), innerWidth - w - 8);
+    var top = y - h - 12 < 8 ? y + 18 : y - h - 12;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+  function hideTip() { tip.style.opacity = '0'; }
+
+  /* ---------- figure A: coverage strip ---------- */
+  var svg = document.getElementById('figSvg');
+  var NS = 'http://www.w3.org/2000/svg';
+  var M = { l: 120, r: 30, t: 26 };
+  var W = 900, plotW = W - M.l - M.r;
+  var MAXMIN = 300;
+  function x(min) { return M.l + (min / MAXMIN) * plotW; }
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(e);
+    return e;
+  }
+  // hour gridlines + axis labels
+  for (var hm = 0; hm <= 300; hm += 60) {
+    el('line', { x1: x(hm), x2: x(hm), y1: M.t, y2: 150, class: 'grid-l' });
+    var lab = el('text', { x: x(hm), y: 168, 'text-anchor': 'middle', class: 't-tick' });
+    lab.textContent = hm === 0 ? '0' : (hm / 60) + 'h';
+  }
+  // row labels
+  var r1 = el('text', { x: M.l - 14, y: 64, 'text-anchor': 'end', class: 't-node' });
+  r1.textContent = 'Today';
+  var r2 = el('text', { x: M.l - 14, y: 124, 'text-anchor': 'end', class: 't-node' });
+  r2.textContent = 'Proposed';
+
+  var PRESETS = [15, 30, 45, 60, 90, 120];
+  var PRESSES = { 15: 'only reachable as the configured default', 30: '1 press (the default)',
+                  45: '2 presses', 60: '3 presses', 90: '4 presses', 120: '5 presses' };
+  PRESETS.forEach(function (m) {
+    el('circle', { cx: x(m), cy: 60, r: 5, fill: 'var(--s1)' });
+    var hit = el('rect', { x: x(m) - 12, y: 44, width: 24, height: 32, class: 'hit', tabindex: 0,
+                           'aria-label': m + ' minutes, ' + PRESSES[m] });
+    hit.addEventListener('mousemove', function (ev) {
+      showTip('<b>' + m + ' min</b><div class="tl">' + PRESSES[m] + '</div>', ev.clientX, ev.clientY);
+    });
+    hit.addEventListener('mouseleave', hideTip);
+  });
+  // "unreachable" annotation past 120
+  var unr = el('text', { x: (x(120) + x(300)) / 2, y: 64, 'text-anchor': 'middle', class: 't-tick' });
+  unr.textContent = 'not settable';
+  el('line', { x1: x(126), x2: x(294), y1: 74, y2: 74, stroke: 'var(--baseline)',
+               'stroke-width': 1, 'stroke-dasharray': '2 4' });
+
+  // proposed band with detent ticks
+  el('rect', { x: x(0), y: 114, width: x(300) - x(0), height: 12, rx: 4, fill: 'var(--s2)' });
+  for (var d = 30; d < 300; d += 30) {
+    el('line', { x1: x(d), x2: x(d), y1: 114, y2: 126, stroke: 'var(--surface-1)', 'stroke-width': 2 });
+  }
+  var bandHit = el('rect', { x: x(0), y: 106, width: x(300) - x(0), height: 28, class: 'hit',
+                             tabindex: 0, 'aria-label': 'Proposed: any duration from 0 to 300 minutes in 5 minute steps' });
+  bandHit.addEventListener('mousemove', function (ev) {
+    var r = svg.getBoundingClientRect();
+    var minRaw = ((ev.clientX - r.left) * (W / r.width) - M.l) / plotW * MAXMIN;
+    var snapped = Math.max(0, Math.min(300, Math.round(minRaw / 5) * 5));
+    showTip('<b>' + fmt(snapped) + '</b><div class="tl">one drag, scroll, or typed value</div>',
+            ev.clientX, ev.clientY);
+  });
+  bandHit.addEventListener('mouseleave', hideTip);
+
+  document.getElementById('figTblBtn').addEventListener('click', function () {
+    var chart = document.getElementById('figChart'), table = document.getElementById('figTable');
+    var showTable = table.classList.contains('hidden');
+    table.classList.toggle('hidden', !showTable);
+    chart.classList.toggle('hidden', showTable);
+    this.textContent = showTable ? 'Chart view' : 'Table view';
+  });
+
+  /* ---------- the mockup ---------- */
+  var mock = document.getElementById('mock');
+  var panel = document.getElementById('panel');
+  var moon = document.getElementById('moonBtn');
+  var chip = document.getElementById('mChip');
+  var dial = document.getElementById('pDial');
+  var fill = document.getElementById('pFill');
+  var knob = document.getElementById('pKnob');
+  var pDur = document.getElementById('pDur');
+  var pUntil = document.getElementById('pUntil');
+  var chips = document.getElementById('pChips');
+
+  var EP_LEFT_MIN = 22.7;                      // "22:41 LEFT" in the banner
+  var state = { min: null, afterEp: false };   // min: null = off, 0..300 = armed
+  var digitBuf = '', digitTimer = null;
+
+  // build ticks: minor every 15, major + label every hour
+  var ticks = document.getElementById('pTicks');
+  for (var t = 0; t <= 300; t += 15) {
+    var isHour = t % 60 === 0;
+    var tk = document.createElement('div');
+    tk.className = 'p-tick' + (isHour ? ' hour' : '');
+    tk.style.left = (t / 300 * 100) + '%';
+    ticks.appendChild(tk);
+    if (isHour && t > 0) {
+      var tl = document.createElement('div');
+      tl.className = 'p-tlab';
+      tl.style.left = (t / 300 * 100) + '%';
+      tl.textContent = (t / 60) + 'h';
+      ticks.appendChild(tl);
+    }
+  }
+
+  function fmt(min) {
+    if (min < 60) return min + ' min';
+    var h = Math.floor(min / 60), m = min % 60;
+    return m === 0 ? h + ' h' : h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
+  }
+  function clock(minFromNow) {
+    var d = new Date(Date.now() + minFromNow * 60000);
+    var h = d.getHours(), m = d.getMinutes(), ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+
+  function render() {
+    var armed = state.min !== null || state.afterEp;
+    var pct, aval, atext;
+    if (state.afterEp) {
+      pDur.textContent = 'After this ep';
+      pDur.classList.remove('off');
+      pUntil.innerHTML = 'off around <b>' + clock(EP_LEFT_MIN) + '</b> — when the credits roll';
+      pct = 0; aval = 0; atext = 'After this episode';
+      chip.textContent = 'AFTER THIS EP';
+    } else if (state.min === null || state.min === 0) {
+      pDur.textContent = 'Off';
+      pDur.classList.add('off');
+      pUntil.textContent = 'TV stays on';
+      pct = 0; aval = 0; atext = 'Off';
+    } else {
+      pDur.textContent = fmt(state.min);
+      pDur.classList.remove('off');
+      pUntil.innerHTML = 'off around <b>' + clock(state.min) +
+        '</b> — lets the episode finish';
+      pct = state.min / 300 * 100; aval = state.min; atext = fmt(state.min);
+      var h = Math.floor(state.min / 60), m = state.min % 60;
+      chip.textContent = (h > 0 ? h + 'H' : '') + (m < 10 ? '0' : '') + m + 'M';
+    }
+    fill.style.width = pct + '%';
+    knob.style.left = pct + '%';
+    dial.setAttribute('aria-valuenow', aval);
+    dial.setAttribute('aria-valuetext', atext);
+    chip.classList.toggle('hidden', !armed);
+    moon.classList.toggle('armed', armed);
+    Array.prototype.forEach.call(chips.children, function (c) {
+      var v = Number(c.dataset.min);
+      c.classList.toggle('active',
+        state.afterEp ? v === 0 :
+        state.min === null ? v === -1 : v === state.min && v > 0);
+    });
+  }
+
+  function setMin(min) {
+    state.afterEp = false;
+    state.min = min === null ? null : Math.max(0, Math.min(300, Math.round(min / 5) * 5));
+    if (state.min === 0) state.min = null;
+    render();
+  }
+  function nudge(delta) {
+    var base = state.afterEp ? 0 : (state.min || 0);
+    setMin(Math.max(0, base + delta));
+  }
+
+  function openPanel() {
+    if (state.min === null && !state.afterEp) setMin(30);  // fast path: first press arms default
+    panel.classList.add('open');
+    moon.setAttribute('aria-expanded', 'true');
+    dial.focus({ preventScroll: true });
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    moon.setAttribute('aria-expanded', 'false');
+    mock.focus({ preventScroll: true });
+  }
+  function panelOpen() { return panel.classList.contains('open'); }
+
+  moon.addEventListener('click', function () { panelOpen() ? closePanel() : openPanel(); });
+
+  chips.addEventListener('click', function (ev) {
+    var b = ev.target.closest('.p-chip');
+    if (!b) return;
+    var v = Number(b.dataset.min);
+    if (v === -1) setMin(null);
+    else if (v === 0) { state.min = null; state.afterEp = true; render(); }
+    else setMin(v);
+  });
+
+  /* dial dragging */
+  function dialSet(ev) {
+    var r = dial.getBoundingClientRect();
+    setMin(((ev.clientX - r.left) / r.width) * 300);
+  }
+  dial.addEventListener('pointerdown', function (ev) {
+    dial.setPointerCapture(ev.pointerId);
+    dialSet(ev);
+    function move(e) { dialSet(e); }
+    function up(e) {
+      dial.removeEventListener('pointermove', move);
+      dial.removeEventListener('pointerup', up);
+    }
+    dial.addEventListener('pointermove', move);
+    dial.addEventListener('pointerup', up);
+  });
+
+  /* wheel: works on moon + chip even when closed, and on the whole panel */
+  function onWheel(ev) {
+    ev.preventDefault();
+    nudge(ev.deltaY < 0 ? 5 : -5);
+  }
+  [moon, chip, panel].forEach(function (n) {
+    n.addEventListener('wheel', onWheel, { passive: false });
+  });
+
+  /* keyboard */
+  function commitDigits() {
+    var v = parseInt(digitBuf, 10);
+    digitBuf = '';
+    if (!isNaN(v)) setMin(v === 0 ? null : v);
+  }
+  mock.addEventListener('keydown', function (ev) {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    var k = ev.key;
+    if (k === 's' || k === 'S') {
+      ev.preventDefault();
+      panelOpen() ? closePanel() : openPanel();
+      return;
+    }
+    if (!panelOpen()) return;
+    if (k === 'ArrowRight') { ev.preventDefault(); nudge(5); }
+    else if (k === 'ArrowLeft') { ev.preventDefault(); nudge(-5); }
+    else if (k === 'ArrowUp') { ev.preventDefault(); nudge(30); }
+    else if (k === 'ArrowDown') { ev.preventDefault(); nudge(-30); }
+    else if (k === 'Enter' || k === 'Escape') { ev.preventDefault(); closePanel(); }
+    else if (k === 'x' || k === 'X' || k === 'Delete') { ev.preventDefault(); setMin(null); }
+    else if (/^[0-9]$/.test(k)) {
+      ev.preventDefault();
+      digitBuf += k;
+      clearTimeout(digitTimer);
+      // snappy exact entry: commit once no more digits could extend it, else wait
+      if (digitBuf.length >= 3 || parseInt(digitBuf + '0', 10) > 300) commitDigits();
+      else digitTimer = setTimeout(commitDigits, 900);
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

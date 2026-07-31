@@ -29,7 +29,7 @@ import type {
   Show,
   SystemInfo
 } from '@shared/types.js'
-import { DEFAULT_SETTINGS } from '@shared/types.js'
+import { DEFAULT_SETTINGS, SLEEP_MAX_MIN } from '@shared/types.js'
 
 export type Screen = 'guide' | 'player' | 'channels' | 'library' | 'settings' | 'blackout'
 
@@ -162,8 +162,18 @@ interface AppState {
   /** Leave the player (Esc) and log the current episode as incomplete. */
   leavePlayer(): Promise<void>
 
-  /** Arm the sleep timer for `minutes` from now, or disarm it with null. */
+  /**
+   * Arm the sleep timer for `minutes` from now, or disarm it with null.
+   *
+   * Clamped to `SLEEP_MAX_MIN`. Arming zero is legal and means "already due" —
+   * playback then runs to the end of the current unit and stops.
+   */
   armSleep(minutes: number | null): void
+  /**
+   * Add (or subtract) minutes from the time *remaining*, arming from now if the
+   * timer is off. Winding a running timer below zero switches it off.
+   */
+  adjustSleep(deltaMin: number): void
   /**
    * Stop now rather than at the next unit boundary — the paused case, where
    * nothing is "finishing" and waiting would mean waiting forever.
@@ -433,7 +443,36 @@ export const useStore = create<AppState>((set, get) => ({
 
   armSleep(minutes) {
     if (minutes === null) return set({ sleepUntil: null, sleepMinutes: null })
-    set({ sleepUntil: Date.now() + minutes * 60_000, sleepMinutes: minutes })
+    // Zero is a real value, not a disarm: it arms an already-due timer, which is
+    // the "stop after this episode" chip. The unit boundary does the rest.
+    const clamped = Math.min(SLEEP_MAX_MIN, Math.max(0, minutes))
+    set({ sleepUntil: Date.now() + clamped * 60_000, sleepMinutes: clamped })
+  },
+
+  adjustSleep(deltaMin) {
+    const { sleepUntil } = get()
+    const now = Date.now()
+    // Adjusting an unarmed timer arms it: a scroll on the moon is a way to set
+    // the timer, not only to nudge one that already exists.
+    if (sleepUntil === null) return get().armSleep(Math.max(0, deltaMin))
+
+    /**
+     * The shift is applied to what is *left*, never to the figure the timer was
+     * armed with. A viewer who armed 30 minutes an hour ago and scrolls up is
+     * asking for five more minutes of television — resolving that against the
+     * original 30 would hand them a deadline in the past.
+     */
+    const remainingMin = (sleepUntil - now) / 60_000
+    const next = Math.min(SLEEP_MAX_MIN, Math.round(remainingMin) + deltaMin)
+    // Winding an unexpired timer down past zero is a request to switch it off,
+    // not to stop at the end of this episode — that reading belongs to the chip
+    // the viewer pressed on purpose. An already-expired timer is left alone: it
+    // is waiting on a boundary, and there is nothing left to take away.
+    if (next <= 0) {
+      if (remainingMin > 0) return set({ sleepUntil: null, sleepMinutes: null })
+      return
+    }
+    set({ sleepUntil: now + next * 60_000, sleepMinutes: next })
   },
 
   sleepNow() {

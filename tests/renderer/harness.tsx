@@ -218,6 +218,19 @@ export interface Scenario {
   expireSleep(minutes?: number): Promise<void>
   /** Arm or (with null) cancel the timer, the way the OSD button does. */
   armSleep(minutes: number | null): Promise<void>
+  /**
+   * A keystroke, delivered to whatever holds focus — which is what decides
+   * whether the player's window-level map sees it at all.
+   */
+  press(key: string): Promise<void>
+  /** Press the moon button in the OSD row. */
+  clickSleep(): Promise<void>
+  /** A wheel notch over an element: `up` adds time, `down` takes it away. */
+  wheel(el: Element, direction: 'up' | 'down'): Promise<void>
+  /** The sleep panel, or null when it is closed. */
+  sleepPanel(): HTMLElement | null
+  /** The moon button. */
+  sleepButton(): HTMLElement
   /** T−30s: reserve the next pick into the standby surface. */
   prewarm(): Promise<void>
   /** A human asking to pause — the OSD button, the only thing that means it. */
@@ -310,6 +323,12 @@ export async function openPlayer(
   const button = (label: string): HTMLElement => {
     const el = document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)
     if (!el) throw new Error(`no button labelled "${label}" is on screen`)
+    return el
+  }
+
+  const sleepButtonEl = (): HTMLElement => {
+    const el = document.querySelector<HTMLElement>('button.osd-btn.sleep')
+    if (!el) throw new Error('the sleep button is not on screen')
     return el
   }
 
@@ -413,6 +432,47 @@ export async function openPlayer(
 
     viewerPause: () => click('Pause'),
     viewerPlay: () => click('Play'),
+
+    /**
+     * Keystrokes go to `document.activeElement`, never to `window` directly, and
+     * that is the whole point of having this in the harness. The player's map is
+     * bound on `window` but ignores anything whose target sits inside a
+     * `[role="slider"]`, so *what has focus* is what decides whether a key
+     * reaches it — the sleep panel's arrows depend on exactly that, and a test
+     * that fired at `window` would prove nothing about it.
+     */
+    press: async (key) => {
+      const target = document.activeElement ?? document.body
+      await act(async () => {
+        target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+        await macrotask()
+      })
+      await settle()
+    },
+
+    // By class, not by label: the moon's `aria-label` changes with what is armed.
+    clickSleep: async () => {
+      const el = sleepButtonEl()
+      await act(async () => {
+        el.click()
+        await macrotask()
+      })
+      await settle()
+    },
+
+    wheel: async (el, direction) => {
+      await act(async () => {
+        el.dispatchEvent(
+          new WheelEvent('wheel', { deltaY: direction === 'up' ? -100 : 100, bubbles: true })
+        )
+        await macrotask()
+      })
+      await settle()
+    },
+
+    sleepPanel: () => document.querySelector<HTMLElement>('.sleep-panel'),
+
+    sleepButton: sleepButtonEl,
 
     at: async (seconds) => {
       const el = activeVideo()

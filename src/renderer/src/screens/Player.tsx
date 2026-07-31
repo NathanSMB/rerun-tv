@@ -38,9 +38,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { JSX, KeyboardEvent, PointerEvent } from 'react'
+import type { JSX, WheelEvent } from 'react'
 import { formatDuration } from '@shared/playback.js'
 import type { NowPlaying } from '@shared/types.js'
+import { SLEEP_STEP_MIN } from '@shared/types.js'
+import Slider from '../components/Slider.js'
+import SleepPanel from '../components/SleepPanel.js'
 import VideoSurface, {
   type VideoSource,
   type VideoSurfaceHandle
@@ -71,153 +74,7 @@ const SEEK_COMMIT_MS = 250
 /** Mouse-move reveals are throttled so a moving pointer doesn't re-render 60×/s. */
 const ACTIVITY_THROTTLE_MS = 150
 
-/**
- * Sleep-timer durations the OSD button cycles through, in minutes.
- *
- * The first press arms `settings.sleepTimerDefaultMin`; each press after that
- * moves to the next preset above the armed value, and past the last one the
- * timer switches off. TV convention, and it means the common case — "give me
- * the usual" — is one press.
- */
-const SLEEP_PRESETS = [15, 30, 45, 60, 90, 120]
-
 const clamp = (value: number, max: number): number => Math.min(max, Math.max(0, value))
-
-// ---------------------------------------------------------------------------
-// Slider
-// ---------------------------------------------------------------------------
-
-interface SliderProps {
-  className: string
-  label: string
-  /** Current value, in the same unit as `max`. `min` is always 0 here. */
-  value: number
-  max: number
-  step: number
-  ariaValueText: string
-  /** Fires continuously while dragging or on each key press — cheap preview. */
-  onPreview(value: number): void
-  /** Fires when the gesture ends — the expensive action (a real seek). */
-  onCommit(value: number): void
-  onDragChange?(dragging: boolean): void
-  /** The scrub bar carries the mockup's amber knob; the volume track doesn't. */
-  knob?: boolean
-}
-
-/**
- * A real `role="slider"` widget: focusable, arrow-key operable, and draggable
- * with pointer capture so the drag survives the pointer leaving the 4px track.
- *
- * Preview and commit are split because the scrub bar's commit restarts an
- * ffmpeg process — we want the fill to follow the finger at 60fps but the seek
- * to happen once.
- */
-function Slider({
-  className,
-  label,
-  value,
-  max,
-  step,
-  ariaValueText,
-  onPreview,
-  onCommit,
-  onDragChange,
-  knob = false
-}: SliderProps): JSX.Element {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const draggingRef = useRef(false)
-
-  const valueAtX = (clientX: number): number => {
-    const el = trackRef.current
-    if (!el) return value
-    const rect = el.getBoundingClientRect()
-    const ratio = rect.width > 0 ? (clientX - rect.left) / rect.width : 0
-    return clamp(ratio, 1) * max
-  }
-
-  const handlePointerDown = (e: PointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    trackRef.current?.focus()
-    e.currentTarget.setPointerCapture(e.pointerId)
-    draggingRef.current = true
-    onDragChange?.(true)
-    onPreview(valueAtX(e.clientX))
-  }
-
-  const handlePointerMove = (e: PointerEvent<HTMLDivElement>): void => {
-    if (!draggingRef.current) return
-    onPreview(valueAtX(e.clientX))
-  }
-
-  const endDrag = (e: PointerEvent<HTMLDivElement>): void => {
-    if (!draggingRef.current) return
-    draggingRef.current = false
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId)
-    }
-    onDragChange?.(false)
-    onCommit(valueAtX(e.clientX))
-  }
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    let next: number
-    switch (e.key) {
-      case 'ArrowLeft':
-      case 'ArrowDown':
-        next = value - step
-        break
-      case 'ArrowRight':
-      case 'ArrowUp':
-        next = value + step
-        break
-      case 'PageDown':
-        next = value - step * 5
-        break
-      case 'PageUp':
-        next = value + step * 5
-        break
-      case 'Home':
-        next = 0
-        break
-      case 'End':
-        next = max
-        break
-      default:
-        return
-    }
-    // Stops the window-level map from also reading this arrow as skip/volume.
-    e.preventDefault()
-    e.stopPropagation()
-    const clamped = clamp(next, max)
-    onPreview(clamped)
-    onCommit(clamped)
-  }
-
-  const pct = max > 0 ? clamp(value / max, 1) * 100 : 0
-
-  return (
-    <div
-      ref={trackRef}
-      className={className}
-      role="slider"
-      tabIndex={0}
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={Math.round(max)}
-      aria-valuenow={Math.round(value)}
-      aria-valuetext={ariaValueText}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      onKeyDown={handleKeyDown}
-    >
-      <div className="fill" style={{ right: `${100 - pct}%` }} />
-      {knob && <div className="knob" style={{ left: `${pct}%` }} aria-hidden="true" />}
-    </div>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // The stage
@@ -303,11 +160,11 @@ export default function Player(): JSX.Element | null {
   const prewarmNext = useStore((s) => s.settings.prewarmNext)
   const sleepDefaultMin = useStore((s) => s.settings.sleepTimerDefaultMin)
   const sleepUntil = useStore((s) => s.sleepUntil)
-  const sleepMinutes = useStore((s) => s.sleepMinutes)
   const advance = useStore((s) => s.advance)
   const prewarm = useStore((s) => s.prewarm)
   const leavePlayer = useStore((s) => s.leavePlayer)
   const armSleep = useStore((s) => s.armSleep)
+  const adjustSleep = useStore((s) => s.adjustSleep)
   const sleepNow = useStore((s) => s.sleepNow)
   const setVolume = useStore((s) => s.setVolume)
   const toggleMute = useStore((s) => s.toggleMute)
@@ -339,6 +196,7 @@ export default function Player(): JSX.Element | null {
   const [fullscreen, setFullscreen] = useState(false)
 
   const [osdVisible, setOsdVisible] = useState(true)
+  const [sleepOpen, setSleepOpen] = useState(false)
   const [bannerFlash, setBannerFlash] = useState(true)
   const [osdHovered, setOsdHovered] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -406,13 +264,22 @@ export default function Player(): JSX.Element | null {
    * those states simply cancel the timeout.
    */
   useEffect(() => {
-    if (!osdVisible || paused || osdHovered || dragging || failed) return
+    if (!osdVisible || paused || osdHovered || dragging || failed || sleepOpen) return
     const id = window.setTimeout(
       () => setOsdVisible(false),
       Math.max(1, osdHideAfterS) * 1000
     )
     return () => window.clearTimeout(id)
-  }, [osdVisible, paused, osdHovered, dragging, failed, osdHideAfterS, activity])
+  }, [osdVisible, paused, osdHovered, dragging, failed, sleepOpen, osdHideAfterS, activity])
+
+  /**
+   * The panel is chrome, so it cannot outlive the chrome: an OSD that faded
+   * while the pointer was elsewhere must not leave a dialog behind to reappear
+   * on the next mouse move. Closing it here also returns focus to the stage.
+   */
+  useEffect(() => {
+    if (!osdVisible && sleepOpen) setSleepOpen(false)
+  }, [osdVisible, sleepOpen])
 
   /** Banner: shown on tune-in and on every episode handoff, then fades. */
   useEffect(() => {
@@ -630,11 +497,31 @@ export default function Player(): JSX.Element | null {
   const skip = useCallback(() => runAdvance(false), [runAdvance])
   const handleEnded = useCallback(() => runAdvance(true), [runAdvance])
 
-  /** Off → the default → each preset above it → off again. */
-  const cycleSleep = useCallback(() => {
-    if (sleepMinutes === null) return armSleep(sleepDefaultMin)
-    armSleep(SLEEP_PRESETS.find((minutes) => minutes > sleepMinutes) ?? null)
-  }, [sleepMinutes, sleepDefaultMin, armSleep])
+  /**
+   * The moon, and <kbd>S</kbd>.
+   *
+   * Opening arms the default when nothing is armed yet, which keeps the old
+   * one-press fast path intact — "give me the usual" is still a single press,
+   * and the panel simply opens around the result so a second gesture can refine
+   * it. A press with the panel already open closes it; there is nothing to
+   * commit, because the dial commits as it moves.
+   */
+  const toggleSleepPanel = useCallback(() => {
+    // Read `sleepOpen` rather than use an updater: arming is a store write, and
+    // React may run an updater during a render, where a write to another store
+    // is not allowed.
+    const opening = !sleepOpen
+    if (opening && sleepUntil === null) armSleep(sleepDefaultMin)
+    setSleepOpen(opening)
+  }, [sleepOpen, sleepUntil, sleepDefaultMin, armSleep])
+
+  /** Wheel over the moon, the chip or the panel: ±5 minutes, no clicks at all. */
+  const wheelSleep = useCallback(
+    (e: WheelEvent<HTMLElement>) => {
+      adjustSleep(e.deltaY < 0 ? SLEEP_STEP_MIN : -SLEEP_STEP_MIN)
+    },
+    [adjustSleep]
+  )
 
   /** Re-open the active surface's stream from scratch, standby untouched. */
   const retry = useCallback(() => {
@@ -725,9 +612,16 @@ export default function Player(): JSX.Element | null {
         case 's':
         case 'S':
           e.preventDefault()
-          cycleSleep()
+          toggleSleepPanel()
           break
         case 'Escape':
+          // The panel takes the first Esc, before fullscreen and before the
+          // guide — it is the innermost thing open.
+          if (sleepOpen) {
+            e.preventDefault()
+            setSleepOpen(false)
+            break
+          }
           // Chromium swallows Esc to leave fullscreen, so by the time we see
           // one we are usually already out. Either way the first Esc only ever
           // exits fullscreen; the second one leaves the player.
@@ -750,7 +644,8 @@ export default function Player(): JSX.Element | null {
     skip,
     toggleFullscreen,
     toggleMute,
-    cycleSleep,
+    toggleSleepPanel,
+    sleepOpen,
     setVolume,
     leavePlayer,
     volume
@@ -869,6 +764,18 @@ export default function Player(): JSX.Element | null {
         </div>
       )}
 
+      {sleepOpen && (
+        <SleepPanel
+          sleepUntil={sleepUntil}
+          nowMs={nowMs}
+          endsUnit={endsUnit}
+          arcPartCount={arc?.partCount ?? null}
+          onArm={armSleep}
+          onAdjust={adjustSleep}
+          onClose={() => setSleepOpen(false)}
+        />
+      )}
+
       <div
         className={`osd${chromeVisible ? '' : ' is-hidden'}`}
         onPointerEnter={() => setOsdHovered(true)}
@@ -956,8 +863,9 @@ export default function Player(): JSX.Element | null {
                   ? `Sleep timer finished — stopping ${sleepLabel}. Press to change`
                   : `Sleep timer: ${sleepLabel} left. Press to change`
             }
-            aria-pressed={sleepUntil !== null}
-            onClick={cycleSleep}
+            aria-expanded={sleepOpen}
+            onClick={toggleSleepPanel}
+            onWheel={wheelSleep}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9zm0 2.2A5.2 5.2 0 0 0 18.8 12 7 7 0 0 1 12 18.8 6.8 6.8 0 0 1 12 5.2z" />
@@ -965,7 +873,12 @@ export default function Player(): JSX.Element | null {
           </button>
 
           {sleepLabel !== null && (
-            <span className={`sleep-chip${sleepExpired ? ' is-due' : ''}`} role="status">
+            <span
+              className={`sleep-chip${sleepExpired ? ' is-due' : ''}`}
+              role="status"
+              title="Scroll to add or remove 5 minutes"
+              onWheel={wheelSleep}
+            >
               {sleepExpired ? 'Sleeps ' : ''}
               {sleepLabel}
             </span>

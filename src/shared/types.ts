@@ -350,12 +350,30 @@ export interface AppSettings {
   /**
    * Minutes the sleep timer arms for on its first press in the player.
    *
-   * Only the starting point: the OSD button cycles on through the presets from
-   * here. The timer itself is never persisted — an armed countdown surviving a
-   * restart would be a surprise, not a convenience.
+   * Only the starting point: the sleep panel opens on this value and the dial
+   * takes it anywhere from there. The timer itself is never persisted — an armed
+   * countdown surviving a restart would be a surprise, not a convenience.
    */
   sleepTimerDefaultMin: number
 }
+
+/**
+ * The ceiling on an armed sleep timer, in minutes.
+ *
+ * Five hours is past the length of any evening's viewing, so the dial's far end
+ * means "don't stop tonight" rather than a limit anyone bumps into. It is a
+ * shared constant because three places must agree on it: the store clamps to it,
+ * the panel's dial spans it, and Settings won't offer a default above it.
+ */
+export const SLEEP_MAX_MIN = 300
+
+/**
+ * The dial's detent, in minutes.
+ *
+ * Small enough that no bedtime is out of reach, coarse enough that the whole
+ * range is 61 stops — a drag that snaps rather than one that has to be aimed.
+ */
+export const SLEEP_STEP_MIN = 5
 
 export const DEFAULT_SETTINGS: AppSettings = {
   volume: 0.7,

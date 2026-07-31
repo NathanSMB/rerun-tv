@@ -87,10 +87,45 @@ fullscreen · `Esc` back to the guide · `M` mute · `S` sleep timer.
 
 ### The sleep timer
 
-A moon button in the OSD row, or `S`. The first press arms
-`settings.sleepTimerDefaultMin`; each press after that moves to the next preset
-up — 15, 30, 45, 60, 90, 120 minutes — and past the last one it switches off. An
-amber chip beside it counts down.
+A moon button in the OSD row, or `S`, which opens the **sleep panel**
+(`components/SleepPanel.tsx`, designed in
+[sleep-dial-plan.html](sleep-dial-plan.html)). An amber chip beside the moon
+counts down whenever something is armed.
+
+The panel is a dial from off to five hours (`SLEEP_MAX_MIN`) in five-minute
+detents, so any bedtime is one drag away rather than a preset it happens to land
+on. Its readout says what the number *means* — "1h 35m · off around 12:09 AM —
+lets the episode finish" — because the wall-clock time is the thing a viewer
+actually has in mind.
+
+| Input | Does |
+|---|---|
+| `S` / moon click | Opens the panel, arming `settings.sleepTimerDefaultMin` if the timer was off — so "give me the usual" is still one press. Again to close. |
+| Wheel over moon, chip or panel | ±5 minutes, without opening anything. |
+| Drag on the dial | Any duration; the left edge disarms. |
+| `←`/`→` | ±5 minutes (the dial's own step). |
+| `↑`/`↓` | ±30 minutes. |
+| `0`–`9` | Typed minutes, committed after ~900 ms or as soon as no further digit could change the answer. `0` switches it off. |
+| Chips | Off · After this ep · 30m · 1h · 2h · 3h · 5h. |
+| `Enter` / `Esc` | Close. There is nothing to cancel — see below. |
+
+Three things about the panel are deliberate:
+
+- **Edits commit live and closing never discards**, exactly like the volume
+  track. The armed timer is the state; an editing buffer with a confirm step
+  would be a second source of truth for a number already on screen.
+- **The dial reads time *remaining*, not the figure the timer was armed with.**
+  `adjustSleep` shifts the deadline for the same reason: a viewer forty minutes
+  into an armed hour who scrolls up wants five more minutes of television, not a
+  deadline recomputed from the original hour and therefore already in the past.
+- **"After this ep" arms zero minutes** — an already-due timer — so the stop is
+  produced by the ordinary unit boundary below rather than by a second code path.
+  Pressed mid-arc it still plays the arc out, which is why it is not special-cased
+  into "stop here".
+
+Arrow keys reach the dial rather than the player because the panel handles them
+first: `→` is skip-episode in the player's own map, and the window-level handler
+already ignores anything with a `[role="slider"]` in its target chain.
 
 **It stops at the end of a playable unit, never mid-story.** Reaching the
 deadline changes nothing on screen: the episode plays to its natural end, and if
@@ -112,7 +147,8 @@ Three consequences worth knowing:
   boundary and a viewer who paused and didn't come back is the case the timer is
   for. This is the one path that stops mid-episode.
 - **Leaving the player disarms it.** A timer that survived into the guide would
-  fire against whatever you tuned into next.
+  fire against whatever you tuned into next. The panel goes with the rest of the
+  chrome when the OSD fades, for the same reason.
 
 The deadline is wall-clock (`sleepUntil`, epoch ms), compared at the moments that
 matter rather than counted down, so Chromium's background-timer throttling can't

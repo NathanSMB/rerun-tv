@@ -56,6 +56,7 @@
 .stage .banner,
 .stage .onair,
 .stage .toast,
+.stage .sleep-panel,
 .stage .osd {
   z-index: 2;
 }
@@ -259,6 +260,11 @@
  */
 .osd-btn.sleep.is-armed {
   color: var(--amber);
+}
+
+/* The chip is a wheel target as well as a readout — say so on hover. */
+.sleep-chip {
+  cursor: ns-resize;
 }
 
 .sleep-chip {
