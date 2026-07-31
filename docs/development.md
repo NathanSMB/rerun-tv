@@ -67,6 +67,7 @@ src/
     src/components/  AppBar · ChannelBanner · ChannelNumber
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
 tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
+  renderer/          the one DOM suite: which store action the Player's effects pick
 docs/                this documentation, plus the original plan and mockup
 ```
 
@@ -115,7 +116,10 @@ which would drag a display server into what are otherwise pure logic tests.
 
 ## Testing
 
-Tests are Node-target Vitest and never boot Electron. The database ones open
+Tests are Node-target Vitest and never boot Electron — no display server, no
+Electron ABI, seconds end to end. The one exception is `tests/renderer/`, which
+opts itself into `happy-dom` per file (below) so React can mount; it still needs
+neither. The database ones open
 `openDatabase(':memory:')` and insert fixtures with raw SQL, so they exercise
 the real schema and the real migrations. The stream tests start a real HTTP
 server on an ephemeral port; the cases that need ffmpeg skip themselves when it
@@ -133,6 +137,70 @@ DOM-free and is listed in `tsconfig.node.json`, so a stray DOM reference fails t
 build. `handoff.test.ts` drives the store's schedule-advance logic against the
 real scheduler over a real database, with only the IPC hop faked — the one thing
 worth that much scaffolding, because getting it wrong double-spends the schedule.
+
+### The renderer layer: `tests/renderer/`
+
+`handoff.test.ts` starts one step after the bugs that motivated this layer. It
+calls `advance()` and `sleepNow()` directly; the bugs were in *which of the two
+the Player asked for*, and that decision lives in a React effect fed by
+media-element events. Nothing in `npm test` rendered the Player at all, so both
+shipped past a green suite.
+
+`player-decisions.test.tsx` closes that gap and nothing wider. It mounts the
+real `<Player/>` and asserts **which store action its effects picked** — the
+paused branch versus the `ended` handler, and whether a prewarm was asked for.
+Everything between the two seams is production code: the Player, `VideoSurface`
+(including the rule that events are forwarded only while a surface is active),
+and the store with its `serialize()` queue.
+
+The two seams are the ones the repo already treats as contracts:
+
+- **The media elements.** `happy-dom` supplies DOM globals so `react-dom` can
+  mount; its `<video>` is an inert stub, so `harness.tsx` replaces `paused`,
+  `ended`, `play()` and `pause()` with the orderings measured in the real app.
+  With no `MediaSource` in happy-dom, `VideoSurface` takes its plain-`src`
+  branch — the pump that branch skips is DOM-free and pinned by `mse.test.ts`.
+- **The preload bridge**, over a fixed deck of episodes rather than a database
+  (`fixtures.tsx`). It keeps the one scheduler distinction the handoff rests on:
+  `prewarmNext` reserves, `promoteNext` commits.
+
+**What it deliberately does not cover.** Real Chromium semantics. This layer
+*encodes* what the soak harness measured; it cannot discover anything new about
+a media element, and a fake that fires `ended` without a preceding `pause` would
+happily pass the broken code. Ground truth stays with `scripts/soak.mjs --eval`
+and [playback.md](playback.md#two-things-chromium-does-around-ended). Nor does
+it cover what the *scheduler* picks: that is `handoff.test.ts`'s job over the
+real database, and these files are SQLite-free so they stay ownable by
+`tsconfig.web.json` (which has no Node types — `tsconfig.node.json` excludes
+them for the same reason, keeping its no-DOM guarantee intact).
+
+**Writing the next one.** Compose the harness vocabulary; tests never hand-fire
+raw events, so the measured orderings live in exactly one place:
+
+```tsx
+const sc = await openPlayer(arcDeck(3))   // mount, tune, first part on air
+await sc.prewarm()                         // T−30s: reserve into the standby
+await sc.pauseForEnd()                     // Chromium's pause, `ended` already true
+await sc.ended()                           // …stopping inside the promotion window
+await sc.expireSleep()                     // the countdown reaching its deadline
+await sc.settle()
+expect(sc.actions).toEqual(['advance(true)'])
+```
+
+`sc.actions` is which store action the Player chose; `sc.calls` is the bridge
+log, which is what the play log is made of. Also available: `at(seconds)` to
+enter the up-next window, `viewerPause()`/`viewerPlay()` (the real OSD button —
+the only thing that clears `wantsPlayRef`), `armSleep()`, and `endEpisode()` for
+the pause-then-ended pair in one step.
+
+If a new case needs a media behaviour the harness doesn't model yet — a seek's
+reload, a stream error, a `waiting`/`stalled` cycle — **measure it live first**
+with `soak.mjs --eval`, record it in `playback.md`, then teach `harness.tsx`.
+Inventing the ordering is how a harness ends up passing broken code.
+
+Finally: each test names the mutation that must turn it red, and the guard those
+mutations attack is `Player.tsx`'s "Expiry while paused". That ritual is the
+point — a harness whose tests cannot fail on the original bugs is decoration.
 
 ## The soak harness
 

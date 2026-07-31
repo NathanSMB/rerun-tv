@@ -182,9 +182,13 @@ the Player keys its pause branch on `wantsPlayRef` — cleared only in
 Keyed on `paused`, a sleep timer that expired mid-arc stopped at the handoff into
 the next part, which is the one thing the unit boundary exists to prevent.
 
-Neither is reachable from `tests/`: they are properties of Chromium's media
-element, not of our state machine. The store tests pin the transitions; a live
-run is what pins these.
+Neither is *discoverable* from `tests/`: they are properties of Chromium's media
+element, not of our state machine, and a live run is the only thing that can
+measure them. What `tests/renderer/` does is encode the two orderings above and
+hold the Player's decisions to them, so the guard cannot be quietly removed
+again (see [development.md](development.md#the-renderer-layer-testsrenderer)).
+Change what this section says and that harness has to be taught the new
+behaviour by hand.
 
 ## Finding ffmpeg
 

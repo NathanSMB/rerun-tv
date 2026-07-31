@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Renderer Test Harness — Implementation Plan · Rerun TV</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f9f9f7;
+    --surface-1:   #fcfcfb;
+    --surface-2:   #f3f2ef;
+    --ink:         #0b0b0b;
+    --ink-2:       #52514e;
+    --muted:       #898781;
+    --grid:        #e1e0d9;
+    --baseline:    #c3c2b7;
+    --border:      rgba(11,11,11,0.10);
+    --s1:          #2a78d6;   /* pinned in npm test / real code under test */
+    --s2:          #eb6834;   /* the gap · the bug window */
+    --s3:          #1baf7a;   /* the new harness layer */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:        #0d0d0d;
+      --surface-1:   #1a1a19;
+      --surface-2:   #242422;
+      --ink:         #ffffff;
+      --ink-2:       #c3c2b7;
+      --muted:       #898781;
+      --grid:        #2c2c2a;
+      --baseline:    #383835;
+      --border:      rgba(255,255,255,0.10);
+      --s1:          #3987e5;
+      --s2:          #d95926;
+      --s3:          #199e70;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface-1:   #1a1a19;
+    --surface-2:   #242422;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --muted:       #898781;
+    --grid:        #2c2c2a;
+    --baseline:    #383835;
+    --border:      rgba(255,255,255,0.10);
+    --s1:          #3987e5;
+    --s2:          #d95926;
+    --s3:          #199e70;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header.doc { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--ink-2); margin: 0; max-width: 660px; }
+  h2 { font-size: 18px; font-weight: 650; margin: 48px 0 8px; letter-spacing: -0.005em; }
+  h3 { font-size: 14px; font-weight: 650; margin: 24px 0 6px; }
+  p  { margin: 8px 0; color: var(--ink-2); }
+  p strong, li strong, td strong { color: var(--ink); font-weight: 600; }
+  code { font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+         background: var(--surface-2); border: 1px solid var(--border);
+         border-radius: 4px; padding: 1px 5px; color: var(--ink); white-space: nowrap; }
+  pre { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+        padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
+  pre code { background: none; border: none; padding: 0; white-space: pre; display: block;
+             font-size: 12.5px; color: var(--ink-2); }
+  pre code .em { color: var(--ink); font-weight: 600; }
+  pre code .del { color: var(--s2); }
+  ul, ol { color: var(--ink-2); margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--muted); }
+
+  .theme-btn {
+    flex: none; border: 1px solid var(--border); background: var(--surface-1); color: var(--ink-2);
+    border-radius: 8px; padding: 6px 12px; font: 13px system-ui, sans-serif; cursor: pointer;
+  }
+  .theme-btn:hover { color: var(--ink); }
+
+  /* KPI row */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0 0; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .lab { font-size: 12.5px; color: var(--ink-2); }
+  .tile .val { font-size: 30px; font-weight: 600; line-height: 1.15; margin-top: 2px; }
+  .tile .note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+
+  /* Figure card */
+  figure.viz { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+               margin: 16px 0; padding: 18px 18px 12px; }
+  figure.viz > .fig-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  figure.viz .fig-title { font-size: 14px; font-weight: 650; }
+  figcaption { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); }
+  .legend .k { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .sw.line { width: 14px; height: 3px; border-radius: 1.5px; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .t-title { font-size: 13px; font-weight: 650; fill: var(--ink); }
+  .t-lab   { font-size: 12px; fill: var(--ink-2); }
+  .t-mut   { font-size: 11px; fill: var(--muted); }
+  .t-tick  { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .t-in    { font-size: 11px; font-weight: 600; fill: #fff; }
+  .t-node  { font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .t-code  { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; fill: var(--ink-2); }
+  .grid-l  { stroke: var(--grid); stroke-width: 1; }
+  .base-l  { stroke: var(--baseline); stroke-width: 1; }
+  .node    { fill: var(--surface-2); stroke: var(--border); }
+  .edge    { stroke: var(--baseline); stroke-width: 1.5; fill: none; }
+  .hit     { fill: transparent; cursor: default; outline-offset: 2px; }
+  .hit:focus-visible { outline: 2px solid var(--s1); }
+
+  /* table view */
+  .tbl-btn { border: 1px solid var(--border); background: none; color: var(--ink-2); font-size: 12px;
+             border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .tbl-btn:hover { color: var(--ink); }
+  table.data { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+  table.data th { text-align: left; font-weight: 600; color: var(--ink-2); font-size: 12px;
+                  border-bottom: 1px solid var(--baseline); padding: 6px 10px 6px 0; }
+  table.data td { border-bottom: 1px solid var(--grid); padding: 6px 10px 6px 0; color: var(--ink-2); vertical-align: top; }
+  table.data td:first-child, table.data th:first-child { padding-left: 2px; }
+  table.data td.num { font-variant-numeric: tabular-nums; text-align: right; padding-right: 24px; }
+  table.data th.num { text-align: right; padding-right: 24px; }
+  table.data td strong { color: var(--ink); font-weight: 600; }
+
+  /* plain content tables */
+  table.plain { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 12px 0; }
+  table.plain th { text-align: left; font-weight: 600; color: var(--ink-2); font-size: 12.5px;
+                   border-bottom: 1px solid var(--baseline); padding: 8px 12px 8px 0; }
+  table.plain td { border-bottom: 1px solid var(--grid); padding: 8px 12px 8px 0; color: var(--ink-2); vertical-align: top; }
+
+  /* tooltip */
+  #tip { position: fixed; z-index: 30; pointer-events: none; max-width: 340px;
+         background: var(--ink); color: var(--page); font-size: 12.5px; line-height: 1.45;
+         border-radius: 8px; padding: 8px 11px; opacity: 0; transition: opacity 120ms ease; }
+  #tip.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { #tip { transition: none; } }
+
+  .phase-list li { margin: 6px 0; }
+  .check { list-style: none; padding-left: 2px; }
+  .check li { padding-left: 26px; position: relative; }
+  .check li::before { content: ""; position: absolute; left: 0; top: 4px; width: 13px; height: 13px;
+                      border: 1.5px solid var(--baseline); border-radius: 4px; }
+  footer { margin-top: 56px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--grid); padding-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div>
+    <h1>Renderer test harness</h1>
+    <p class="sub">Implementation plan for Rerun&nbsp;TV — make the Player&rsquo;s media-event decisions (<code>advance</code> vs <code>sleepNow</code> vs <code>prewarm</code>) testable in <code>npm test</code>: headless, Node&nbsp;ABI, seconds. Response to <a href="renderer-test-harness-handoff.md"><code>renderer-test-harness-handoff.md</code></a>.</p>
+  </div>
+  <button class="theme-btn" id="themeBtn" type="button">Dark mode</button>
+</header>
+
+<div class="kpis">
+  <div class="tile"><div class="lab">Regression scenarios</div><div class="val">4</div><div class="note">bug 1 · bug 2 · true pause · prewarm gate</div></div>
+  <div class="tile"><div class="lab">New dev dependencies</div><div class="val">1</div><div class="note">happy-dom — DOM globals only</div></div>
+  <div class="tile"><div class="lab">Existing tests modified</div><div class="val">0</div><div class="note">handoff.test.ts &amp; friends untouched</div></div>
+  <div class="tile"><div class="lab">Electron / display in CI</div><div class="val">0</div><div class="note">real Chromium stays with the soak rig</div></div>
+</div>
+
+<h2>The gap this closes</h2>
+<p>Two bugs shipped past 300 green tests during the sleep-timer feature. Both lived in <strong>one React effect</strong> in <code>Player.tsx</code> — the branch that decides, when the timer has expired and the element reports <code>paused</code>, whether to call <code>store.sleepNow()</code>. The store&rsquo;s transitions below that decision are pinned hard by <code>tests/handoff.test.ts</code> (real scheduler, real in-memory SQLite, seven sleep-timer cases) — but those tests call <code>advance()</code> / <code>sleepNow()</code> <em>directly</em>. The bugs were in <em>which of those two the Player picks</em>, and nothing in <code>npm test</code> renders the Player at all.</p>
+
+<figure class="viz">
+  <div class="fig-head">
+    <span class="fig-title">Where each layer of the playback stack is pinned today</span>
+    <span class="legend">
+      <span class="k"><span class="sw" style="background:var(--s1)"></span>Pinned in npm test</span>
+      <span class="k"><span class="sw" style="background:var(--s2)"></span>The gap</span>
+      <span class="k"><span class="sw" style="background:var(--surface-2);border:1px solid var(--baseline)"></span>Live app only</span>
+    </span>
+    <button class="tbl-btn" data-toggle="tbl-coverage" type="button">Table view</button>
+  </div>
+  <svg viewBox="0 0 860 300" role="img" aria-label="Five layers of the playback stack from the Chromium media element down to the scheduler and database. The Player effects layer is the only one not pinned by npm test.">
+    <!-- rows -->
+    <rect x="60" y="14"  width="480" height="44" rx="8" class="node"/>
+    <text class="t-lab" x="76" y="33" style="font-weight:600;fill:var(--ink)">Chromium&rsquo;s media element</text>
+    <text class="t-mut" x="76" y="49">pause→ended ordering · standby promotion · real semantics</text>
+
+    <rect x="60" y="68"  width="480" height="44" rx="8" class="node"/>
+    <text class="t-lab" x="76" y="87" style="font-weight:600;fill:var(--ink)">VideoSurface — the DOM half</text>
+    <text class="t-mut" x="76" y="103">MediaSource, fetch, object URLs; forwards events only while active</text>
+
+    <rect x="60" y="122" width="480" height="44" rx="8" fill="var(--s2)"/>
+    <text class="t-in" x="76" y="141" style="font-size:12.5px">Player.tsx effects — the decision layer</text>
+    <text class="t-in" x="76" y="157" style="font-weight:400;opacity:.9">advance(true)? sleepNow()? prewarm()? — fed by media events + refs</text>
+
+    <rect x="60" y="176" width="480" height="44" rx="8" fill="var(--s1)"/>
+    <text class="t-in" x="76" y="195" style="font-size:12.5px">store.ts — serialized transitions</text>
+    <text class="t-in" x="76" y="211" style="font-weight:400;opacity:.9">tune · advance · prewarm · sleepNow, one at a time through serialize()</text>
+
+    <rect x="60" y="230" width="480" height="44" rx="8" fill="var(--s1)"/>
+    <text class="t-in" x="76" y="249" style="font-size:12.5px">Scheduler + SQLite</text>
+    <text class="t-in" x="76" y="265" style="font-weight:400;opacity:.9">units, arc lock, shuffle bags, play_log — the real thing, in memory</text>
+
+    <!-- brackets -->
+    <path class="edge" d="M556,16 L564,16 L564,110 L556,110"/>
+    <text class="t-mut" x="576" y="56">scripts/soak.mjs --eval</text>
+    <text class="t-mut" x="576" y="71">live app; mse.ts pump already</text>
+    <text class="t-mut" x="576" y="86">pinned in Node by mse.test.ts</text>
+
+    <path d="M556,124 L564,124 L564,164 L556,164" fill="none" stroke="var(--s3)" stroke-width="2"/>
+    <text class="t-lab" x="576" y="140" style="font-weight:600;fill:var(--ink)">this plan</text>
+    <text class="t-mut" x="576" y="155">tests/renderer/ (new)</text>
+
+    <path class="edge" d="M556,178 L564,178 L564,272 L556,272"/>
+    <text class="t-mut" x="576" y="218">tests/handoff.test.ts</text>
+    <text class="t-mut" x="576" y="233">+ scheduler · repo · stream tests</text>
+
+    <!-- hover targets -->
+    <rect class="hit" tabindex="0" x="60" y="14" width="480" height="44" data-tip="Real Chromium behaviour: pause firing immediately before ended (same millisecond, ended already true), a promoted standby paused for an instant. Properties of the browser, not of our state machine — they stay with the soak harness, and the new fake encodes them as measured (docs/playback.md)."/>
+    <rect class="hit" tabindex="0" x="60" y="68" width="480" height="44" data-tip="VideoSurface.tsx owns MediaSource/fetch/object URLs. Its logic-heavy half (player/mse.ts) is deliberately DOM-free and already unit-tested in Node against real ffmpeg bytes. The DOM wiring itself stays live-verified; the harness replaces it behind its exported, typed props contract."/>
+    <rect class="hit" tabindex="0" x="60" y="122" width="480" height="44" data-tip="The gap. Both shipped bugs lived here: an effect keyed on element state picked sleepNow() when the right call was advance(true). Delete the wantsPlayRef guard today and the whole suite stays green."/>
+    <rect class="hit" tabindex="0" x="60" y="176" width="480" height="44" data-tip="handoff.test.ts drives the real store over the real scheduler and a real in-memory database, faking only the IPC hop — including seven sleep-timer cases. But it calls advance()/sleepNow() directly: it starts where the bug ends."/>
+    <rect class="hit" tabindex="0" x="60" y="230" width="480" height="44" data-tip="Scheduler, units, arc lock, repositories: covered by dedicated suites plus handoff.test.ts, all against the real schema and migrations."/>
+  </svg>
+  <figcaption>The harness slots one new layer of coverage into the seam between the two that already exist — it does not re-test either neighbour.</figcaption>
+  <table class="data" id="tbl-coverage" hidden>
+    <thead><tr><th>Layer</th><th>In npm test today?</th><th>Pinned by</th></tr></thead>
+    <tbody>
+      <tr><td>Chromium media semantics</td><td>No — live only</td><td><code>scripts/soak.mjs --eval</code>; measurements recorded in <code>docs/playback.md</code></td></tr>
+      <tr><td>VideoSurface DOM wiring</td><td>Partially</td><td><code>mse.test.ts</code> covers the DOM-free pump; DOM half is live-verified</td></tr>
+      <tr><td><strong>Player.tsx effects</strong></td><td><strong>No — the gap</strong></td><td><strong>This plan: <code>tests/renderer/player-decisions.test.tsx</code></strong></td></tr>
+      <tr><td>store.ts transitions</td><td>Yes</td><td><code>handoff.test.ts</code>, real scheduler + DB, IPC faked</td></tr>
+      <tr><td>Scheduler + SQLite</td><td>Yes</td><td>Scheduler, repository, restore and stream suites</td></tr>
+    </tbody>
+  </table>
+</figure>
+
+<h2>The two bugs, as measured</h2>
+<p>Both come from the same fact: <strong><code>paused === true</code> does not mean a viewer pressed pause.</strong> The current fix keys the branch on viewer intent instead — <code>wantsPlayRef</code> is cleared only in <code>togglePlay</code>, the one place a human asks:</p>
+
+<pre><code>useEffect(() =&gt; {
+  if (!sleepExpired || !paused || failed) return
+  <span class="em">if (wantsPlayRef.current) return</span>   <span class="del">// ← delete this line and every test today stays green</span>
+  void sleepNow()
+}, [sleepExpired, paused, failed, sleepNow])</code></pre>
+
+<figure class="viz">
+  <div class="fig-head">
+    <span class="fig-title">The two transient-pause windows the guard exists for</span>
+    <span class="legend">
+      <span class="k"><span class="sw" style="background:var(--s1)"></span>Playing</span>
+      <span class="k"><span class="sw" style="background:var(--s2)"></span>paused=true, no viewer asked</span>
+    </span>
+    <button class="tbl-btn" data-toggle="tbl-bugs" type="button">Table view</button>
+  </div>
+  <svg viewBox="0 0 860 268" role="img" aria-label="Two schematic timelines. Bug 1: at the natural end of an episode, pause fires with ended already true, React flushes effects, then ended fires — all in the same millisecond. Bug 2: at a gapless handoff, the promoted standby is paused with ended false until play() takes effect.">
+    <!-- Bug 1 -->
+    <text class="t-title" x="60" y="22">Bug 1 · the close of every episode</text>
+    <rect x="60" y="38" width="440" height="20" rx="4" fill="var(--s1)"/>
+    <text class="t-in" x="280" y="52" text-anchor="middle">episode playing — timer already expired</text>
+    <rect x="510" y="38" width="180" height="20" rx="4" fill="var(--s2)"/>
+    <text class="t-in" x="600" y="52" text-anchor="middle">effect flush — the race</text>
+    <circle cx="506" cy="48" r="4.5" fill="var(--s2)" stroke="var(--surface-1)" stroke-width="2"/>
+    <circle cx="698" cy="48" r="4.5" fill="var(--s1)" stroke="var(--surface-1)" stroke-width="2"/>
+    <text class="t-mut" x="506" y="76" text-anchor="middle">pause fires —</text>
+    <text class="t-mut" x="506" y="90" text-anchor="middle">element.ended already true</text>
+    <text class="t-mut" x="698" y="76" text-anchor="middle">ended fires →</text>
+    <text class="t-mut" x="698" y="90" text-anchor="middle">advance(true)</text>
+    <path class="edge" d="M506,100 L506,108 L698,108 L698,100"/>
+    <text class="t-mut" x="602" y="124" text-anchor="middle">measured: the same millisecond (docs/playback.md)</text>
+
+    <!-- Bug 2 -->
+    <text class="t-title" x="60" y="160">Bug 2 · a gapless handoff mid-arc</text>
+    <rect x="60" y="176" width="290" height="20" rx="4" fill="var(--s1)"/>
+    <text class="t-in" x="205" y="190" text-anchor="middle">part 1/3 — timer expired</text>
+    <rect x="352" y="176" width="186" height="20" rx="4" fill="var(--s2)"/>
+    <text class="t-in" x="445" y="190" text-anchor="middle">promoted standby</text>
+    <rect x="540" y="176" width="290" height="20" rx="4" fill="var(--s1)"/>
+    <text class="t-in" x="685" y="190" text-anchor="middle">part 2/3 plays on</text>
+    <circle cx="351" cy="186" r="4.5" fill="var(--s2)" stroke="var(--surface-1)" stroke-width="2"/>
+    <circle cx="539" cy="186" r="4.5" fill="var(--s1)" stroke="var(--surface-1)" stroke-width="2"/>
+    <text class="t-mut" x="351" y="214" text-anchor="middle">stage flips surfaces —</text>
+    <text class="t-mut" x="351" y="228" text-anchor="middle">paused=true, ended=false</text>
+    <text class="t-mut" x="539" y="214" text-anchor="middle">play() takes effect;</text>
+    <text class="t-mut" x="539" y="228" text-anchor="middle">wantsPlayRef was true throughout</text>
+    <text class="t-mut" x="60" y="254">A URL-seek&rsquo;s reload produces the same shape as the promotion window.</text>
+
+    <!-- hover targets -->
+    <rect class="hit" tabindex="0" x="60"  y="36" width="440" height="24" data-tip="Timer expired mid-episode; the unit boundary says: finish the episode. Nothing should stop playback here."/>
+    <rect class="hit" tabindex="0" x="502" y="32" width="9" height="32" data-tip="Chromium fires pause immediately before ended — measured in the real app: same millisecond, and the element's ended property is already true inside the pause handler."/>
+    <rect class="hit" tabindex="0" x="512" y="36" width="176" height="24" data-tip="React commits setPaused(true) and flushes effects before the ended handler runs. An effect keyed on raw paused fires here, calls sleepNow(), and the fully-watched episode is logged completed:false — the flag shuffle bags read to avoid repeats."/>
+    <rect class="hit" tabindex="0" x="692" y="40" width="12" height="16" data-tip="The correct path: handleEnded → runAdvance(true) → the store logs completed:true and, at a unit boundary with the timer expired, goes dark."/>
+    <rect class="hit" tabindex="0" x="60"  y="174" width="290" height="24" data-tip="Mid-arc, the requirement is: finish the whole arc, never stop mid-story. The store's arc lock supplies the remaining parts."/>
+    <rect class="hit" tabindex="0" x="352" y="174" width="186" height="24" data-tip="The hidden, buffered element flips to active. It is paused (ended=false) until play() resolves. Keyed on paused alone, the sleep effect fired in this window and blacked out at the handoff into part 2 — the exact thing the unit boundary exists to prevent. The play log showed part 2 picked and abandoned within half a second."/>
+    <rect class="hit" tabindex="0" x="540" y="174" width="290" height="24" data-tip="With the intent guard: wantsPlayRef stayed true (no human paused), the effect declines, play() takes, and the arc continues to its real boundary."/>
+  </svg>
+  <figcaption>Schematic, not to scale — the whole of bug 1 happens inside one millisecond. Note the two windows differ: bug 1 has <code>ended=true</code> during the pause, bug 2 has <code>ended=false</code>. A guard patched to check <code>element.ended</code> would fix only bug 1 — the harness must kill both mutants.</figcaption>
+  <table class="data" id="tbl-bugs" hidden>
+    <thead><tr><th>Bug</th><th>Sequence</th><th>Wrong outcome (guard removed)</th></tr></thead>
+    <tbody>
+      <tr><td><strong>1</strong> end of episode</td><td><code>pause</code> (with <code>ended</code> already true) → React effect flush → <code>ended</code>, same millisecond</td><td><code>sleepNow()</code> wins the race; watched episode logged <code>completed: false</code></td></tr>
+      <tr><td><strong>2</strong> handoff mid-arc</td><td>stage flips → new active element <code>paused=true, ended=false</code> → <code>play()</code> resolves → <code>play</code> event</td><td>Blackout at the handoff into part 2; committed pick abandoned in half a second</td></tr>
+      <tr><td>— seek</td><td>URL reload: fresh stream briefly <code>paused=true</code> until playback resumes</td><td>Same window as bug 2</td></tr>
+    </tbody>
+  </table>
+</figure>
+
+<h2>The approach: real Player, real store, two scripted seams</h2>
+<p>The handoff names the tension precisely: extracting the decision logic into a pure module risks a translation gap (<em>the wiring was the bug</em>), while a DOM emulator risks faking media semantics wrongly (a fake that fires <code>ended</code> without a preceding <code>pause</code> happily passes bug 1&rsquo;s broken code). The plan threads it by <strong>rendering the real component and scripting only the two boundaries the repo already treats as contracts</strong>:</p>
+
+<table class="plain">
+  <thead><tr><th style="width:250px">Option</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td>A · Extract decisions into a DOM-free module (the <code>mse.ts</code> pattern)</td><td><strong>Rejected as the primary move.</strong> The bugs were in the effect wiring — dependency arrays, ref reads, event-to-state timing. A pure function of <code>(sleepExpired, paused, wantsPlay)</code> would have been trivially correct while the real effect stayed broken. <code>Player.tsx</code> is left untouched; its four documented decisions stay where they are.</td></tr>
+    <tr><td>B · Boot Electron in CI (Playwright/WebDriver)</td><td><strong>Rejected.</strong> Inherits the better-sqlite3 ABI dance plus a display server — the two things <code>npm test</code> has deliberately stayed free of. Real-Chromium verification already has a home: the soak harness.</td></tr>
+    <tr><td>C · DOM emulator + emulated <code>&lt;video&gt;</code></td><td><strong>Rejected.</strong> happy-dom/jsdom media elements are inert stubs; trusting their event ordering is exactly the "fake fires <code>ended</code> without <code>pause</code>" trap.</td></tr>
+    <tr><td><strong>D · Real <code>&lt;Player&gt;</code> under happy-dom; scripted <code>VideoSurface</code> + scripted bridge</strong> <em>(chosen)</em></td><td>happy-dom supplies only DOM globals so react-dom can mount the real component — every effect, ref, and the stage reconcile run for real. The media element is <em>ours</em>: a fake surface honouring <code>VideoSurfaceProps</code> whose transitions encode the <em>measured</em> Chromium orderings, in one place, citing <code>docs/playback.md</code>. The store is real; the fake sits at the same <code>RerunApi</code> seam <code>handoff.test.ts</code> already fakes.</td></tr>
+  </tbody>
+</table>
+
+<figure class="viz">
+  <div class="fig-head">
+    <span class="fig-title">Harness anatomy — what is real and what is scripted</span>
+    <span class="legend">
+      <span class="k"><span class="sw" style="background:var(--s1)"></span>Real production code under test</span>
+      <span class="k"><span class="sw" style="background:var(--s3)"></span>Harness (new test code)</span>
+    </span>
+  </div>
+  <svg viewBox="0 0 860 236" role="img" aria-label="Flow: a scenario script drives two fake video surfaces, which feed the real Player component, which calls the real store, which calls a scripted bridge whose call log the assertions read.">
+    <defs>
+      <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="var(--baseline)"/>
+      </marker>
+    </defs>
+    <!-- boxes -->
+    <rect class="node" x="20"  y="40" width="150" height="72" rx="8"/>
+    <rect x="20" y="40" width="4" height="72" rx="2" fill="var(--s3)"/>
+    <text class="t-node" x="95" y="62" text-anchor="middle">Scenario</text>
+    <text class="t-mut" x="95" y="78" text-anchor="middle">endEpisode() · seek()</text>
+    <text class="t-mut" x="95" y="92" text-anchor="middle">viewerPause() · at(t)</text>
+
+    <rect class="node" x="190" y="40" width="150" height="72" rx="8"/>
+    <rect x="190" y="40" width="4" height="72" rx="2" fill="var(--s3)"/>
+    <text class="t-node" x="265" y="62" text-anchor="middle">Fake surfaces ×2</text>
+    <text class="t-mut" x="265" y="78" text-anchor="middle">typed VideoSurfaceProps;</text>
+    <text class="t-mut" x="265" y="92" text-anchor="middle">measured Chromium model</text>
+
+    <rect class="node" x="360" y="40" width="150" height="72" rx="8"/>
+    <rect x="360" y="40" width="4" height="72" rx="2" fill="var(--s1)"/>
+    <text class="t-node" x="435" y="62" text-anchor="middle">Player.tsx</text>
+    <text class="t-mut" x="435" y="78" text-anchor="middle">real — every effect, ref,</text>
+    <text class="t-mut" x="435" y="92" text-anchor="middle">stage flip, key map</text>
+
+    <rect class="node" x="530" y="40" width="150" height="72" rx="8"/>
+    <rect x="530" y="40" width="4" height="72" rx="2" fill="var(--s1)"/>
+    <text class="t-node" x="605" y="62" text-anchor="middle">store.ts</text>
+    <text class="t-mut" x="605" y="78" text-anchor="middle">real — serialize() queue,</text>
+    <text class="t-mut" x="605" y="92" text-anchor="middle">sleep + prewarm logic</text>
+
+    <rect class="node" x="700" y="40" width="140" height="72" rx="8"/>
+    <rect x="700" y="40" width="4" height="72" rx="2" fill="var(--s3)"/>
+    <text class="t-node" x="770" y="62" text-anchor="middle">Scripted bridge</text>
+    <text class="t-mut" x="770" y="78" text-anchor="middle">RerunApi over a fixed</text>
+    <text class="t-mut" x="770" y="92" text-anchor="middle">episode deck + call log</text>
+
+    <!-- edges -->
+    <path class="edge" d="M170,76 L184,76" marker-end="url(#arr)"/>
+    <path class="edge" d="M340,68 L354,68" marker-end="url(#arr)"/>
+    <path class="edge" d="M360,86 L346,86" marker-end="url(#arr)"/>
+    <text class="t-mut" x="350" y="130" text-anchor="middle">events ↔ handle (play/pause/promote)</text>
+    <path class="edge" d="M510,76 L524,76" marker-end="url(#arr)"/>
+    <path class="edge" d="M680,76 L694,76" marker-end="url(#arr)"/>
+
+    <!-- assertions -->
+    <rect class="node" x="190" y="164" width="650" height="48" rx="8"/>
+    <text class="t-lab" x="515" y="184" text-anchor="middle" style="font-weight:600;fill:var(--ink)">Assertions read the path taken, not the pixels</text>
+    <text class="t-mut" x="515" y="200" text-anchor="middle">bridge call log (reportEnded / prewarmNext / next / release) + store state (screen, nowPlaying, pendingNext)</text>
+    <path class="edge" d="M770,112 L770,158" marker-end="url(#arr)"/>
+    <path class="edge" d="M605,112 L605,158" marker-end="url(#arr)"/>
+
+    <!-- hits -->
+    <rect class="hit" tabindex="0" x="20" y="40" width="150" height="72" data-tip="Each test is a short script over the harness vocabulary. Every media event is dispatched inside its own act() flush — modelling Chromium's task boundaries, which is precisely the interleaving that let the buggy effect win its race."/>
+    <rect class="hit" tabindex="0" x="190" y="40" width="150" height="72" data-tip="vi.mock replaces VideoSurface with a fake implementing its exported props type: forwards events only while `active`, exposes {element, promote()} through handleRef, refuses play while standby — the same contract the real one documents. Its FakeMediaElement carries paused/ended/currentTime/volume/muted and the scripted transitions."/>
+    <rect class="hit" tabindex="0" x="360" y="40" width="150" height="72" data-tip="Untouched. The component under test is the shipped file — the paused-branch guard, the prewarm effect with its deliberately-unset prewarmedAfterRef, the swap effect, the banner effect that resets wantsPlayRef per episode."/>
+    <rect class="hit" tabindex="0" x="530" y="40" width="150" height="72" data-tip="The real Zustand store, reset in beforeEach exactly as handoff.test.ts does. Its serialize() queue orders the competing calls the same way it does in production — which is what makes the bug-1 race deterministic to assert."/>
+    <rect class="hit" tabindex="0" x="700" y="40" width="140" height="72" data-tip="A ~90-line RerunApi fake over hand-built NowPlaying fixtures (standalone deck or 3-part arc). No SQLite: the scheduler/DB truth is already pinned by handoff.test.ts, and staying database-free keeps these tests inside the web tsconfig and fast. Every call is appended to a log the tests assert on."/>
+    <rect class="hit" tabindex="0" x="190" y="164" width="650" height="48" data-tip="Bug 1's assertion is literally the handoff's acceptance line: the path taken is advance(true) — reportEnded(…, completed:true) — and never the sleepNow() shape (reportEnded(…, false) + release + blackout)."/>
+  </svg>
+  <figcaption>The seams are the two the repo already trusts: <code>VideoSurfaceProps</code> (&ldquo;a <code>&lt;video&gt;</code> that knows how to play our URLs&rdquo;) and <code>RerunApi</code> (what the preload bridge implements, and what <code>handoff.test.ts</code> already fakes).</figcaption>
+</figure>
+
+<h3>The scripted media model — measured, in one place</h3>
+<p>Everything the handoff warns a naive fake would get wrong is encoded once, in the harness, as named transitions with the citation attached. Tests never hand-fire raw events; they speak this vocabulary, so the next bug of this class gets its scenario by composing it — <strong>design for the class, not the four cases</strong>:</p>
+
+<table class="plain">
+  <thead><tr><th style="width:230px">Transition</th><th>Exactly what it does (and why)</th></tr></thead>
+  <tbody>
+    <tr><td><code>endEpisode()</code></td><td>On the active element: set <code>ended = true</code> <em>and</em> <code>paused = true</code>, dispatch <code>pause</code> in its own <code>act()</code> flush, then dispatch <code>ended</code> in the next — same tick, effects flushed between. This is the measured ordering (<code>docs/playback.md</code> § &ldquo;Two things Chromium does around <code>ended</code>&rdquo;) and the flush-between is what let the broken effect win live.</td></tr>
+    <tr><td>promotion (automatic)</td><td>When the Player flips <code>stage.active</code>, the newly active fake reports <code>paused = true, ended = false</code>; its <code>play()</code> resolves on the following flush, then fires <code>play</code>. The transient window is therefore open across at least one effect pass — as it is in Chromium.</td></tr>
+    <tr><td><code>seek(seconds)</code></td><td>Commits through the real scrub path; the reloaded stream presents the same transient-pause shape as a promotion before resuming.</td></tr>
+    <tr><td><code>viewerPause()</code> / <code>viewerPlay()</code></td><td>Drives the real UI — the OSD play/pause button (or <kbd>Space</kbd> dispatched on <code>document.body</code> so the window key map sees an element target). This is what clears <code>wantsPlayRef</code>; the harness never touches the ref directly.</td></tr>
+    <tr><td><code>at(seconds)</code></td><td>Fires <code>timeupdate</code> — how a test enters the T−30 s up-next window.</td></tr>
+    <tr><td><code>element.play()/pause()</code></td><td>The app-facing element contract: <code>pause()</code> flips state and fires <code>pause</code> synchronously; <code>play()</code> returns a promise and fires <code>play</code> on resolution. <code>volume</code>/<code>muted</code>/<code>currentTime</code> are plain recorded fields.</td></tr>
+    <tr><td><code>failStream()</code></td><td>Invokes <code>onStreamError</code>/<code>onError</code> — so the <code>failed</code> guard clauses stay expressible.</td></tr>
+  </tbody>
+</table>
+
+<h2>The four regression scenarios</h2>
+<table class="plain">
+  <thead><tr><th style="width:170px">Scenario</th><th>Drive</th><th>Assert</th><th style="width:200px">Goes red when…</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>1 · End-of-episode ordering</strong> (bug 1)</td>
+      <td>Standalone deck → <code>tune</code>; expire the timer (<code>sleepUntil</code> in the past, as <code>handoff.test.ts</code> does); <code>endEpisode()</code>.</td>
+      <td><code>reportEnded(ep, completed: <strong>true</strong>)</code> exactly once, then blackout at the boundary. The <code>sleepNow()</code> shape — <code>reportEnded(…, false)</code> — never appears in the log.</td>
+      <td>The branch keys on <code>paused</code> alone: the effect flush between <code>pause</code> and <code>ended</code> calls <code>sleepNow()</code> first, and the queue logs <code>completed: false</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>2 · Transient pause at a handoff</strong> (bug 2)</td>
+      <td>3-part-arc deck → <code>tune</code> (part 1); expire; <code>store.prewarm()</code> commits part 2 into the standby; <code>endEpisode()</code> → promotion.</td>
+      <td>Screen stays <code>'player'</code>; <code>nowPlaying</code> is part 2/3; the promoted element&rsquo;s <code>play()</code> was requested; no <code>reportEnded(part2, false)</code>, no blackout.</td>
+      <td>The effect fires inside the promotion window (<code>paused=true, ended=false</code>) — including under the <code>element.ended</code> mutant that fixes only bug 1.</td>
+    </tr>
+    <tr>
+      <td><strong>3 · A genuine viewer pause</strong></td>
+      <td><code>tune</code>; <code>viewerPause()</code> (real button / Space); then expire the timer.</td>
+      <td><code>sleepNow()</code> path runs: <code>reportEnded(ep, false)</code>, channel released, screen <code>'blackout'</code>, timer disarmed.</td>
+      <td>The guard is over-strong — the paused branch can never fire at all (e.g. the whole effect deleted).</td>
+    </tr>
+    <tr>
+      <td><strong>4 · Prewarm suppression</strong></td>
+      <td>Unit-final episode, timer expired; <code>at(durationS − 25)</code> enters the T−30 s window; then <code>armSleep(null)</code> to cancel.</td>
+      <td>While expired: no <code>prewarmNext</code> call, <code>pendingNext</code> stays null. After cancel: <code>prewarmNext</code> fires — late but inside the window — exactly once (the deliberately-unset <code>prewarmedAfterRef</code>, <code>Player.tsx</code> ~430).</td>
+      <td>The effect commits a pick for an episode nobody will watch, or the cancel path stops re-firing because the ref was set eagerly.</td>
+    </tr>
+  </tbody>
+</table>
+<p>Scenario 1&rsquo;s determinism is worth spelling out: with the guard reverted, the harness&rsquo;s per-event flush makes the broken effect enqueue <code>sleepNow()</code> on the store&rsquo;s serialize queue <em>before</em> <code>handleEnded</code> enqueues <code>advance(true)</code> — so the wrong log entry is produced every run, not one run in five. The mutation check below is the proof this modelling is faithful.</p>
+
+<h2>Files &amp; changes</h2>
+<table class="plain">
+  <thead><tr><th style="width:270px">File</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td><code>tests/renderer/harness.tsx</code> <em>(new)</em></td><td>Mounts the real <code>&lt;Player/&gt;</code> with <code>react-dom/client</code> + <code>act</code> (from <code>react</code>; sets <code>IS_REACT_ACT_ENVIRONMENT</code>). <code>vi.mock</code> of <code>../src/renderer/src/player/VideoSurface.js</code> → the fake surface pair; <code>FakeMediaElement</code>; the scenario vocabulary above; store reset + <code>globalThis.rerun</code> injection per test; unmount/cleanup (banner and countdown timers) in <code>afterEach</code>.</td></tr>
+    <tr><td><code>tests/renderer/fixtures.tsx</code> <em>(new)</em></td><td><code>NowPlaying</code>/<code>EpisodeView</code> builders over <code>@shared/types</code>; the scripted <code>RerunApi</code> bridge with its call log; deck helpers: <code>standaloneDeck(n)</code>, <code>arcDeck(parts)</code>. Deliberately SQLite-free — see typecheck ownership.</td></tr>
+    <tr><td><code>tests/renderer/player-decisions.test.tsx</code> <em>(new)</em></td><td>The four scenarios, plus the file-header comment naming the class of bug this layer exists for. Carries <code>// @vitest-environment happy-dom</code> so only these files leave the Node environment.</td></tr>
+    <tr><td><code>vitest.config.ts</code></td><td>Include becomes <code>tests/**/*.test.{ts,tsx}</code>; add <code>esbuild: { jsx: 'automatic' }</code> if the default doesn&rsquo;t already apply (verify in phase 1). Global <code>environment: 'node'</code> stays.</td></tr>
+    <tr><td><code>tsconfig.web.json</code></td><td>Owns the new tests: add <code>tests/renderer/**/*</code> to <code>include</code> — DOM lib, <code>react-jsx</code>, and <code>noUnusedLocals</code> all apply to them.</td></tr>
+    <tr><td><code>tsconfig.node.json</code></td><td>Add <code>"exclude": ["tests/renderer"]</code>, keeping its no-DOM guarantee intact and explicit (every harness file is also <code>.tsx</code>, which its <code>tests/**/*.ts</code> glob would not match — the exclude makes the intent survive a future helper file).</td></tr>
+    <tr><td><code>package.json</code></td><td><code>happy-dom</code> as a devDependency — the one new package. No Electron, no display, no ABI implications: <code>npm test</code> still rebuilds for Node exactly as today.</td></tr>
+    <tr><td><code>docs/development.md</code> § Testing</td><td>Describe the new layer: what it covers (which store action the Player&rsquo;s effects pick), what it deliberately does not (real Chromium semantics stay with the soak harness), and how to write the next test (compose the harness vocabulary; if Chromium does something new, measure it live first, record it in <code>playback.md</code>, then teach the fake).</td></tr>
+    <tr><td><code>src/renderer/src/screens/Player.tsx</code></td><td><strong>Untouched.</strong> The component is the artifact under test; no extraction, no restructuring, the four load-bearing header decisions preserved by definition.</td></tr>
+    <tr><td><code>tests/handoff.test.ts</code> and the rest of the suite</td><td><strong>Untouched.</strong> The bridge fake is re-stated (small, ~90 lines, no SQLite) rather than extracted from it.</td></tr>
+  </tbody>
+</table>
+
+<h3>Typecheck ownership, decided deliberately</h3>
+<p>The handoff flags this and the repo&rsquo;s split makes it sharp: <code>tsconfig.node.json</code> has no DOM lib (that&rsquo;s the <em>point</em> — it is what keeps <code>mse.ts</code> and <code>store.ts</code> honest), and <code>tsconfig.web.json</code> has no Node types. The rule that resolves it: <strong>renderer tests are web code, so the web tsconfig owns them — and to stay ownable they must not import <code>@main</code> or <code>better-sqlite3</code></strong>. That constraint is also the right test-design boundary: the scheduler-and-database truth is <code>handoff.test.ts</code>&rsquo;s job, this layer&rsquo;s job is which store action the Player invokes, and duplicating the real scheduler here would blur both.</p>
+
+<h2>Build order</h2>
+<figure class="viz">
+  <div class="fig-head">
+    <span class="fig-title">Estimated lines per deliverable</span>
+    <button class="tbl-btn" data-toggle="tbl-effort" type="button">Table view</button>
+  </div>
+  <svg viewBox="0 0 860 214" role="img" aria-label="Bar chart of estimated lines: 260 for the scenario tests, 200 for the harness, 90 for fixtures, 35 for docs, 15 for configuration.">
+    <g>
+      <line class="grid-l" x1="410" y1="8" x2="410" y2="182"/>
+      <line class="grid-l" x1="610" y1="8" x2="610" y2="182"/>
+      <line class="grid-l" x1="810" y1="8" x2="810" y2="182"/>
+    </g>
+    <g>
+      <text class="t-lab" x="200" y="30" text-anchor="end">player-decisions.test.tsx (new)</text>
+      <path d="M210,16 h516 q4,0 4,4 v12 q0,4 -4,4 h-516 z" fill="var(--s1)"/>
+      <text class="t-lab" x="738" y="30" style="font-weight:600;fill:var(--ink)">260</text>
+      <text class="t-lab" x="200" y="64" text-anchor="end">harness.tsx (new)</text>
+      <path d="M210,50 h396 q4,0 4,4 v12 q0,4 -4,4 h-396 z" fill="var(--s1)"/>
+      <text class="t-lab" x="618" y="64" style="font-weight:600;fill:var(--ink)">200</text>
+      <text class="t-lab" x="200" y="98" text-anchor="end">fixtures.tsx (new)</text>
+      <path d="M210,84 h176 q4,0 4,4 v12 q0,4 -4,4 h-176 z" fill="var(--s1)"/>
+      <text class="t-lab" x="398" y="98" style="font-weight:600;fill:var(--ink)">90</text>
+      <text class="t-lab" x="200" y="132" text-anchor="end">docs/development.md</text>
+      <path d="M210,118 h66 q4,0 4,4 v12 q0,4 -4,4 h-66 z" fill="var(--s1)"/>
+      <text class="t-lab" x="288" y="132" style="font-weight:600;fill:var(--ink)">35</text>
+      <text class="t-lab" x="200" y="166" text-anchor="end">config (vitest · tsconfigs · pkg)</text>
+      <path d="M210,152 h26 q4,0 4,4 v12 q0,4 -4,4 h-26 z" fill="var(--s1)"/>
+      <text class="t-lab" x="248" y="166" style="font-weight:600;fill:var(--ink)">15</text>
+    </g>
+    <line class="base-l" x1="210" y1="182" x2="830" y2="182"/>
+    <text class="t-tick" x="210" y="200" text-anchor="middle">0</text>
+    <text class="t-tick" x="410" y="200" text-anchor="middle">100</text>
+    <text class="t-tick" x="610" y="200" text-anchor="middle">200</text>
+    <text class="t-tick" x="810" y="200" text-anchor="middle">300</text>
+    <rect class="hit" tabindex="0" x="210" y="14" width="526" height="24" data-tip="The four scenarios plus their setup blocks. Deliberately verbose per test — each scenario reads as a story: arrange deck, drive vocabulary, assert path."/>
+    <rect class="hit" tabindex="0" x="210" y="48" width="406" height="24" data-tip="FakeMediaElement + FakeVideoSurface + mount/cleanup + the scenario vocabulary. The measured Chromium model lives here, once, with the playback.md citations."/>
+    <rect class="hit" tabindex="0" x="210" y="82" width="186" height="24" data-tip="NowPlaying/EpisodeView builders and the scripted RerunApi bridge with call log. No SQLite, no @main imports — the web tsconfig must accept it."/>
+    <rect class="hit" tabindex="0" x="210" y="116" width="76" height="24" data-tip="A new paragraph in the Testing section: coverage, non-goals, and the recipe for the next test of this class."/>
+    <rect class="hit" tabindex="0" x="210" y="150" width="36" height="24" data-tip="vitest include pattern + possible jsx setting; tsconfig.web include; tsconfig.node exclude; happy-dom devDependency."/>
+  </svg>
+  <figcaption>Rough sizing — the weight is in the harness and the scenarios themselves; production code and configuration barely move.</figcaption>
+  <table class="data" id="tbl-effort" hidden>
+    <thead><tr><th>Deliverable</th><th class="num">Est. lines</th><th>Scope</th></tr></thead>
+    <tbody>
+      <tr><td>player-decisions.test.tsx</td><td class="num">260</td><td>Four scenarios + setup, written as readable stories</td></tr>
+      <tr><td>harness.tsx</td><td class="num">200</td><td>Fake element/surfaces, mount + act plumbing, scenario vocabulary</td></tr>
+      <tr><td>fixtures.tsx</td><td class="num">90</td><td>View-model builders, scripted bridge, call log, decks</td></tr>
+      <tr><td>docs/development.md</td><td class="num">35</td><td>New Testing subsection</td></tr>
+      <tr><td>Configuration</td><td class="num">15</td><td>vitest include/jsx, tsconfig include/exclude, one devDependency</td></tr>
+    </tbody>
+  </table>
+</figure>
+
+<ol class="phase-list">
+  <li><strong>Walking skeleton</strong> — happy-dom + config edits; mount the real Player against the scripted bridge, <code>tune</code>, assert an episode is on air. Proves the react-dom/act/happy-dom/esbuild-JSX pipeline before any cleverness. Watch for the two known snags here: JSX transform in Vitest, and window-key events needing an element target.</li>
+  <li><strong>Vocabulary + scenario 3</strong> — build <code>FakeMediaElement</code>/<code>FakeVideoSurface</code>; land the <em>genuine pause</em> case first. It has no ordering subtleties, so it isolates harness plumbing bugs from Chromium-model bugs.</li>
+  <li><strong>The bugs as tests</strong> — scenarios 1, 2 and 4, encoding the measured orderings.</li>
+  <li><strong>Mutation check + docs</strong> — the acceptance ritual below, then the <code>development.md</code> section, then <code>npm test</code> and <code>npm run typecheck</code> (both tsconfigs) clean.</li>
+  <li><strong>Optional complement</strong> — promote the sleep-timer <code>--eval</code> scenario that found these bugs into a checked-in <code>scripts/soak-scenarios/</code> pack. Real-Chromium ground truth, runnable on demand, never part of <code>npm test</code>.</li>
+</ol>
+
+<h2>Acceptance bar — the mutation check is the point</h2>
+<p>A harness whose tests cannot fail on the original bugs is decoration, so the check is performed and its result stated in the implementation summary:</p>
+<ul class="check">
+  <li>All four scenarios green in <code>npm test</code>, headless, no Electron, no display, added wall-clock in seconds.</li>
+  <li><strong>Mutation 1:</strong> delete the <code>wantsPlayRef.current</code> guard line → scenarios 1 <em>and</em> 2 red; restore → green.</li>
+  <li><strong>Mutation 2:</strong> replace the guard with <code>if (video.ended) return</code> (the plausible half-fix) → scenario 2 still red.</li>
+  <li><strong>Mutation 3:</strong> delete the paused branch entirely → scenario 3 red (the guard is not over-strong).</li>
+  <li>Existing suite untouched and green; <code>npm run typecheck</code> clean on both tsconfigs, with the new files owned by <code>tsconfig.web.json</code>.</li>
+  <li><code>docs/development.md</code> § Testing describes the layer: coverage, non-goals (real Chromium semantics stay with soak), and how to write the next test.</li>
+</ul>
+
+<h2>Risks &amp; mitigations</h2>
+<table class="plain">
+  <thead><tr><th style="width:270px">Risk</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td><code>act()</code> flush order differs from Chromium&rsquo;s real task boundaries</td><td>The harness dispatches each media event in its own flush — the interleaving measured live. The mutation check is the empirical proof: if the model were unfaithful, reverting the guard would not turn the tests red.</td></tr>
+    <tr><td>The fake surface drifts from the real <code>VideoSurface</code> contract</td><td>It implements the <em>exported</em> <code>VideoSurfaceProps</code>/<code>VideoSurfaceHandle</code> types, so contract changes fail typecheck in the harness the same day. The contract is narrow and documented (&ldquo;forwarded only while <code>active</code>&rdquo;); the real component&rsquo;s logic-heavy half is already pinned by <code>mse.test.ts</code>, and real-Chromium behaviour stays soak-verified — the residual gap the handoff accepts.</td></tr>
+    <tr><td>happy-dom API gaps (fullscreen, PointerEvent details)</td><td>The scenarios never enter fullscreen or drag sliders; keys are dispatched on <code>document.body</code> so <code>e.target.closest</code> exists. If a gap still bites in phase 1, jsdom is the drop-in fallback — the harness API doesn&rsquo;t change.</td></tr>
+    <tr><td>Module-level state bleeding between tests</td><td>Same discipline as <code>handoff.test.ts</code>: reset <code>useStore.setState</code> and swap <code>globalThis.rerun</code> in <code>beforeEach</code>; unmount in <code>afterEach</code> so the banner timeout and countdown interval are cleared by their own effects.</td></tr>
+    <tr><td>Wall-clock coupling (<code>sleepUntil</code>, <code>nowMs</code>)</td><td>Expiry is a <code>Date.now()</code> comparison, so tests set <code>sleepUntil</code> in the past — the store design makes fake timers unnecessary; <code>vi.setSystemTime</code> stays available for a future countdown-crossing case.</td></tr>
+    <tr><td>Vitest JSX transform for <code>.tsx</code> tests</td><td>esbuild&rsquo;s automatic runtime is expected to apply; if not, one line in <code>vitest.config.ts</code>. Verified in the phase-1 skeleton, before anything depends on it.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Rerun TV · renderer-test-harness plan · companion to <code>docs/renderer-test-harness-handoff.md</code> · palette validated with the dataviz six-checks in light and dark modes (3 categorical slots, all-pairs safe; light-mode contrast relief provided via direct labels and table views).
+</footer>
+</div>
+
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  // theme toggle
+  var btn = document.getElementById('themeBtn');
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function isDark() {
+    var t = document.documentElement.dataset.theme;
+    return t ? t === 'dark' : mq.matches;
+  }
+  function paint() { btn.textContent = isDark() ? 'Light mode' : 'Dark mode'; }
+  btn.addEventListener('click', function () {
+    document.documentElement.dataset.theme = isDark() ? 'light' : 'dark';
+    paint();
+  });
+  mq.addEventListener('change', paint);
+  paint();
+
+  // table-view toggles
+  document.querySelectorAll('[data-toggle]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var t = document.getElementById(b.dataset.toggle);
+      t.hidden = !t.hidden;
+      b.textContent = t.hidden ? 'Table view' : 'Hide table';
+    });
+  });
+
+  // shared tooltip (hover + keyboard focus)
+  var tip = document.getElementById('tip');
+  function show(text, x, y) {
+    tip.textContent = text;
+    tip.classList.add('on');
+    move(x, y);
+  }
+  function move(x, y) {
+    var pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = Math.min(x + pad, window.innerWidth - w - 8);
+    var top = y + pad + h > window.innerHeight - 8 ? y - h - 10 : y + pad;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+  function hide() { tip.classList.remove('on'); }
+  document.querySelectorAll('[data-tip]').forEach(function (el) {
+    el.addEventListener('mouseenter', function (e) { show(el.dataset.tip, e.clientX, e.clientY); });
+    el.addEventListener('mousemove', function (e) { move(e.clientX, e.clientY); });
+    el.addEventListener('mouseleave', hide);
+    el.addEventListener('focus', function () {
+      var r = el.getBoundingClientRect();
+      show(el.dataset.tip, r.left + r.width / 2, r.top);
+    });
+    el.addEventListener('blur', hide);
+  });
+})();
+</script>
+</body>
+</html>

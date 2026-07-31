@@ -39,5 +39,9 @@
     // rather than `window` so its schedule-advance logic — the part that must
     // never double-spend a pick — can be driven against a fake bridge in Node.
     "src/renderer/src/store.ts"
-  ]
+  ],
+  // The renderer tests need the DOM this project deliberately does without.
+  // Their `.tsx` extension already keeps them out of the glob above; the
+  // exclude is what makes that intent survive a future `.ts` helper.
+  "exclude": ["tests/renderer"]
 }
