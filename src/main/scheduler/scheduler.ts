@@ -24,6 +24,13 @@
  *    decision against copies of the state and writes nothing — it is *not* a
  *    rolled-back transaction, because the guide calls it for every channel on
  *    every render.
+ * 3. **A prewarm is a reservation, not a commit.** The gapless handoff needs to
+ *    know *the* next episode thirty seconds early, but the viewer may still
+ *    change channel or leave before it airs. `reserveNext` therefore plans the
+ *    pick and parks the mutations in memory; `promoteReserved` applies them
+ *    when the handoff really happens, and a discarded reservation costs
+ *    nothing — no burned unit, no phantom play-log row, and no arc lock for a
+ *    part nobody watched.
  *
  * `channels.active_part_index` is the 0-based index of the part that will be
  * handed out *next*. Handing out the final part clears `active_group_id` in the
@@ -45,7 +52,7 @@ import {
 } from '../db/repositories/channels.js'
 import { buildUnits, unitKeyForArc } from './units.js'
 
-/** A pick, already committed to the database. */
+/** A pick — committed to the database, or held by a prewarm reservation. */
 export interface Pick {
   episodeId: number
   unit: PlayableUnit
@@ -340,6 +347,9 @@ function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | n
  * left in. `rng` is injectable purely so tests can be deterministic.
  */
 export function pickNext(db: Db, channelId: number, rng: () => number = Math.random): Pick | null {
+  // A real advance supersedes whatever was reserved for a handoff: the renderer
+  // only reaches `tune`/`next` when it has no standby to promote.
+  discardReserved(db, channelId)
   return db.transaction((): Pick | null => {
     const planned = planNext(db, channelId, rng)
     if (!planned) return null
@@ -358,10 +368,93 @@ export function pickNext(db: Db, channelId: number, rng: () => number = Math.ran
  *
  * Given the same `rng` sequence the answer is identical to the following
  * `pickNext`; with the default `Math.random` a shuffle show's peek is a
- * *plausible* next pick rather than a promise.
+ * *plausible* next pick rather than a promise — except while a reservation is
+ * outstanding, when the answer *is* a promise: the standby player is already
+ * buffering that exact episode.
  */
 export function peekNext(db: Db, channelId: number, rng: () => number = Math.random): Pick | null {
+  const reserved = reservationsFor(db).get(channelId)
+  if (reserved) return reserved.pick
   return planNext(db, channelId, rng)?.pick ?? null
+}
+
+// ---- prewarm reservations ---------------------------------------------------
+
+/**
+ * Planned picks held for a gapless handoff, keyed by channel. Deliberately
+ * in-memory: nothing has been committed, so a crash *should* forget the
+ * reservation — the channel simply re-plans at the next tune-in, which is the
+ * exact recovery `planNext` already promises. Keyed per database so tests
+ * running parallel in-memory databases stay isolated.
+ */
+const reservations = new WeakMap<Db, Map<number, PlannedPick>>()
+
+function reservationsFor(db: Db): Map<number, PlannedPick> {
+  let map = reservations.get(db)
+  if (!map) {
+    map = new Map()
+    reservations.set(db, map)
+  }
+  return map
+}
+
+/**
+ * Plan the channel's next pick for a prewarm *without committing it*. The
+ * standby player buffers the returned episode while the schedule stays
+ * untouched; the caller must later either `promoteReserved` (the handoff
+ * happened) or `discardReserved` (nobody will watch it).
+ *
+ * Idempotent while a reservation is outstanding: asking again returns the same
+ * pick rather than planning a second one, so a re-render can never make the
+ * standby and the reservation disagree.
+ */
+export function reserveNext(
+  db: Db,
+  channelId: number,
+  rng: () => number = Math.random
+): Pick | null {
+  const existing = reservationsFor(db).get(channelId)
+  if (existing) return existing.pick
+  const planned = planNext(db, channelId, rng)
+  if (!planned) return null
+  reservationsFor(db).set(channelId, planned)
+  return planned.pick
+}
+
+/**
+ * The handoff happened: apply the reserved mutations — cursor/bag, arc lock and
+ * play-log entry — in one transaction, exactly as `pickNext` would have.
+ *
+ * If the reservation is gone or names a different episode (it was superseded by
+ * an edit between the prewarm and the handoff), the airing is still logged:
+ * the episode is genuinely on screen, and the play log's promise is one entry
+ * per episode aired. The schedule step is simply not spent twice.
+ */
+export function promoteReserved(db: Db, channelId: number, episodeId: number): void {
+  const planned = reservationsFor(db).get(channelId)
+  const matches = planned != null && planned.pick.episodeId === episodeId
+  if (matches) reservationsFor(db).delete(channelId)
+  db.transaction(() => {
+    if (matches) {
+      if (planned.state) saveShowState(db, planned.state)
+      setActiveArc(db, channelId, planned.arc.groupId, planned.arc.partIndex)
+    }
+    logAiring(db, channelId, episodeId, false)
+  })()
+}
+
+/**
+ * Abandon a reservation. With no `episodeId` the channel's reservation goes
+ * unconditionally (leaving the player, changing channel); with one, only a
+ * reservation for that exact episode goes, so releasing a finished episode's
+ * encoder can never take an unrelated standby with it.
+ */
+export function discardReserved(db: Db, channelId: number, episodeId?: number): void {
+  const planned = reservationsFor(db).get(channelId)
+  if (!planned) return
+  if (episodeId == null || planned.pick.episodeId === episodeId) {
+    reservationsFor(db).delete(channelId)
+  }
 }
 
 /**

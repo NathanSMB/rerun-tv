@@ -84,16 +84,24 @@ export interface RerunApi {
      */
     next(channelId: number): Promise<NowPlaying | null>
     /**
-     * Commit the *next* pick early, ~30s before the current episode ends, and
+     * Reserve the *next* pick early, ~30s before the current episode ends, and
      * return everything the standby player needs to start buffering it
      * (docs/stall-fix-plan.html, phase 3).
      *
-     * This runs the same committing `pickNext` as `next` — cursor, shuffle bag,
-     * arc hand-out and play-log entry, exactly once — which is why the renderer
-     * must promote the result rather than asking again. Nothing here releases the
-     * current encoder: the point is for both to run for the last half-minute.
+     * A reservation, not a commit: the scheduler plans the pick and holds the
+     * mutations until `promoteNext` applies them at the handoff. Abandoning the
+     * standby (`release`) drops the reservation with it, so a prewarm nobody
+     * watches costs nothing — no cursor advance, no play-log entry, no arc
+     * lock. Nothing here releases the current encoder: the point is for both
+     * to run for the last half-minute.
      */
     prewarmNext(channelId: number): Promise<NowPlaying | null>
+    /**
+     * The handoff happened: commit the pick `prewarmNext` reserved — cursor,
+     * shuffle bag, arc hand-out and play-log entry, exactly once. Must be
+     * called when (and only when) a prewarmed episode is promoted on screen.
+     */
+    promoteNext(channelId: number, episodeId: number): Promise<void>
     /** What the scheduler *would* pick next, without committing it. */
     peekNext(channelId: number): Promise<EpisodeView | null>
     /**
@@ -102,7 +110,8 @@ export interface RerunApi {
      */
     reportEnded(channelId: number, episodeId: number, completed: boolean): Promise<void>
     /**
-     * Drop encoders without touching the schedule.
+     * Drop encoders — and any prewarm reservation they were buffering for —
+     * without touching the committed schedule.
      *
      * With no `episodeId`, the whole channel goes — what leaving the player or
      * changing channel wants. With one, only that episode's job goes, which is
@@ -175,6 +184,7 @@ export const IPC = {
     tune: 'player:tune',
     next: 'player:next',
     prewarmNext: 'player:prewarmNext',
+    promoteNext: 'player:promoteNext',
     peekNext: 'player:peekNext',
     reportEnded: 'player:reportEnded',
     release: 'player:release'

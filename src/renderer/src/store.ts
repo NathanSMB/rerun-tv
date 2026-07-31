@@ -70,12 +70,13 @@ const EMPTY_SCAN: ScanStatus = {
 /**
  * Playback transitions run one at a time, in order.
  *
- * Tune-in, advance, prewarm and leaving the player all commit scheduler state,
- * and every one of them is `await`ed across an IPC round trip. Interleaving two
- * of them is how a channel double-advances: a prewarm resolving *after* a skip
- * has already picked would leave the promoted episode and the skipped-to episode
- * both committed, and the play log would show two picks for one episode watched.
- * Serialising is cheaper and far easier to reason about than reconciling.
+ * Tune-in, advance, prewarm and leaving the player all touch scheduler state
+ * (commits and reservations), and every one of them is `await`ed across an IPC
+ * round trip. Interleaving two of them is how a channel double-advances: a
+ * prewarm resolving *after* a skip has already picked would leave a stale
+ * reservation promoted alongside the skipped-to episode, and the play log would
+ * show two airings for one episode watched. Serialising is cheaper and far
+ * easier to reason about than reconciling.
  */
 let queue: Promise<unknown> = Promise.resolve()
 
@@ -112,14 +113,14 @@ interface AppState {
   /** The pick after the current one — drives the "up next" toast. */
   upNext: EpisodeView | null
   /**
-   * A pick the scheduler has already **committed** for this channel, waiting to
-   * be promoted when the current episode ends (docs/stall-fix-plan.html, phase 3).
+   * A pick the scheduler has **reserved** for this channel, waiting to be
+   * promoted when the current episode ends (docs/stall-fix-plan.html, phase 3).
    *
-   * Its presence is what forbids calling `player.next` on the next advance — the
-   * schedule step has been spent, and asking again would spend a second one. It
-   * is discarded on leaving the player or changing channel, in which case its
-   * play-log entry simply stays incomplete, exactly as it would after a crash
-   * mid-episode.
+   * Its presence is what forbids calling `player.next` on the next advance —
+   * the standby is buffering this exact episode, and promotion must commit
+   * *it* (`player.promoteNext`) rather than draw again. Discarding it on
+   * leaving the player or changing channel costs nothing: the reservation is
+   * dropped with its encoder and the schedule was never touched.
    */
   pendingNext: NowPlaying | null
   volume: number
@@ -193,8 +194,8 @@ async function goDark(
   const api = bridge()
   const current = get().nowPlaying
   // The whole channel, so a prewarmed standby cannot outlive the screen — the
-  // same reasoning, and the same accepted cost, as `leavePlayer`: a pick that was
-  // committed at T−30s keeps an incomplete play-log entry.
+  // same reasoning as `leavePlayer`. The release also drops the standby's
+  // reservation, so nothing was spent on the episode nobody will watch.
   if (current) await api.player.release(current.channelId)
   const pending = get().pendingNext
   if (pending && (!current || pending.channelId !== current.channelId)) {
@@ -347,9 +348,11 @@ export const useStore = create<AppState>((set, get) => ({
 
       const pending = get().pendingNext
       if (pending !== null && pending.channelId === current.channelId) {
-        // The schedule step for this episode was already spent at T−30s.
-        // Promoting is the *only* correct move: calling `next` here would commit
-        // a second pick and the play log would outrun the episodes watched.
+        // The standby is buffering this exact reserved episode. Promoting it and
+        // committing the reservation is the *only* correct move: calling `next`
+        // here would draw a different pick than the one about to play, and the
+        // play log would outrun the episodes watched.
+        await api.player.promoteNext(pending.channelId, pending.episode.id)
         set({ nowPlaying: pending, pendingNext: null })
         set({ upNext: await api.player.peekNext(current.channelId) })
         void get().refreshChannels()
@@ -377,12 +380,11 @@ export const useStore = create<AppState>((set, get) => ({
       // Every one of these is a real state by the time the queue reaches us: the
       // user may have skipped, left, or turned the setting off while we waited.
       if (!current || get().pendingNext !== null || !get().settings.prewarmNext) return
-      // Prewarming is a *committing* pick, so once we know this episode is the
-      // last one before sleep there is nothing to buffer — committing here would
-      // spend a schedule step on an episode nobody will watch and leave us to
-      // release it again at the boundary. The Player skips the call for the same
-      // reason; this is the authoritative check, because the queue may have
-      // handed us a state the effect never saw.
+      // Once we know this episode is the last one before sleep there is nothing
+      // to buffer — reserving here would only spawn an encoder we'd release
+      // again at the boundary. The Player skips the call for the same reason;
+      // this is the authoritative check, because the queue may have handed us a
+      // state the effect never saw.
       if (sleepDue(get().sleepUntil) && endsPlayableUnit(current)) return
 
       const next = await bridge().player.prewarmNext(current.channelId)
@@ -390,9 +392,8 @@ export const useStore = create<AppState>((set, get) => ({
 
       const still = get().nowPlaying
       if (!still || still.channelId !== current.channelId) {
-        // Committed a pick nobody is going to watch. Drop just its encoder; the
-        // play-log entry stays incomplete, which is the same thing that happens
-        // when the app dies mid-episode (plan §10).
+        // Reserved a pick nobody is going to watch. The release drops its
+        // encoder and its reservation together; the schedule was never touched.
         await bridge().player.release(next.channelId, next.episode.id)
         return
       }
@@ -464,7 +465,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     // Two different reasons to drop a standby, both ending the same way.
     //
-    // Turning prewarming off must not leave a committed pick stranded in a
+    // Turning prewarming off must not leave a reserved pick stranded in a
     // standby element nobody is going to promote. And a standby was spawned
     // with the audio settings of the moment: change loudness equalization and
     // it would hand off, mid-channel, to an episode still carrying the old

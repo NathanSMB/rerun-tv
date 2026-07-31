@@ -1,12 +1,14 @@
 /**
  * The gapless handoff (docs/stall-fix-plan.html, phase 3).
  *
- * This is the phase with a way to be quietly, badly wrong: `prewarmNext` runs a
- * *committing* `pickNext` thirty seconds early, so if the renderer then also
- * calls `next` when the episode ends, the channel advances twice for one episode
- * watched. A shuffle bag loses an episode a cycle, a sequential cursor skips one,
- * and a multipart arc drops a part — all silently, and all only visible days
- * later as "why did it skip episode 7".
+ * This is the phase with a way to be quietly, badly wrong: `prewarmNext`
+ * *reserves* the next pick thirty seconds early and `promoteNext` commits it at
+ * the handoff. Promote twice — or fall back to `next` with a standby pending —
+ * and the channel advances twice for one episode watched: a shuffle bag loses
+ * an episode a cycle, a sequential cursor skips one, and a multipart arc drops
+ * a part. Commit a reservation nobody watched and the same corruption arrives
+ * from the other side — which is exactly what prewarming did before it became a
+ * reservation, and what the "spends nothing" cases below pin down.
  *
  * So the store's transition logic is tested against the *real* scheduler over a
  * real in-memory database, with only the IPC hop faked. The invariant every case
@@ -26,7 +28,14 @@ import {
   markLastAiringCompleted,
   setChannelShowMode
 } from '@main/db/repositories/channels.js'
-import { peekNext, pickNext, validateActiveArc } from '@main/scheduler/scheduler.js'
+import {
+  discardReserved,
+  peekNext,
+  pickNext,
+  promoteReserved,
+  reserveNext,
+  validateActiveArc
+} from '@main/scheduler/scheduler.js'
 import { toEpisodeView } from '@main/services/channels.js'
 import { useStore } from '../src/renderer/src/store.js'
 
@@ -35,7 +44,8 @@ let channelId: number
 let showId: number
 /** Every encoder release the store asked for, in order: `channel:3` or `channel:3:41`. */
 let released: string[]
-/** How many times a *committing* pick ran. The number this suite is really about. */
+/** How many times the schedule was *spent* (a committing pick or a promoted
+ * reservation). The number this suite is really about. */
 let commits: number
 
 function insertShow(title: string): number {
@@ -113,7 +123,16 @@ function fakeBridge(): RerunApi {
       released.push(`channel:${channel}`)
       return commit(channel)
     },
-    prewarmNext: async (channel) => commit(channel),
+    // A reservation, not a commit — the real handler's exact shape. `commits`
+    // therefore does not move until the handoff promotes it.
+    prewarmNext: async (channel) => {
+      const pick = reserveNext(db, channel)
+      return pick ? nowPlaying(channel, pick.episodeId, pick.arc) : null
+    },
+    promoteNext: async (channel, episodeId) => {
+      commits += 1
+      promoteReserved(db, channel, episodeId)
+    },
     peekNext: async (channel): Promise<EpisodeView | null> => {
       const pick = peekNext(db, channel)
       return pick ? toEpisodeView(db, pick.episodeId) : null
@@ -123,6 +142,9 @@ function fakeBridge(): RerunApi {
       released.push(`channel:${channel}:${episodeId}`)
     },
     release: async (channel, episodeId) => {
+      // Mirrors the real handler: abandoning an encoder abandons the
+      // reservation it was buffering for.
+      discardReserved(db, channel, episodeId ?? undefined)
       released.push(episodeId == null ? `channel:${channel}` : `channel:${channel}:${episodeId}`)
     }
   }
@@ -179,14 +201,15 @@ describe('prewarm then handoff', () => {
 
     await store().prewarm()
     const pending = store().pendingNext!
-    expect(commits).toBe(2)
-    expect(playLog()).toHaveLength(2)
-    // The second episode in airing order — the pick is committed, not guessed.
+    // Reserved, not committed: the standby buffers episode 2 — the actual next
+    // episode in airing order, not a guess — while the schedule stays unspent.
+    expect(commits).toBe(1)
+    expect(playLog()).toHaveLength(1)
     expect(pending.episode.episode).toBe(2)
 
     await store().advance(true)
 
-    // The promotion must not have run `pickNext` again. This is the whole test.
+    // The promotion committed the reservation, exactly once. This is the whole test.
     expect(commits).toBe(2)
     expect(playLog()).toHaveLength(2)
     expect(store().nowPlaying?.episode.id).toBe(pending.episode.id)
@@ -247,7 +270,7 @@ describe('prewarm then handoff', () => {
     expect(playLog().map((row) => row.episodeId)).toEqual(watched)
   })
 
-  it('drops only the pending episode when the viewer leaves, keeping its log entry open', async () => {
+  it('spends nothing on a reservation the viewer walks out on', async () => {
     await store().tune(channelId)
     const first = store().nowPlaying!
     await store().prewarm()
@@ -259,13 +282,14 @@ describe('prewarm then handoff', () => {
     expect(store().pendingNext).toBeNull()
     // Both encoders on the channel go — including the prewarm nobody will watch.
     expect(released).toContain(`channel:${channelId}`)
-    // The schedule step was genuinely spent; the pick's entry simply stays
-    // incomplete, exactly as it would after a crash mid-episode (plan §10).
-    expect(playLog()).toEqual([
-      { episodeId: first.episode.id, completed: 0 },
-      { episodeId: pending.episode.id, completed: 0 }
-    ])
-    expect(commits).toBe(2)
+    // The reservation went with them: no phantom log entry, no burned unit.
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 0 }])
+    expect(commits).toBe(1)
+
+    // The proof the unit wasn't burned: tuning back in airs the episode the
+    // discarded reservation was holding, not the one after it.
+    await store().tune(channelId)
+    expect(store().nowPlaying?.episode.id).toBe(pending.episode.id)
   })
 
   it('releases the outgoing encoder on a handoff and nothing else', async () => {
@@ -363,16 +387,16 @@ describe('sleep timer', () => {
   })
 
   /**
-   * Expiry inside the last 30 seconds: the prewarm already ran, so a pick is
-   * committed and cannot be un-committed. It is released at the boundary, and
-   * its play-log entry stays open — the same accepted cost as `leavePlayer`.
+   * Expiry inside the last 30 seconds: the prewarm already ran, so a standby is
+   * buffering a reserved pick. Going dark discards the reservation with the
+   * encoder — the schedule never spent anything on the episode nobody watched.
    */
-  it('releases a pick that was already committed before the timer expired', async () => {
+  it('discards a reservation made before the timer expired', async () => {
     await store().tune(channelId)
     const first = store().nowPlaying!
     await store().prewarm()
-    const pending = store().pendingNext!
-    expect(commits).toBe(2)
+    expect(store().pendingNext).not.toBeNull()
+    expect(commits).toBe(1)
 
     expireSleepTimer()
     released.length = 0
@@ -382,11 +406,9 @@ describe('sleep timer', () => {
     expect(store().pendingNext).toBeNull()
     // The whole channel, which takes the prewarmed encoder with it.
     expect(released).toContain(`channel:${channelId}`)
-    expect(commits).toBe(2)
-    expect(playLog()).toEqual([
-      { episodeId: first.episode.id, completed: 1 },
-      { episodeId: pending.episode.id, completed: 0 }
-    ])
+    expect(commits).toBe(1)
+    // Only the episode that genuinely finished — the reservation left no trace.
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 1 }])
   })
 
   it('keeps playing while the deadline is still ahead', async () => {
@@ -501,6 +523,7 @@ describe('prewarm inside a multipart arc', () => {
 
     await store().prewarm()
     expect(store().pendingNext?.arc).toBeNull()
+    await store().advance(true)
 
     // Three parts in order, one log entry each, then one standalone.
     const log = playLog()
@@ -542,18 +565,67 @@ describe('prewarm inside a multipart arc', () => {
     expect(getChannel(db, channelId)?.activeGroupId).toBeNull()
   })
 
-  it('leaves the arc lock consistent when the viewer quits mid-arc after a prewarm', async () => {
+  it('resumes at the unwatched part when the viewer quits mid-arc after a prewarm', async () => {
     await store().tune(channelId)
     await store().prewarm()
     await store().leavePlayer()
 
-    // Part 2 was handed out, so the channel is parked on part 3. Re-tuning must
-    // resume the arc rather than restart it or wedge on a decision it can't finish.
+    // Part 2 was only *reserved*, never watched, so discarding the prewarm
+    // leaves the channel parked on part 2 — re-tuning must air it, not skip to
+    // part 3 as the old committing prewarm did.
     const channel = getChannel(db, channelId)
     expect(channel?.activeGroupId).not.toBeNull()
-    expect(channel?.activePartIndex).toBe(2)
+    expect(channel?.activePartIndex).toBe(1)
 
     await store().tune(channelId)
-    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 3, partCount: 3 })
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 2, partCount: 3 })
+  })
+
+})
+
+/**
+ * The nastiest *discard* case, and the invariant the whole unit design exists
+ * for: an arc can never be joined at Part 2. A committing prewarm broke it —
+ * a prewarm that drew the arc locked the channel at Part 2, and if the viewer
+ * then left, the next tune-in aired Part 2 with Part 1 never watched.
+ */
+describe('a prewarm that would start an arc', () => {
+  beforeEach(() => {
+    // A standalone *before* the arc, so the prewarm is what draws the arc.
+    insertEpisode(1, 1)
+    insertArc('City of Stone', [insertEpisode(1, 2), insertEpisode(1, 3), insertEpisode(1, 4)])
+    channelId = createChannel(db, 'Arc start', 5).id
+    addChannelShow(db, channelId, showId)
+    setChannelShowMode(db, channelId, showId, 'sequential')
+  })
+
+  it('does not lock the channel when the reservation is abandoned', async () => {
+    await store().tune(channelId)
+    expect(store().nowPlaying?.arc).toBeNull()
+
+    await store().prewarm()
+    expect(store().pendingNext?.arc).toMatchObject({ partIndex: 1, partCount: 3 })
+
+    await store().leavePlayer()
+
+    // No lock and no cursor movement: the arc was never entered.
+    expect(getChannel(db, channelId)?.activeGroupId).toBeNull()
+
+    // Re-tuning starts the arc from Part 1, never joins it at Part 2.
+    await store().tune(channelId)
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 1, partCount: 3 })
+  })
+
+  it('locks the channel only once the reservation is promoted', async () => {
+    await store().tune(channelId)
+    await store().prewarm()
+    // Still unlocked while the standby merely buffers Part 1.
+    expect(getChannel(db, channelId)?.activeGroupId).toBeNull()
+
+    await store().advance(true)
+    expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 1, partCount: 3 })
+    const channel = getChannel(db, channelId)
+    expect(channel?.activeGroupId).not.toBeNull()
+    expect(channel?.activePartIndex).toBe(1)
   })
 })

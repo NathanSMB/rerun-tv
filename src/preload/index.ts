@@ -59,6 +59,8 @@ const api: RerunApi = {
     tune: (channelId) => ipcRenderer.invoke(IPC.player.tune, channelId),
     next: (channelId) => ipcRenderer.invoke(IPC.player.next, channelId),
     prewarmNext: (channelId) => ipcRenderer.invoke(IPC.player.prewarmNext, channelId),
+    promoteNext: (channelId, episodeId) =>
+      ipcRenderer.invoke(IPC.player.promoteNext, channelId, episodeId),
     peekNext: (channelId) => ipcRenderer.invoke(IPC.player.peekNext, channelId),
     reportEnded: (channelId, episodeId, completed) =>
       ipcRenderer.invoke(IPC.player.reportEnded, channelId, episodeId, completed),

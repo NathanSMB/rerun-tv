@@ -135,8 +135,11 @@ those two views drifted apart once already.
 ## The API
 
 ```ts
-pickNext(db, channelId, rng?): Pick | null       // commits
-peekNext(db, channelId, rng?): Pick | null       // side-effect free
+pickNext(db, channelId, rng?): Pick | null           // commits
+peekNext(db, channelId, rng?): Pick | null           // side-effect free
+reserveNext(db, channelId, rng?): Pick | null        // plans, holds, commits nothing
+promoteReserved(db, channelId, episodeId): void      // commits a held reservation
+discardReserved(db, channelId, episodeId?): void     // abandons one, cost-free
 resetProgress(db, channelId, showId): void
 validateActiveArc(db, channelId): void
 ```
@@ -145,6 +148,16 @@ validateActiveArc(db, channelId): void
 honest: it shows the scheduler's *actual* next pick without consuming it. It
 computes against a copy of the state rather than rolling back a transaction, so
 there is no window in which a concurrent tune-in could observe the mutation.
+
+The reservation trio serves the gapless handoff. A prewarm needs to know *the*
+next episode ~30s early so the standby player can buffer it, but the viewer may
+still leave before it airs — so `reserveNext` plans the pick and parks the
+mutations in memory, `promoteReserved` applies them (in the usual single
+transaction) when the handoff really happens, and a discarded reservation
+leaves no trace: no cursor advance, no bag pop, no play-log row, and no arc
+lock for a part nobody watched. Reservations are deliberately in-memory — a
+crash forgets them, which is the correct recovery, since nothing was committed.
+While one is outstanding, `peekNext` reports it and `pickNext` supersedes it.
 
 `rng` is injectable so tests are deterministic; it defaults to `Math.random`.
 

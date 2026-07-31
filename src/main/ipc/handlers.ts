@@ -35,7 +35,15 @@ import * as libraryRepo from '../db/repositories/library.js'
 import * as channelRepo from '../db/repositories/channels.js'
 import { getLibraryOverview, assignUnmatched } from '../services/library.js'
 import { getChannelDetail, listChannelSummaries, toEpisodeView } from '../services/channels.js'
-import { peekNext, pickNext, resetProgress, validateActiveArc } from '../scheduler/scheduler.js'
+import {
+  discardReserved,
+  peekNext,
+  pickNext,
+  promoteReserved,
+  reserveNext,
+  resetProgress,
+  validateActiveArc
+} from '../scheduler/scheduler.js'
 import type { Scanner } from '../library/scanner.js'
 import type { LoudnessScanner } from '../library/loudness.js'
 import type { StreamServer } from '../stream/server.js'
@@ -232,22 +240,26 @@ export function registerHandlers(ctx: HandlerContext): void {
   })
 
   /**
-   * The gapless handoff's committing half (docs/stall-fix-plan.html, phase 3).
+   * The gapless handoff's reserving half (docs/stall-fix-plan.html, phase 3).
    *
-   * Deliberately `pickNext`, not `peekNext`: the standby has to buffer *the*
+   * Deliberately `reserveNext`, not `peekNext`: the standby has to buffer *the*
    * episode that will air, and for a shuffle show or a multipart arc only a
-   * committed pick is that. It runs through the same transaction as any other
-   * advance, so the arc hand-out and the cursor move exactly once — and the
-   * renderer's contract is therefore that it must promote this result rather
-   * than call `next` again.
+   * held reservation is that. Nothing is committed yet — `promoteNext` spends
+   * the schedule step when the handoff really happens, and a `release` before
+   * then drops the reservation along with the encoder, so a viewer who leaves
+   * mid-prewarm burns no unit and logs no phantom airing.
    *
    * Nothing is released: for the last ~30 seconds this channel legitimately owns
    * two encoders.
    */
   handle(IPC.player.prewarmNext, (channelId: number): NowPlaying | null => {
-    const pick = pickNext(db, channelId)
+    const pick = reserveNext(db, channelId)
     if (!pick) return null
     return toNowPlaying(ctx, channelId, pick.episodeId, pick.arc)
+  })
+
+  handle(IPC.player.promoteNext, (channelId: number, episodeId: number) => {
+    promoteReserved(db, channelId, episodeId)
   })
 
   handle(IPC.player.peekNext, (channelId: number): EpisodeView | null => {
@@ -263,6 +275,9 @@ export function registerHandlers(ctx: HandlerContext): void {
   })
 
   handle(IPC.player.release, (channelId: number, episodeId: number | null) => {
+    // Every way the renderer abandons a prewarm funnels through here, so the
+    // reservation goes with the encoder that was buffering it.
+    discardReserved(db, channelId, episodeId ?? undefined)
     if (episodeId == null) ctx.stream.releaseChannel(channelId)
     else ctx.stream.releaseEpisode(channelId, episodeId)
   })

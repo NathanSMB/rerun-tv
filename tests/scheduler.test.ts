@@ -16,7 +16,15 @@ import {
   setChannelShowSeasonMode,
   setChannelShowWeight
 } from '@main/db/repositories/channels.js'
-import { peekNext, pickNext, resetProgress, validateActiveArc } from '@main/scheduler/scheduler.js'
+import {
+  discardReserved,
+  peekNext,
+  pickNext,
+  promoteReserved,
+  reserveNext,
+  resetProgress,
+  validateActiveArc
+} from '@main/scheduler/scheduler.js'
 import { buildUnits, unitKeyForArc } from '@main/scheduler/units.js'
 import { getChannelDetail, listChannelSummaries } from '@main/services/channels.js'
 
@@ -625,5 +633,88 @@ describe('channel view models', () => {
 
   it('returns null detail for a channel that does not exist', () => {
     expect(getChannelDetail(db, 999)).toBeNull()
+  })
+})
+
+/**
+ * Prewarm reservations — the third invariant in the module header. A prewarm
+ * plans the next pick without spending it; only a promotion commits, and a
+ * discarded reservation leaves the schedule exactly as it found it.
+ */
+describe('prewarm reservations', () => {
+  function playLogCount(): number {
+    return (db.prepare(`SELECT COUNT(*) AS n FROM play_log`).get() as { n: number }).n
+  }
+
+  it('reserving commits nothing and repeats the same pick until resolved', () => {
+    const showId = seedFlatShow(db, 'Sequential', 5)
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowMode(db, channel.id, showId, 'sequential')
+
+    const first = reserveNext(db, channel.id, seeded(1))
+    const again = reserveNext(db, channel.id, seeded(99))
+    expect(first?.episodeId).toBe(again?.episodeId)
+    expect(playLogCount()).toBe(0)
+    expect(getShowState(db, channel.id, showId).cursorUnitIndex).toBe(0)
+
+    // The peek promises the reservation — the standby is buffering exactly it.
+    expect(peekNext(db, channel.id, seeded(7))?.episodeId).toBe(first?.episodeId)
+  })
+
+  it('promoting spends the reservation exactly as pickNext would have', () => {
+    const showId = seedFlatShow(db, 'Sequential', 5)
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowMode(db, channel.id, showId, 'sequential')
+
+    const reserved = reserveNext(db, channel.id, seeded(1))!
+    promoteReserved(db, channel.id, reserved.episodeId)
+
+    expect(playLogCount()).toBe(1)
+    expect(getShowState(db, channel.id, showId).cursorUnitIndex).toBe(1)
+    // Spent: the next reservation is a fresh plan, not the old one replayed.
+    expect(reserveNext(db, channel.id, seeded(1))?.episodeId).not.toBe(reserved.episodeId)
+  })
+
+  it('a discarded reservation leaves cursor, bag, arc lock and log untouched', () => {
+    // The arc is the *first* unit, so the reservation is an arc start — the
+    // case that used to lock the channel at Part 2 for a part nobody watched.
+    const showId = insertShow(db, 'Arc first')
+    const parts = [1, 2, 3].map((e) => insertEpisode(db, showId, 1, e))
+    insertEpisode(db, showId, 1, 4)
+    insertArc(db, showId, 'Opener', parts)
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowMode(db, channel.id, showId, 'sequential')
+
+    const reserved = reserveNext(db, channel.id, seeded(1))!
+    expect(reserved.arc).toMatchObject({ partIndex: 1, partCount: 3 })
+    discardReserved(db, channel.id, reserved.episodeId)
+
+    expect(playLogCount()).toBe(0)
+    expect(getShowState(db, channel.id, showId).cursorUnitIndex).toBe(0)
+    expect(getChannel(db, channel.id)?.activeGroupId).toBeNull()
+
+    // The schedule was never touched, so the next commit airs the same unit.
+    expect(pickNext(db, channel.id, seeded(1))?.episodeId).toBe(reserved.episodeId)
+  })
+
+  it('pickNext supersedes an outstanding reservation instead of stacking on it', () => {
+    const showId = seedFlatShow(db, 'Sequential', 5)
+    const channel = createChannel(db, 'Ch')
+    addChannelShow(db, channel.id, showId)
+    setChannelShowMode(db, channel.id, showId, 'sequential')
+
+    const reserved = reserveNext(db, channel.id, seeded(1))!
+    const committed = pickNext(db, channel.id, seeded(1))!
+
+    // Same episode — the reservation never advanced the cursor, the pick did.
+    expect(committed.episodeId).toBe(reserved.episodeId)
+    expect(getShowState(db, channel.id, showId).cursorUnitIndex).toBe(1)
+    // And the reservation is gone: promoting it now must not double-spend.
+    promoteReserved(db, channel.id, reserved.episodeId)
+    expect(getShowState(db, channel.id, showId).cursorUnitIndex).toBe(1)
+    expect(playLogCount()).toBe(2) // both airings logged, one schedule step each
   })
 })

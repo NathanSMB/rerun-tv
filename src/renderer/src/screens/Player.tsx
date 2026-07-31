@@ -28,9 +28,10 @@
  *    which this screen treats as "a `<video>` that knows how to play our URLs".
  *
  * 4. **There are two video elements, and a handoff is a swap, not a load.**
- *    Thirty seconds before the end of an episode the store commits the next pick
- *    and this screen starts buffering it in a hidden standby surface. On `ended`
- *    the store promotes that pick, the stage flips which surface is on top, and
+ *    Thirty seconds before the end of an episode the store reserves the next
+ *    pick and this screen starts buffering it in a hidden standby surface. On
+ *    `ended` the store promotes (and only then commits) that pick, the stage
+ *    flips which surface is on top, and
  *    the already-buffered element simply starts playing — no tune-in latency, no
  *    black frame. With `prewarmNext` off nothing is prewarmed and the second
  *    surface stays empty, which is exactly the single-element behaviour.
