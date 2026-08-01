@@ -1,37 +1,152 @@
 /*
- * Screen 05 · Settings — mockup.html screen 05.
+ * Screen 05 · Settings — the tuning rail.
  *
- * Four cards in a two-column grid. The controls themselves (.toggle,
- * .selectbox, .remove, .btn-sm, .postmvp, .status-dot, kbd) are shared chrome
- * from global.css; this file is the card and row geometry only.
+ * Sections are channels on a dial: a sticky rail of numbered stops on the left,
+ * one flat column of rows on the right. The rail absorbs the height difference
+ * between sections, which is what the old four-card grid could not do — with
+ * playback at twice the height of the library there was no arrangement of
+ * quadrants that didn't leave a hole in it.
+ *
+ * The controls themselves (.toggle, .selectbox, .remove, .btn-sm, .status-dot,
+ * kbd) are shared chrome from global.css; this file is the rail, the section
+ * headers and the row geometry only.
  */
 
 .set-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  padding: 24px;
-  align-items: start;
+  grid-template-columns: 200px minmax(0, 720px);
+  gap: 56px;
+  justify-content: center;
+  padding: 32px 32px 96px;
 }
 
-.set-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 16px 20px 8px;
-  background: color-mix(in srgb, var(--panel) 45%, transparent);
+/* ============ the rail ============ */
+
+.set-rail {
+  position: sticky;
+  top: 32px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.set-card .side-caption {
-  margin: 0 0 4px;
+.set-rail-item {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--body);
 }
+
+.set-rail-item .num {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--steel-dim);
+}
+
+.set-rail-item .name {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--steel-dim);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .set-rail-item .num,
+  .set-rail-item .name {
+    transition: color 140ms ease;
+  }
+}
+
+.set-rail-item:hover .num,
+.set-rail-item:hover .name {
+  color: var(--steel);
+}
+
+.set-rail-item.on {
+  border-left-color: var(--amber);
+  background: var(--amber-dim);
+}
+
+.set-rail-item.on .num {
+  color: var(--amber);
+}
+
+.set-rail-item.on .name {
+  color: var(--white);
+}
+
+/* The one line of system state visible from every section — a rail this tall
+   has room for it, and it saves a trip to 04 to find out nothing is wrong. */
+.set-rail-status {
+  margin-top: 28px;
+  padding: 0 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--steel-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ============ sections ============ */
+
+.set-section {
+  padding-top: 8px;
+  margin-bottom: 56px;
+  scroll-margin-top: 32px;
+}
+
+.set-section:last-child {
+  margin-bottom: 0;
+}
+
+.set-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
+.set-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 19px;
+  letter-spacing: 0.005em;
+}
+
+.set-head .set-blurb {
+  font-size: 12px;
+  color: var(--steel-dim);
+}
+
+/* ============ rows ============ */
 
 /* The one status line for the whole screen: a failed IPC call, or where a
-   backup landed. Spans both columns so it can't be missed. */
+   backup landed. Sits above the first section, in the reading column. */
 .set-status {
-  grid-column: 1 / -1;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px 14px;
+  margin-bottom: 24px;
   font-size: 13px;
   color: var(--steel);
   background: color-mix(in srgb, var(--panel) 45%, transparent);
@@ -47,7 +162,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 11px 0;
+  padding: 12px 0;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -69,6 +184,7 @@
   font-size: 11.5px;
   color: var(--steel-dim);
   margin-top: 2px;
+  max-width: 52ch;
   overflow-wrap: anywhere;
 }
 
@@ -80,7 +196,7 @@
   align-items: center;
   gap: 8px;
   flex: none;
-  max-width: 60%;
+  max-width: 55%;
   overflow-wrap: anywhere;
 }
 
@@ -101,7 +217,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 12px 0 10px;
+  padding: 12px 0 4px;
 }
 
 .shortcuts span {
@@ -109,9 +225,23 @@
   color: var(--steel-dim);
 }
 
-@media (max-width: 860px) {
+/* Narrow windows drop the sticky rail to a row of stops above the content —
+   still the dial, just laid flat. */
+@media (max-width: 900px) {
   .set-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 24px;
+  }
+
+  .set-rail {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .set-rail-status {
+    display: none;
   }
 
   .set-value {

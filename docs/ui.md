@@ -287,9 +287,25 @@ group any two or more episodes the heuristic missed, even across gaps or seasons
 
 ### Settings — every knob in one place
 
-Four cards: where the media lives, how it plays, how the interface behaves, and
-what the system underneath is doing (ffmpeg version and path, the startup codec
-check, the database and its size, with **Back up…** and **Import…** beside it).
+Four sections — where the media lives, how it plays, how the interface behaves,
+and what the system underneath is doing (ffmpeg version and path, the startup
+codec check, the database and its size, with **Back up…** and **Import…** beside
+it) — laid out as stops on a **tuning rail**: numbered 01–04 down a sticky dial
+on the left, one flat column of rows on the right. They used to be four cards in
+a two-column grid, which stopped working once Playback grew to twice the height
+of Library: no arrangement of quadrants hides that, one column always ends early
+and leaves a hole in the page. A single column has no such seam.
+
+The rail lights the section you're reading and jumps to one on click. Its spy is
+scroll-position based rather than an `IntersectionObserver`, for the sake of the
+last stop: System is shorter than the window, so it never reaches the reading
+line and an observer leaves the dial stuck on 03 with System filling the screen.
+Reaching the end of the scroll *is* the arrival signal, and only a scroll
+position can say that — guarded on the page actually scrolling, since on a window
+tall enough to hold everything the end of the scroll is also the top of the page.
+Under the numbers sits the one line of system state worth seeing from every
+section: ffmpeg missing or a failed codec check, the two faults that stop
+playback outright. Pinned by `tests/renderer/settings-rail.test.tsx`.
 
 Importing replaces everything, so the confirmation is a native dialog with
 Cancel as the default button — and it's raised from the main process, because
@@ -304,8 +320,8 @@ NVENC — and it only affects episodes on the transcode path; direct and remux
 playback never re-encode video. Each option is annotated with what the startup
 probe found ("available", "not detected"), but every option stays *selectable*:
 a probe can be wrong, and a backend this machine can't honour simply falls back
-to software at stream time. The System card reports both backends' verdicts and
-the render node VAAPI proved out. See
+to software at stream time. The System section reports both backends' verdicts
+and the render node VAAPI proved out. See
 [hwaccel-plan.html](hwaccel-plan.html).
 
 ## Accessibility
