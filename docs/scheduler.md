@@ -178,8 +178,9 @@ live unit are simply dropped when the bag is read.
 
 ## What the editor exposes
 
-Every knob in the algorithm is a visible control on the Channel Editor
-([ui.md](ui.md)): the `sequential | shuffle` segmented control, the weight
+Every knob in the algorithm is a visible control in the channel fold-out — the
+editor that unfolds under a row in the Guide ([ui.md](ui.md)): the
+`sequential | shuffle` segmented control, the weight
 stepper, the collapsible **Season overrides** list, and a live progress line —
 `Shuffle bag: 31 of 82 units left this cycle` or `Cursor at S01E04` — with a
 reset link. Counts are shown as episodes *and* units, so it's visible that a

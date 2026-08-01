@@ -31,7 +31,7 @@ import type {
 } from '@shared/types.js'
 import { DEFAULT_SETTINGS, SLEEP_MAX_MIN } from '@shared/types.js'
 
-export type Screen = 'guide' | 'player' | 'channels' | 'library' | 'settings' | 'blackout'
+export type Screen = 'guide' | 'player' | 'library' | 'settings' | 'blackout'
 
 /**
  * Whether this episode is the last thing in its **playable unit**.
@@ -94,8 +94,17 @@ function serialize<T>(action: () => Promise<T>): Promise<T> {
 interface AppState {
   // ---- navigation ----
   screen: Screen
-  /** Channel open in the editor, and the row highlighted in the guide. */
+  /**
+   * The channel whose editor is unfolded in the Guide, or null when every row
+   * is closed.
+   *
+   * There is no editor *screen* any more — the editor is a fold-out beneath a
+   * channel's row — so this is not navigation state, it is "which row is open".
+   * Exactly one may be open at a time, which is what makes `channelDetail` a
+   * single object rather than a map.
+   */
   editingChannelId: number | null
+  /** The row highlighted in the guide (the listbox's roving selection). */
   selectedChannelId: number | null
 
   // ---- data ----
@@ -157,7 +166,10 @@ interface AppState {
   init(): Promise<void>
   navigate(screen: Screen): void
   selectChannel(channelId: number | null): void
+  /** Unfold this channel's editor in the guide, closing whichever was open. */
   openEditor(channelId: number): Promise<void>
+  /** Fold the editor shut. */
+  closeEditor(): void
 
   refreshChannels(): Promise<void>
   refreshLibrary(): Promise<void>
@@ -195,6 +207,20 @@ interface AppState {
   /** Mirror the Player's PiP session into the store. See `pipActive`. */
   setPipActive(active: boolean): void
   setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void>
+}
+
+/**
+ * The screen to open on, tolerating a setting written by an older version.
+ *
+ * Settings are stored as loose key–value JSON and merged over `DEFAULT_SETTINGS`
+ * (see `db/repositories/settings.ts`), so nothing rejects a value whose screen no
+ * longer exists. An install that started on the retired Channels screen would
+ * otherwise boot to a screen `screenFor` cannot render.
+ */
+function startScreenOf(settings: AppSettings): Screen {
+  const wanted = settings.startScreen as string
+  const known: Screen[] = ['guide', 'library', 'settings']
+  return known.includes(wanted as Screen) ? (wanted as Screen) : 'guide'
 }
 
 /** Has the armed deadline passed? Null (disarmed) is never due. */
@@ -286,7 +312,7 @@ export const useStore = create<AppState>((set, get) => ({
       scan,
       volume: settings.rememberVolume ? settings.volume : DEFAULT_SETTINGS.volume,
       muted: settings.rememberVolume ? settings.muted : false,
-      screen: settings.startScreen
+      screen: startScreenOf(settings)
     })
 
     await Promise.all([get().refreshChannels(), get().refreshLibrary()])
@@ -302,17 +328,33 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   async openEditor(channelId) {
-    set({ screen: 'channels', editingChannelId: channelId })
+    // Selection follows the fold: opening a row's editor is also a statement
+    // about which row the keyboard is on, and letting the two drift apart is how
+    // Alt+↑/↓ ends up reordering a channel other than the one on screen.
+    // `channelDetail` is cleared so the fold can render a loading state instead
+    // of briefly showing the previous channel's lineup under the new heading.
+    set({ editingChannelId: channelId, selectedChannelId: channelId, channelDetail: null })
     await get().refreshChannelDetail(channelId)
+  },
+
+  closeEditor() {
+    set({ editingChannelId: null, channelDetail: null })
   },
 
   async refreshChannels() {
     const channels = await bridge().channels.list()
-    const { selectedChannelId } = get()
+    const { selectedChannelId, editingChannelId } = get()
     const stillThere = channels.some((c) => c.channel.id === selectedChannelId)
+    // A channel can vanish under the fold — deleted here, or by a `channelsChanged`
+    // push after a restore — and an open editor pointing at a dead row would
+    // render against a stale detail forever.
+    const editingStillThere = channels.some((c) => c.channel.id === editingChannelId)
     set({
       channels,
-      selectedChannelId: stillThere ? selectedChannelId : (channels[0]?.channel.id ?? null)
+      selectedChannelId: stillThere ? selectedChannelId : (channels[0]?.channel.id ?? null),
+      ...(editingChannelId != null && !editingStillThere
+        ? { editingChannelId: null, channelDetail: null }
+        : {})
     })
   },
 

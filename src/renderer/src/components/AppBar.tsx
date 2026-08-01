@@ -19,7 +19,6 @@ import { useStore } from '../store.js'
 
 const NAV: ReadonlyArray<{ screen: Screen; label: string }> = [
   { screen: 'guide', label: 'Guide' },
-  { screen: 'channels', label: 'Channels' },
   { screen: 'library', label: 'Library' },
   { screen: 'settings', label: 'Settings' }
 ]

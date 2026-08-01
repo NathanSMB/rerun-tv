@@ -392,7 +392,11 @@ export interface AppSettings {
    * direct-play file down the remux pipe. See `stream/loudness.ts`.
    */
   loudnessEq: boolean
-  startScreen: 'guide' | 'channels' | 'library' | 'settings'
+  /**
+   * Older installs may hold a retired screen name here (the Channels screen was
+   * folded into the Guide); the renderer coerces an unknown value to 'guide'.
+   */
+  startScreen: 'guide' | 'library' | 'settings'
   /** Seconds of idle before the OSD fades. */
   osdHideAfterS: number
   /**

@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rerun TV · Hot Rows — the final cut</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   Doc chrome — same world as the app: tube black, guide indigo,
+   phosphor amber. Tokens copied from src/renderer/src/styles/tokens.css
+   ============================================================ */
+:root {
+  color-scheme: dark;
+  --tube: #0b0e14;
+  --panel: #141a2e;
+  --panel-2: #1a2140;
+  --indigo: #28338f;
+  --indigo-hi: #3a48c4;
+  --amber: #ffb454;
+  --amber-dim: rgba(255, 180, 84, 0.14);
+  --white: #f0efe6;
+  --steel: #8d97b8;
+  --steel-dim: #5a6485;
+  --signal: #59d999;
+  --danger: #e5674b;
+  --danger-dim: rgba(229, 103, 75, 0.13);
+  --line: rgba(141, 151, 184, 0.18);
+  --line-soft: rgba(141, 151, 184, 0.1);
+  --display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --body: 'Instrument Sans', system-ui, sans-serif;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 500px at 50% -100px, rgba(40, 51, 143, 0.25), transparent 70%),
+    var(--tube);
+  color: var(--white);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 56px 28px 90px;
+}
+
+/* ---- memo head ---- */
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+h1 {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(34px, 5vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin: 10px 0 18px;
+}
+
+.standfirst {
+  font-size: 17px;
+  color: var(--steel);
+  max-width: 64ch;
+  margin: 0 0 34px;
+}
+
+.standfirst b { color: var(--white); font-weight: 600; }
+
+.caption {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--steel-dim);
+}
+
+.frame-cap {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.frame-cap .try { color: var(--amber); letter-spacing: 0.12em; }
+
+/* ---- spec notes ---- */
+
+.notes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+  margin-top: 26px;
+}
+
+.note-col h3 {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+  color: var(--amber);
+}
+
+.note-col ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--steel);
+  font-size: 13.5px;
+}
+
+.note-col li { margin: 5px 0; }
+.note-col li b { color: var(--white); font-weight: 600; }
+
+.outro {
+  margin-top: 36px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--steel-dim);
+  letter-spacing: 0.06em;
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--steel);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 3px;
+}
+
+/* ============================================================
+   Frame — a miniature of the real app window. One full-width
+   column; the preview aside is gone.
+   ============================================================ */
+
+.frame {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--tube);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+
+.f-appbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(20, 26, 46, 0.55);
+}
+
+.wordmark {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 15px;
+}
+
+.wordmark span { color: var(--amber); }
+
+.f-nav { display: flex; gap: 4px; margin-left: 6px; }
+
+.f-nav button {
+  font-family: var(--body);
+  font-size: 12.5px;
+  background: none;
+  border: 0;
+  color: var(--steel);
+  padding: 5px 11px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+
+.f-nav button.on { color: var(--white); background: var(--panel-2); }
+
+.scanpill {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--steel);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  letter-spacing: 0.04em;
+}
+
+.scanpill .live {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+/* guide list — full width */
+
+.guide-list { padding: 14px 0 18px; }
+
+.guide-listhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 18px 8px;
+}
+
+.ch-row {
+  display: grid;
+  grid-template-columns: 76px 1fr auto;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 12px 18px;
+  border-left: 3px solid transparent;
+  cursor: default;
+}
+
+.ch-row:hover { background: rgba(40, 51, 143, 0.16); }
+.ch-row.sel { background: rgba(40, 51, 143, 0.3); border-left-color: var(--amber); }
+
+.ch-num {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 32px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--white);
+}
+
+.ch-num small {
+  display: block;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 8.5px;
+  letter-spacing: 0.22em;
+  color: var(--steel-dim);
+  margin-bottom: 2px;
+}
+
+.ch-row.sel .ch-num small { color: var(--amber); }
+
+.ch-meta { min-width: 0; }
+.ch-name { font-weight: 600; font-size: 14.5px; }
+
+.ch-deck { font-size: 12px; color: var(--steel); margin-top: 1px; }
+
+.ch-deck code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--amber);
+  background: var(--amber-dim);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-right: 5px;
+}
+
+.ch-shows {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--steel-dim);
+  text-align: right;
+  line-height: 1.7;
+}
+
+.guide-hint {
+  padding: 12px 18px 0;
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--steel-dim);
+}
+
+/* hover controls — the design's signature */
+
+.hoverctl { display: none; gap: 7px; }
+
+.ch-row:hover .ch-shows { display: none; }
+.ch-row:hover .hoverctl { display: flex; }
+
+.iconbtn {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--steel);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  flex: none;
+}
+
+.iconbtn:hover { color: var(--white); border-color: var(--steel-dim); }
+
+.iconbtn.play {
+  color: #201302;
+  background: var(--amber);
+  border-color: transparent;
+}
+
+.iconbtn.play:hover { filter: brightness(1.06); }
+
+/* buttons */
+
+.btn {
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: 12.5px;
+  border-radius: var(--radius);
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn-tune { background: var(--amber); color: #201302; }
+.btn-tune:hover { filter: brightness(1.06); }
+
+.btn-ghost { background: transparent; border-color: var(--line); color: var(--steel); }
+.btn-ghost:hover { color: var(--white); border-color: var(--steel-dim); }
+
+.btn-sm { font-size: 11px; padding: 5px 10px; border-radius: var(--radius-sm); }
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex: none;
+}
+
+.seg button {
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 10px;
+  background: transparent;
+  color: var(--steel);
+  border: 0;
+  cursor: pointer;
+}
+
+.seg button.on { background: var(--indigo); color: var(--white); }
+
+.weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--steel);
+  flex: none;
+}
+
+.weight .w-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  min-width: 28px;
+  text-align: center;
+}
+
+.weight .w-step {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--steel);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.remove {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--steel-dim);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  width: 21px;
+  height: 21px;
+  cursor: pointer;
+  flex: none;
+}
+
+.remove:hover { color: var(--white); border-color: var(--steel-dim); }
+
+.search {
+  width: 100%;
+  font-family: var(--body);
+  font-size: 12px;
+  color: var(--white);
+  background: var(--tube);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.search::placeholder { color: var(--steel-dim); }
+
+.pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.pick .p-name { font-size: 12px; }
+
+.pick .p-eps {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--steel-dim);
+  margin-left: auto;
+}
+
+.pick .add {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--amber);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  flex: none;
+}
+
+.pick .add:hover { border-color: var(--amber); }
+
+/* ============================================================
+   The fold-out editor
+   ============================================================ */
+
+.fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms ease;
+}
+
+.fold-inner { overflow: hidden; min-height: 0; }
+
+.frame.editing .fold { grid-template-rows: 1fr; }
+
+.fold-panel {
+  margin: 4px 18px 8px 21px;
+  border: 1px solid rgba(255, 180, 84, 0.35);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  padding: 12px 16px 14px;
+}
+
+.fold-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.fold-bar .caption { color: var(--amber); }
+
+.fold-cols {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 4px 20px;
+}
+
+.fold-right {
+  border-left: 1px solid var(--line-soft);
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.fold-right .caption { margin-bottom: 8px; }
+.fold-right .search { margin-bottom: 6px; }
+
+/* identity line: rename, renumber, and — per Nathan — delete lives here too */
+
+.fold-idline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.idpill {
+  font-size: 12px;
+  color: var(--white);
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  cursor: text;
+}
+
+.idpill small { color: var(--steel-dim); margin-left: 5px; font-size: 10px; }
+
+.btn-del {
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--danger);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  flex: none;
+}
+
+.btn-del:hover { background: var(--danger-dim); }
+
+.btn-del.solid {
+  background: var(--danger);
+  border-color: transparent;
+  color: #2a0d06;
+}
+
+.btn-del.solid:hover { filter: brightness(1.08); }
+
+.del-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.del-confirm[hidden] { display: none; }
+
+.del-warn { font-size: 11px; color: var(--danger); }
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line-soft);
+  flex-wrap: wrap;
+}
+
+.strip:last-of-type { border-bottom: 0; }
+
+.strip-name { font-weight: 600; font-size: 12.5px; margin-right: auto; }
+
+.strip-facts { font-weight: 400; font-size: 10.5px; color: var(--steel-dim); margin-left: 7px; }
+
+.strip-sub {
+  flex-basis: 100%;
+  font-size: 10.5px;
+  color: var(--steel-dim);
+  margin-top: -3px;
+  padding-bottom: 2px;
+}
+
+.strip-sub code { font-family: var(--mono); color: var(--amber); font-size: 10px; }
+.strip-sub a { color: var(--amber); text-decoration: none; cursor: pointer; }
+
+/* ---- responsive & motion ---- */
+
+@media (max-width: 820px) {
+  .ch-shows { display: none; }
+  .ch-row .hoverctl { display: flex; }
+  .fold-cols { grid-template-columns: 1fr; }
+  .fold-right { border-left: 0; padding-left: 0; }
+  .notes { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fold { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="eyebrow">Rerun TV · Design review · Final</div>
+  <h1>Hot Rows — the final cut</h1>
+  <p class="standfirst">
+    Round two settled it: <b>Hot Rows</b>. The Guide is one full-width surface — no
+    Channels tab, no preview sidebar. Point at any row and <b>▶</b> and <b>✎</b> surface
+    at its edge; ✎ unfolds the editor in place. One change from the round-two mockup:
+    <b>Delete is a real button now</b>, sitting beside the rename and renumber controls at
+    the top of the fold, with a two-step confirm so a stray click can't take a channel
+    down. Everything below is live — hover the rows, open the fold, try the delete flow.
+  </p>
+</header>
+
+<div class="frame-cap">
+  <span class="caption">Final mockup · Hot Rows</span>
+  <span class="caption try">Interactive — hover a row, click ✎, try “Delete channel” (reload restores)</span>
+</div>
+
+<div class="frame" id="f1">
+  <div class="f-appbar">
+    <span class="wordmark">RERUN <span>TV</span></span>
+    <nav class="f-nav">
+      <button class="on">Guide</button>
+      <button>Library</button>
+      <button>Settings</button>
+    </nav>
+    <span class="scanpill"><span class="live"></span>LIBRARY OK · 4,182 EPISODES</span>
+  </div>
+
+  <section class="guide-list">
+    <div class="guide-listhead">
+      <span class="caption">Channel lineup</span>
+      <button class="btn btn-ghost btn-sm">+ New channel</button>
+    </div>
+
+    <div class="ch-row sel" data-num="03" data-name="Saturday Morning" onclick="selectRow(this)">
+      <span class="ch-num"><small>CH</small>03</span>
+      <div class="ch-meta">
+        <div class="ch-name">Saturday Morning</div>
+        <div class="ch-deck"><code>S02E07</code>DuckTales — “Micro Ducks from Outer Space”</div>
+      </div>
+      <div class="ch-shows">DUCKTALES · GARGOYLES<br>TALESPIN · DARKWING DUCK</div>
+      <span class="hoverctl">
+        <button class="iconbtn play" title="Tune in">▶</button>
+        <button class="iconbtn" title="Edit channel" onclick="openFold(this.closest('.ch-row'), event)">✎</button>
+      </span>
+    </div>
+
+    <div class="fold">
+      <div class="fold-inner">
+        <div class="fold-panel">
+          <div class="fold-bar">
+            <span class="caption">Editing CH <span class="live-num">03</span> · <span class="live-name">Saturday Morning</span> — changes air immediately</span>
+            <button class="btn btn-tune btn-sm" onclick="closeFold()">Done</button>
+          </div>
+          <div class="fold-cols">
+            <div class="fold-left">
+              <div class="fold-idline">
+                <span class="idpill">Saturday Morning <small>✎ rename</small></span>
+                <span class="idpill">CH 03 <small>✎ renumber</small></span>
+                <button class="btn-del" id="del-btn" onclick="askDelete(true)">Delete channel</button>
+                <span class="del-confirm" id="del-confirm" hidden>
+                  <span class="del-warn">Deletes its lineup and progress —</span>
+                  <button class="btn-del solid" onclick="confirmDelete()">Delete for good</button>
+                  <button class="btn btn-ghost btn-sm" onclick="askDelete(false)">Keep</button>
+                </span>
+              </div>
+              <div class="strip">
+                <span class="strip-name">DuckTales <span class="strip-facts">100 EP · 94 units · 3 arcs</span></span>
+                <span class="seg"><button>Shuffle</button><button class="on">In order</button></span>
+                <span class="weight">wt <button class="w-step">−</button><span class="w-val">3</span><button class="w-step">+</button></span>
+                <button class="remove">✕</button>
+                <span class="strip-sub">Cursor at <code>S02E07</code> · <a>reset to pilot</a> · <a>season overrides (1 active)</a></span>
+              </div>
+              <div class="strip">
+                <span class="strip-name">Gargoyles <span class="strip-facts">78 EP · 78 units</span></span>
+                <span class="seg"><button class="on">Shuffle</button><button>In order</button></span>
+                <span class="weight">wt <button class="w-step">−</button><span class="w-val">2</span><button class="w-step">+</button></span>
+                <button class="remove">✕</button>
+                <span class="strip-sub">Shuffle bag: 31 of 78 units left this cycle · <a>reshuffle</a></span>
+              </div>
+              <div class="strip">
+                <span class="strip-name">TaleSpin <span class="strip-facts">65 EP · 65 units</span></span>
+                <span class="seg"><button class="on">Shuffle</button><button>In order</button></span>
+                <span class="weight">wt <button class="w-step">−</button><span class="w-val">1</span><button class="w-step">+</button></span>
+                <button class="remove">✕</button>
+                <span class="strip-sub">Shuffle bag: fresh cycle — nothing repeats until all 65 units air</span>
+              </div>
+            </div>
+            <div class="fold-right">
+              <span class="caption">Add a show</span>
+              <input class="search" placeholder="Search library…">
+              <div class="pick"><span class="p-name">Rescue Rangers</span><span class="p-eps">65 EP</span><button class="add">+</button></div>
+              <div class="pick"><span class="p-name">Goof Troop</span><span class="p-eps">78 EP</span><button class="add">+</button></div>
+              <div class="pick"><span class="p-name">Bonkers</span><span class="p-eps">65 EP</span><button class="add">+</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ch-row" data-num="07" data-name="Late Night Static" onclick="selectRow(this)">
+      <span class="ch-num"><small>CH</small>07</span>
+      <div class="ch-meta">
+        <div class="ch-name">Late Night Static</div>
+        <div class="ch-deck"><code>S03E04</code>The X-Files — “Clyde Bruckman's Final Repose”</div>
+      </div>
+      <div class="ch-shows">THE X-FILES · TWILIGHT ZONE<br>UNSOLVED MYSTERIES</div>
+      <span class="hoverctl">
+        <button class="iconbtn play" title="Tune in">▶</button>
+        <button class="iconbtn" title="Edit channel" onclick="openFold(this.closest('.ch-row'), event)">✎</button>
+      </span>
+    </div>
+
+    <div class="ch-row" data-num="11" data-name="Sitcom Dinner Hour" onclick="selectRow(this)">
+      <span class="ch-num"><small>CH</small>11</span>
+      <div class="ch-meta">
+        <div class="ch-name">Sitcom Dinner Hour</div>
+        <div class="ch-deck"><code>S05E14</code>Seinfeld — “The Marine Biologist”</div>
+      </div>
+      <div class="ch-shows">SEINFELD · FRASIER<br>CHEERS · NIGHT COURT</div>
+      <span class="hoverctl">
+        <button class="iconbtn play" title="Tune in">▶</button>
+        <button class="iconbtn" title="Edit channel" onclick="openFold(this.closest('.ch-row'), event)">✎</button>
+      </span>
+    </div>
+
+    <p class="guide-hint"><kbd>↑</kbd><kbd>↓</kbd>browse · <kbd>Enter</kbd>tune in · <kbd>E</kbd>edit · <kbd>Esc</kbd>close · <kbd>Alt</kbd><kbd>↑</kbd><kbd>↓</kbd>reorder</p>
+  </section>
+</div>
+
+<div class="notes">
+  <div class="note-col">
+    <h3>The interaction spec</h3>
+    <ul>
+      <li><b>Hover any row</b> and the mono show titles yield to ▶ (tune straight in) and ✎ (unfold the editor). No selection step; rows never change height.</li>
+      <li><b>Keyboard is a full path, not a fallback:</b> <kbd>Enter</kbd> tunes the highlighted row, <kbd>E</kbd> unfolds it, <kbd>Esc</kbd> closes the fold. Hover never gates anything.</li>
+      <li><b>One fold at a time.</b> Opening a second channel closes the first — ✎ on another row moves the fold there (try it while one is open).</li>
+      <li><b>Delete is a two-step:</b> the button arms an inline confirm in place — “Delete for good” or “Keep” — no native dialog, no modal. In the mockup the row really disappears; reload to restore.</li>
+    </ul>
+  </div>
+  <div class="note-col">
+    <h3>What gets built</h3>
+    <ul>
+      <li>Remove the Channels tab from the app bar and retire the standalone ChannelEditor screen; its mutations move into the fold.</li>
+      <li>Remove the Guide's preview aside; the fold-bar carries the on-deck context instead.</li>
+      <li>New: hover controls on rows, the fold-out shell, dense per-show strips (mode · weight · remove, scheduler state beneath, season overrides one level deeper).</li>
+      <li>Rename/renumber become the click-to-edit pills at the fold's top-left, with <b>Delete channel</b> and its inline confirm beside them.</li>
+      <li><b>+ New channel</b> creates the channel and unfolds it immediately.</li>
+    </ul>
+  </div>
+</div>
+
+<p class="outro">THIS IS THE CUT. SAY GO AND I'LL BUILD IT INTO THE APP.</p>
+
+</div>
+
+<script>
+function selectRow(rowEl) {
+  document.querySelectorAll('#f1 .ch-row').forEach((r) => r.classList.remove('sel'))
+  rowEl.classList.add('sel')
+}
+
+function closeFold() {
+  document.getElementById('f1').classList.remove('editing')
+}
+
+function askDelete(show) {
+  document.getElementById('del-btn').hidden = show
+  document.getElementById('del-confirm').hidden = !show
+}
+
+/* Mockup-only: the confirm really removes the row, so the flow can be felt
+   end to end. Reload the page to restore the lineup. */
+function confirmDelete() {
+  const fold = document.querySelector('#f1 .fold')
+  const row = fold.previousElementSibling
+  closeFold()
+  setTimeout(() => {
+    row.remove()
+    askDelete(false)
+  }, 300)
+}
+
+/* Open the single fold beneath the given row (moving it if it was under
+   another row) and re-point its header. Lineup contents stay CH 03's —
+   it's a mockup. Clicking ✎ on the open row again closes it. */
+function openFold(rowEl, ev) {
+  if (ev) ev.stopPropagation()
+  const frame = document.getElementById('f1')
+  const fold = frame.querySelector('.fold')
+  const wasOpenHere = frame.classList.contains('editing') && fold.previousElementSibling === rowEl
+  selectRow(rowEl)
+  askDelete(false)
+  if (wasOpenHere) {
+    closeFold()
+    return
+  }
+  rowEl.after(fold)
+  frame.querySelectorAll('.live-num').forEach((n) => (n.textContent = rowEl.dataset.num))
+  frame.querySelectorAll('.live-name').forEach((n) => (n.textContent = rowEl.dataset.name))
+  frame.classList.add('editing')
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeFold()
+})
+</script>
+</body>
+</html>

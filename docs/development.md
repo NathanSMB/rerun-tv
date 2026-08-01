@@ -63,11 +63,11 @@ src/
   preload/index.ts   contextBridge — the only thing the renderer can see
   renderer/          React + TypeScript
     src/store.ts     the Zustand store; the `screen` field is the router
-    src/screens/     Guide · Player · ChannelEditor · Library · Settings
-    src/components/  AppBar · ChannelBanner · ChannelNumber
+    src/screens/     Guide · Player · Library · Settings (+ Blackout)
+    src/components/  AppBar · ChannelFold (the guide's editor) · ChannelNumber
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
 tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
-  renderer/          the one DOM suite: which store action the Player's effects pick
+  renderer/          the DOM suites: the Player's effect decisions, the guide's fold
 docs/                this documentation, plus the original plan and mockup
 ```
 
@@ -201,6 +201,32 @@ Inventing the ordering is how a harness ends up passing broken code.
 Finally: each test names the mutation that must turn it red, and the guard those
 mutations attack is `Player.tsx`'s "Expiry while paused". That ritual is the
 point — a harness whose tests cannot fail on the original bugs is decoration.
+
+#### The screen suites
+
+`harness.tsx` is the *Player's* rig, and most of what it models — media-element
+orderings, PiP activation rules — is meaningless anywhere else. Other screens are
+mounted directly with `createRoot`, with only the preload bridge scripted per
+file: `settings-rail.test.tsx`, `sleep-panel.test.tsx`, `guide-fold.test.tsx`.
+
+`guide-fold.test.tsx` covers the Guide's fold-out channel editor
+([ui.md](ui.md)) — one fold at a time, the keyboard path hover cannot serve,
+and the two-step delete. Two things it does not assert, deliberately:
+
+- **The row's fixed height under hover.** happy-dom lays nothing out, so every
+  box is 0×0. That the controls and the show titles share one grid cell is a CSS
+  fact and belongs to the mockup and a real window, not to a DOM test.
+- **Anything the fold's mutations do to the scheduler.** Those go over the bridge
+  and are `scheduler.test.ts`'s job against a real database.
+
+Two harness details are worth copying rather than rediscovering:
+
+- **Keystrokes go to the focused row**, not to the list. The Guide's handler
+  ignores keys whose target isn't a row, so that the fold's own inputs can own
+  their `Escape`; a test that fired at the container would prove nothing.
+- **React installs its own `value` setter on controlled inputs** and ignores a
+  plain assignment, so typing has to call the native setter (`type()` in that
+  file) or `onChange` never fires and the form stays empty.
 
 ## The soak harness
 

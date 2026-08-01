@@ -59,7 +59,7 @@ renderer runs sandboxed.
 ### Renderer (`src/renderer/`)
 
 React 19 + TypeScript. No router: the store's `screen` field is the router,
-because there are six screens and no URLs worth having. Components read store
+because there are five screens and no URLs worth having. Components read store
 slices and call store actions; only the Player talks to the DOM directly, since
 it owns a `<video>` element whose state changes every frame.
 
@@ -136,4 +136,4 @@ A handler that starts to look like it's deciding something belongs in
 - [playback.md](playback.md) — direct / remux / transcode, seeking, the supervisor
 - [library.md](library.md) — scanning, filename parsing, arc detection
 - [backup-restore.md](backup-restore.md) — backing up the database, and importing one back
-- [ui.md](ui.md) — the five screens and the design language
+- [ui.md](ui.md) — the four screens and the design language

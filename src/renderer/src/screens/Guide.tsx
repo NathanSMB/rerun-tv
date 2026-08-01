@@ -1,28 +1,39 @@
 /**
- * Screen 01 — The Guide. Home.
+ * Screen 01 — The Guide. Home, and the only place channels are managed.
  *
  * The lineup reads like a cable guide: a big dial number, the channel's name,
  * and what the scheduler *actually* has on deck (precomputed in the main
- * process, which is why tuning in is instant). The right-hand aside previews the
- * selected channel and is where you commit — tune in, or go edit the lineup.
+ * process, which is why tuning in is instant).
  *
- * Interaction model, in one place so it stays coherent:
+ * Interaction model, in one place so it stays coherent
+ * (docs/channel-edit-ux.html, "Hot Rows"):
  *
- *  - The list is a `listbox` with a roving tabindex. Selection follows focus:
- *    ↑/↓ and Home/End move the highlight and update the preview; Enter or Space
- *    tunes in. A single click selects, a double click tunes in.
+ *  - The list is one full-width column — there is no preview aside, and no
+ *    Channels screen. Pointing at a row swaps its show-title block for two
+ *    buttons: ▶ tunes in, ✎ unfolds that channel's editor in place. Rows keep
+ *    their height either way, so the list never reflows under the pointer.
+ *  - Hover is a shortcut, never the only path: ↑/↓ and Home/End move the
+ *    highlight, Enter tunes in, E unfolds the editor, Esc folds it shut. A
+ *    single click selects, a double click tunes in.
+ *  - Only one editor is open at a time — ✎ on another row moves the fold there.
  *  - Reordering is drag-and-drop, but never *only* drag-and-drop: Alt+↑/↓ moves
  *    the selected channel too, so the dial can be arranged from the keyboard.
  *    Either way the new order is applied optimistically and then persisted with
  *    `channels.reorder`.
  *  - Creating a channel uses an inline form rather than `window.prompt`, which
- *    Electron does not support.
+ *    Electron does not support, and unfolds the new channel's editor straight
+ *    away — a channel with no shows cannot air, so the lineup is the next step.
+ *
+ * Rows are a plain list rather than a `listbox`: an `option` may not contain
+ * interactive children, and these rows carry buttons and an expandable editor.
+ * The roving tabindex and arrow-key handling are kept, so it still behaves like
+ * one composite widget.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, JSX, KeyboardEvent } from 'react'
 import type { ChannelSummary } from '@shared/types.js'
-import ChannelBanner from '../components/ChannelBanner.js'
+import ChannelFold from '../components/ChannelFold.js'
 import ChannelNumber from '../components/ChannelNumber.js'
 import { useStore } from '../store.js'
 import './Guide.css'
@@ -32,6 +43,7 @@ import './Guide.css'
 // ---------------------------------------------------------------------------
 
 const rowDomId = (channelId: number): string => `guide-ch-${channelId}`
+const foldDomId = (channelId: number): string => `guide-fold-${channelId}`
 
 const pad2 = (value: number): string => String(value).padStart(2, '0')
 
@@ -65,32 +77,6 @@ function showLines(titles: string[]): string[] {
   return lines
 }
 
-function listSentence(items: string[]): string {
-  if (items.length === 1) return items[0]
-  if (items.length <= 3) return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
-  return `${items.slice(0, 3).join(', ')} and ${items.length - 3} more`
-}
-
-/**
- * What comes after the on-deck episode. The guide only knows the channel's show
- * titles — per-show modes live in the Channel Editor's detail payload — so this
- * says what it can honestly say and no more.
- */
-function sideNote(summary: ChannelSummary): string {
-  const { showTitles, onDeck } = summary
-  if (showTitles.length === 0) {
-    return 'Nothing in this lineup yet. Add shows in the channel editor and this channel starts airing.'
-  }
-  if (!onDeck) {
-    return 'Nothing on deck — these shows have no playable episodes yet. Check the Library screen.'
-  }
-  const others = showTitles.filter((t) => t !== onDeck.showTitle)
-  if (others.length === 0) {
-    return `After this, ${onDeck.showTitle} keeps going — it's the only show on this channel.`
-  }
-  return `Up after: the dial draws again from ${listSentence(others)}.`
-}
-
 // ---------------------------------------------------------------------------
 // screen
 // ---------------------------------------------------------------------------
@@ -98,9 +84,11 @@ function sideNote(summary: ChannelSummary): string {
 export default function Guide(): JSX.Element {
   const channels = useStore((s) => s.channels)
   const selectedChannelId = useStore((s) => s.selectedChannelId)
+  const editingChannelId = useStore((s) => s.editingChannelId)
   const selectChannel = useStore((s) => s.selectChannel)
   const refreshChannels = useStore((s) => s.refreshChannels)
   const openEditor = useStore((s) => s.openEditor)
+  const closeEditor = useStore((s) => s.closeEditor)
   const tune = useStore((s) => s.tune)
   const navigate = useStore((s) => s.navigate)
 
@@ -133,8 +121,6 @@ export default function Guide(): JSX.Element {
   const rowsRef = useRef(rows)
   rowsRef.current = rows
 
-  const selected = rows.find((r) => r.channel.id === selectedChannelId) ?? null
-
   useEffect(() => {
     if (creating) newNameRef.current?.focus()
   }, [creating])
@@ -149,24 +135,27 @@ export default function Guide(): JSX.Element {
    * that just computed a new order pass it in explicitly — `rowsRef` only
    * catches up on the next render, which is too late for a keyboard move.
    */
-  const commitOrder = useCallback(async (ids?: number[]): Promise<void> => {
-    const next = ids ?? idsOf(rowsRef.current)
-    if (sameOrder(next, idsOf(channels))) {
-      setPendingOrder(null)
-      return
-    }
-    setBusy(true)
-    try {
-      await window.rerun.channels.reorder(next)
-      await refreshChannels()
-      setError(null)
-    } catch (err) {
-      fail(err, 'Reordering channels')
-    } finally {
-      setPendingOrder(null)
-      setBusy(false)
-    }
-  }, [channels, fail, refreshChannels])
+  const commitOrder = useCallback(
+    async (ids?: number[]): Promise<void> => {
+      const next = ids ?? idsOf(rowsRef.current)
+      if (sameOrder(next, idsOf(channels))) {
+        setPendingOrder(null)
+        return
+      }
+      setBusy(true)
+      try {
+        await window.rerun.channels.reorder(next)
+        await refreshChannels()
+        setError(null)
+      } catch (err) {
+        fail(err, 'Reordering channels')
+      } finally {
+        setPendingOrder(null)
+        setBusy(false)
+      }
+    },
+    [channels, fail, refreshChannels]
+  )
 
   // ---- keyboard --------------------------------------------------------
 
@@ -196,7 +185,32 @@ export default function Guide(): JSX.Element {
     void commitOrder(next)
   }
 
+  const toggleEditor = (channelId: number): void => {
+    if (editingChannelId === channelId) closeEditor()
+    else void openEditor(channelId)
+  }
+
   const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // Escape closes the fold from anywhere inside it, so the way out is the same
+    // wherever focus happens to be. Controls that want it for themselves — the
+    // rename field abandoning a draft, a non-empty search clearing — stop it
+    // propagating, so they get first refusal rather than a special case here.
+    if (event.key === 'Escape') {
+      if (editingChannelId != null) {
+        event.preventDefault()
+        closeEditor()
+      }
+      return
+    }
+
+    // Every other shortcut is a bare letter or arrow, which means it is also
+    // ordinary text someone may be typing into the fold's rename or search
+    // field. They only count when the *row* has focus; otherwise typing "e" into
+    // the library search would fold the editor shut mid-word.
+    if (event.target !== event.currentTarget && !(event.target as HTMLElement).dataset.chRow) {
+      return
+    }
+
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       event.preventDefault()
       moveSelectedChannel(event.key === 'ArrowDown' ? 1 : -1)
@@ -220,9 +234,16 @@ export default function Guide(): JSX.Element {
         moveSelection(rows.length)
         break
       case 'Enter':
-      case ' ':
+      case ' ': {
         event.preventDefault()
+        const selected = rows.find((r) => r.channel.id === selectedChannelId)
         if (selected?.onDeck) void tune(selected.channel.id)
+        break
+      }
+      case 'e':
+      case 'E':
+        event.preventDefault()
+        if (selectedChannelId != null) toggleEditor(selectedChannelId)
         break
       default:
         break
@@ -232,6 +253,9 @@ export default function Guide(): JSX.Element {
   // ---- drag ------------------------------------------------------------
 
   const onDragStart = (event: DragEvent<HTMLDivElement>, channelId: number): void => {
+    // Dragging a row while its editor is open would slide a tall panel around
+    // the list; fold it shut and let the drag be about order alone.
+    if (editingChannelId != null) closeEditor()
     setDraggingId(channelId)
     selectChannel(channelId)
     event.dataTransfer.effectAllowed = 'move'
@@ -265,30 +289,14 @@ export default function Guide(): JSX.Element {
     try {
       const created = await window.rerun.channels.create({ name: trimmed })
       await refreshChannels()
-      selectChannel(created.id)
       setCreating(false)
       setNewName('')
       setError(null)
+      // A brand-new channel has nothing to air, so the lineup is the only useful
+      // next step — open it rather than leaving an empty row behind.
+      await openEditor(created.id)
     } catch (err) {
       fail(err, 'Creating the channel')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const deleteSelected = async (): Promise<void> => {
-    if (!selected) return
-    const { id, name, number } = selected.channel
-    if (!window.confirm(`Delete CH ${pad2(number)} “${name}”? Its lineup and progress go with it.`)) {
-      return
-    }
-    setBusy(true)
-    try {
-      await window.rerun.channels.remove(id)
-      await refreshChannels()
-      setError(null)
-    } catch (err) {
-      fail(err, 'Deleting the channel')
     } finally {
       setBusy(false)
     }
@@ -366,78 +374,133 @@ export default function Guide(): JSX.Element {
         {rows.length === 0 && !creating ? (
           <div className="empty">
             <b>No channels yet.</b>
-            Rerun TV needs two things before anything can air: a folder of episodes, and
-            a channel to put them on. Add a library folder first, then make a channel and
-            drop a few shows into it.
+            Rerun TV needs two things before anything can air: a folder of episodes, and a
+            channel to put them on. Add a library folder first, then make a channel and drop a
+            few shows into it.
             <div className="guide-empty-actions">
-              <button type="button" className="btn btn-tune btn-sm" onClick={() => setCreating(true)}>
+              <button
+                type="button"
+                className="btn btn-tune btn-sm"
+                onClick={() => setCreating(true)}
+              >
                 + Create the first channel
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('library')}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => navigate('library')}
+              >
                 Open the Library
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('settings')}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => navigate('settings')}
+              >
                 Add a folder
               </button>
             </div>
           </div>
         ) : (
-          <div
-            className="guide-rows"
-            role="listbox"
-            aria-label="Channel lineup"
-            onKeyDown={onListKeyDown}
-          >
+          <div className="guide-rows" role="list" aria-label="Channel lineup" onKeyDown={onListKeyDown}>
             {rows.map((summary) => {
               const { channel, onDeck, showTitles } = summary
               const isSelected = channel.id === selectedChannelId
+              const isEditing = channel.id === editingChannelId
               const classes = ['ch-row']
               if (isSelected) classes.push('sel')
+              if (isEditing) classes.push('editing')
               if (draggingId === channel.id) classes.push('dragging')
               return (
-                <div
-                  key={channel.id}
-                  id={rowDomId(channel.id)}
-                  className={classes.join(' ')}
-                  role="option"
-                  aria-selected={isSelected}
-                  aria-current={isSelected ? 'true' : undefined}
-                  tabIndex={isSelected ? 0 : -1}
-                  draggable
-                  onClick={() => selectChannel(channel.id)}
-                  onDoubleClick={() => {
-                    if (onDeck) void tune(channel.id)
-                  }}
-                  onDragStart={(event) => onDragStart(event, channel.id)}
-                  onDragOver={onDragOverRow}
-                  onDragEnter={() => onDragEnterRow(channel.id)}
-                  onDrop={(event) => {
-                    event.preventDefault()
-                    onDragEnd()
-                  }}
-                  onDragEnd={onDragEnd}
-                >
-                  <ChannelNumber number={channel.number} />
-                  <div className="ch-meta">
-                    <div className="ch-name">{channel.name}</div>
-                    <div className="ch-deck">
-                      {onDeck ? (
-                        <>
-                          <code>{onDeck.code}</code>
-                          {onDeck.showTitle}
-                          {onDeck.title ? ` — “${onDeck.title}”` : ''}
-                        </>
-                      ) : showTitles.length === 0 ? (
-                        'No shows in this lineup'
-                      ) : (
-                        'Nothing on deck yet'
-                      )}
+                <div className="ch-slot" key={channel.id} role="listitem">
+                  <div
+                    id={rowDomId(channel.id)}
+                    className={classes.join(' ')}
+                    data-ch-row="true"
+                    aria-current={isSelected ? 'true' : undefined}
+                    aria-label={`CH ${pad2(channel.number)} ${channel.name}`}
+                    tabIndex={isSelected ? 0 : -1}
+                    draggable
+                    onClick={() => selectChannel(channel.id)}
+                    onDoubleClick={() => {
+                      if (onDeck) void tune(channel.id)
+                    }}
+                    onDragStart={(event) => onDragStart(event, channel.id)}
+                    onDragOver={onDragOverRow}
+                    onDragEnter={() => onDragEnterRow(channel.id)}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      onDragEnd()
+                    }}
+                    onDragEnd={onDragEnd}
+                  >
+                    <ChannelNumber number={channel.number} />
+                    <div className="ch-meta">
+                      <div className="ch-name">{channel.name}</div>
+                      <div className="ch-deck">
+                        {onDeck ? (
+                          <>
+                            <code>{onDeck.code}</code>
+                            {onDeck.showTitle}
+                            {onDeck.title ? ` — “${onDeck.title}”` : ''}
+                          </>
+                        ) : showTitles.length === 0 ? (
+                          'No shows in this lineup'
+                        ) : (
+                          'Nothing on deck yet'
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Titles and controls occupy the same cell: the row's height
+                        is the same whether or not the pointer is on it. */}
+                    <div className="ch-shows">
+                      {showLines(showTitles).map((line, i) => (
+                        <div key={i}>{line}</div>
+                      ))}
+                    </div>
+                    <div className="ch-ctrls">
+                      <button
+                        type="button"
+                        className="iconbtn play"
+                        title={onDeck ? 'Tune in' : 'Nothing on deck to tune in to'}
+                        aria-label={`Tune in to CH ${pad2(channel.number)} ${channel.name}`}
+                        disabled={!onDeck || busy}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void tune(channel.id)
+                        }}
+                      >
+                        ▶
+                      </button>
+                      <button
+                        type="button"
+                        className="iconbtn"
+                        title="Edit channel"
+                        aria-label={`Edit CH ${pad2(channel.number)} ${channel.name}`}
+                        aria-expanded={isEditing}
+                        aria-controls={isEditing ? foldDomId(channel.id) : undefined}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          selectChannel(channel.id)
+                          toggleEditor(channel.id)
+                        }}
+                      >
+                        ✎
+                      </button>
                     </div>
                   </div>
-                  <div className="ch-shows">
-                    {showLines(showTitles).map((line, i) => (
-                      <div key={i}>{line}</div>
-                    ))}
+
+                  {/* The fold is a grid row that animates 0fr → 1fr, so it opens
+                      to its natural height without anyone measuring it. */}
+                  <div className={isEditing ? 'fold open' : 'fold'}>
+                    <div className="fold-inner">
+                      {isEditing && (
+                        <div id={foldDomId(channel.id)}>
+                          <ChannelFold channelId={channel.id} onClose={closeEditor} />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )
@@ -445,7 +508,7 @@ export default function Guide(): JSX.Element {
           </div>
         )}
 
-        {rows.length > 1 && (
+        {rows.length > 0 && (
           <p className="guide-hint">
             <span>
               <kbd>↑</kbd>
@@ -455,73 +518,23 @@ export default function Guide(): JSX.Element {
               <kbd>Enter</kbd>tune in
             </span>
             <span>
-              <kbd>Alt</kbd>
-              <kbd>↑</kbd>
-              <kbd>↓</kbd>reorder — or drag a row
+              <kbd>E</kbd>edit
             </span>
+            {editingChannelId != null && (
+              <span>
+                <kbd>Esc</kbd>close
+              </span>
+            )}
+            {rows.length > 1 && (
+              <span>
+                <kbd>Alt</kbd>
+                <kbd>↑</kbd>
+                <kbd>↓</kbd>reorder — or drag a row
+              </span>
+            )}
           </p>
         )}
       </section>
-
-      <aside className="guide-side" aria-label="Channel preview">
-        {selected ? (
-          <>
-            <div className="side-title">Now tuned · CH {pad2(selected.channel.number)}</div>
-            <div className="preview">
-              {selected.onDeck ? (
-                <ChannelBanner
-                  number={selected.channel.number}
-                  showTitle={selected.onDeck.showTitle}
-                  code={selected.onDeck.code}
-                  episodeTitle={selected.onDeck.title}
-                  durationS={selected.onDeck.durationS}
-                />
-              ) : (
-                <span className="preview-idle">NO SIGNAL</span>
-              )}
-            </div>
-            <p className="side-note">{sideNote(selected)}</p>
-            <div className="side-actions">
-              <button
-                type="button"
-                className="btn btn-tune"
-                disabled={!selected.onDeck || busy}
-                onClick={() => void tune(selected.channel.id)}
-              >
-                ▶ Tune in
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => void openEditor(selected.channel.id)}
-              >
-                Edit channel
-              </button>
-            </div>
-            <div className="side-manage">
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                disabled={busy}
-                onClick={() => void deleteSelected()}
-              >
-                Delete channel
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="side-title">Nothing tuned</div>
-            <div className="preview">
-              <span className="preview-idle">NO SIGNAL</span>
-            </div>
-            <p className="side-note">
-              Make a channel and it shows up here with whatever the scheduler has lined
-              up next.
-            </p>
-          </>
-        )}
-      </aside>
     </div>
   )
 }

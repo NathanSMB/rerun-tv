@@ -1,8 +1,12 @@
 # The UI
 
 `src/renderer/` — the implementation of [mockup.html](mockup.html) and
-[plan.html](plan.html) §7–8. Five screens plus a blackout, all configuration
+[plan.html](plan.html) §7–8. Four screens plus a blackout, all configuration
 in-app, no config files.
+
+The mockup shows a fifth: a standalone **Channels** screen. It is gone — channel
+editing now unfolds inside the Guide, designed in
+[channel-edit-ux.html](channel-edit-ux.html) and described under *Guide* below.
 
 ## The design language
 
@@ -32,16 +36,20 @@ component should never contain a hex value**; add a token instead.
 
 ## The recurring signature: the channel banner
 
-`components/ChannelBanner.tsx`. A dial number in amber display face, the show
-title, and an amber-mono line: `S04E11 · DATA'S DAY · 44 MIN`. It appears in the
-Guide's preview panel, on tune-in, and on **every episode handoff** — including
-mid-arc, where it carries the part indicator, because an arc starting is the
-thing the viewer most needs signalled.
+A dial number in amber display face, the show title, and an amber-mono line:
+`S04E11 · DATA'S DAY · 44 MIN`. It appears on tune-in and on **every episode
+handoff** — including mid-arc, where it carries the part indicator, because an
+arc starting is the thing the viewer most needs signalled.
+
+It lives in the Player (`.banner` in `global.css`). There was also a
+`ChannelBanner` component, whose only other caller was the Guide's preview aside;
+removing that aside left it with one consumer, so it was folded back into the
+Player rather than kept as shared chrome with a single user.
 
 ## State
 
 One Zustand store, `src/renderer/src/store.ts`. Its `screen` field is the router
-— there are six screens and no URLs worth having. Components read slices with
+— there are five screens and no URLs worth having. Components read slices with
 `useStore(s => s.x)` and call store actions; they never call `window.rerun`
 directly, with the deliberate exception of the screens doing one-off queries
 (arc lists, episode lists) that aren't worth caching globally.
@@ -50,6 +58,13 @@ directly, with the deliberate exception of the screens doing one-off queries
 (`scanProgress`, `libraryChanged`, `channelsChanged`), which is why the scan pill
 ticks and the Library screen refreshes itself while a scan runs.
 
+`startScreen` is read through a coercion (`startScreenOf`) rather than used
+directly. Settings are a loose key–value table merged over `DEFAULT_SETTINGS`
+(see [data-model.md](data-model.md)), so nothing rejects a value naming a screen
+that no longer exists — an install that started on the retired Channels screen
+would otherwise boot to a screen the shell cannot render. Unknown values fall
+back to the Guide.
+
 ## The screens
 
 ### Guide — home
@@ -57,11 +72,85 @@ ticks and the Library screen refreshes itself while a scan runs.
 The channel lineup, read like a cable listing: big dial numbers, the channel
 name, and **what the scheduler actually has on deck** for each — precomputed via
 `peekNext`, so tuning in starts instantly and the line you read is the episode
-you get. The right-hand aside previews the selected channel and offers *Tune in*
-and *Edit channel*.
+you get. It is one full-width column; there is no preview aside.
 
-Channels are created, deleted and drag-reordered here. Reordering also works
-from the keyboard (Alt+↑/↓) so it isn't mouse-only.
+Channels are created, edited, deleted and drag-reordered here — this is the only
+place channels are managed. Reordering also works from the keyboard (Alt+↑/↓) so
+it isn't mouse-only.
+
+#### Hot rows, and the fold-out editor
+
+Designed in [channel-edit-ux.html](channel-edit-ux.html), which retired the
+standalone Channels screen. Three decisions carry the design:
+
+- **Controls surface under the pointer.** Hovering a row replaces its mono
+  show-title block with two buttons: **▶** tunes straight in, **✎** unfolds that
+  channel's editor. Any row, one click, no selection step first.
+- **The row never changes height.** Titles and controls are placed in the *same*
+  grid cell (`Guide.css`) and swapped by visibility, not by adding a box. This is
+  the whole point of the design — the list has to stay perfectly still while the
+  pointer travels down it, or hovering becomes a hazard rather than a shortcut.
+- **Hover is a shortcut, never the only path.** A pointer is one input among
+  several, so the same two verbs are on the keyboard: `Enter` tunes the
+  highlighted row, `E` unfolds it, `Esc` folds it shut. Below 860px, where hover
+  isn't a reliable signal, the controls simply stay visible and the titles yield
+  the column.
+
+Those shortcuts are bare letters, which are also ordinary text — so everything
+except `Esc` is ignored unless the *row* has focus. Typing "e" into the fold's
+library search would otherwise fold the editor shut mid-word. `Esc` is the
+exception because the way out shouldn't depend on where focus is sitting: it
+closes the fold from anywhere inside it, and controls that want it for themselves
+(the rename field abandoning a draft, a non-empty search clearing) stop it
+propagating and get first refusal.
+
+The fold itself (`components/ChannelFold.tsx`) is the old Channels screen's
+content, compressed to one strip per show and given a library-picker column
+beside it. **Only one fold is open at a time** — ✎ on another row moves it — and
+that is load-bearing rather than tidiness: the store holds a single
+`channelDetail`, so two open folds would render one channel's lineup under two
+different headings.
+
+Opening a fold also moves the *selection* to that row. Letting the two drift
+apart is how `Alt+↑/↓` ends up reordering a channel other than the one on screen.
+
+**+ New channel** creates the channel and unfolds it immediately, since a channel
+with no shows cannot air and the lineup is the only useful next step.
+
+Pinned by `tests/renderer/guide-fold.test.tsx`.
+
+### The channel fold-out — where a channel gets its personality
+
+`components/ChannelFold.tsx`, reached with **✎** on a guide row (see *Guide*
+above). Not a screen: it unfolds beneath the channel it edits, and every change
+is applied immediately — there is no save button and no draft state.
+
+Every scheduling knob from the plan is a visible control: per-show
+**Shuffle / In order**, the lottery **weight**, the detected **arcs**, and the
+live progress cursor or shuffle bag with a reset link. Counts are shown as
+episodes *and* units, so it's visible that a 5-parter like *Awakening* holds
+exactly one lottery ticket.
+
+Renaming, renumbering and deleting sit together on one line at the top, because
+they are the three things that act on the *channel* rather than on its lineup.
+Name and number are click-to-edit pills rather than standing form fields, so the
+line reads as a heading until you reach for it.
+
+**Deleting is a two-step, inline.** The button arms a confirm in place —
+*Delete for good* / *Keep* — and moves focus onto it, so a stray `Enter` can't
+land on the destructive control. It is not a `window.confirm`: Electron doesn't
+implement it. It isn't a modal either, since a dialog would cover the lineup the
+viewer is being asked to weigh. Deleting closes the fold, and the store drops any
+editor left pointing at a channel that no longer exists — a channel can also
+vanish underneath an open fold via a `channelsChanged` push after a restore.
+
+**Season overrides** sit behind a `<details>` per show, collapsed by default
+with an "N active" badge, because most shows never need them and an always-open
+list of 30 seasons would bury the controls that matter. Each season offers three
+choices — *Use show*, *Shuffle*, *In order* — where the first is the absence of
+an override rather than a third mode, and names the inherited setting inline
+(*Use show (In order)*) so the effect is readable without looking up. That is
+also why a show with no episodes shows no override list at all.
 
 ### Player — full-bleed video
 
@@ -260,22 +349,6 @@ same reveal-then-idle pattern the OSD uses and tuned by the same
 can't land on an invisible control, and the cursor hides with it. `Esc` and
 `Enter` do the same thing, so the exit is never mouse-only.
 
-### Channel editor — where a channel gets its personality
-
-Every scheduling knob from the plan is a visible control: per-show
-**Shuffle / In order**, the lottery **weight**, the detected **arcs**, and the
-live progress cursor or shuffle bag with a reset link. Counts are shown as
-episodes *and* units, so it's visible that a 5-parter like *Awakening* holds
-exactly one lottery ticket.
-
-**Season overrides** sit behind a `<details>` per show, collapsed by default
-with an "N active" badge, because most shows never need them and an always-open
-list of 30 seasons would bury the controls that matter. Each season offers three
-choices — *Use show*, *Shuffle*, *In order* — where the first is the absence of
-an override rather than a third mode, and names the inherited setting inline
-(*Use show (In order)*) so the effect is readable without looking up. That is
-also why a show with no episodes shows no override list at all.
-
 ### Library — where files become television
 
 The scan strip reports what's been probed and what was skipped. Each show shows
@@ -332,3 +405,10 @@ and volume bars are keyboard-operable `role="slider"` widgets, not click-only
 divs; the guide's selected row carries `aria-current`. Focus is always visible
 (a 2px amber ring). Everything animated is guarded by
 `prefers-reduced-motion`.
+
+The guide's rows are a plain `role="list"` with a roving tabindex, **not** a
+`listbox`. They were one until the editor moved in: an `option` may not contain
+interactive children, and these rows now carry two buttons and an expandable
+editor. The arrow-key handling that made it feel like a single composite widget
+is kept by hand, and the ✎ button carries `aria-expanded`/`aria-controls` so the
+fold is announced as what it is.

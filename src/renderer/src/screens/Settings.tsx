@@ -129,7 +129,6 @@ function availabilityNote(
 
 const START_SCREENS: { value: AppSettings['startScreen']; label: string }[] = [
   { value: 'guide', label: 'Guide' },
-  { value: 'channels', label: 'Channels' },
   { value: 'library', label: 'Library' },
   { value: 'settings', label: 'Settings' }
 ]

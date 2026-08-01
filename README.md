@@ -76,8 +76,11 @@ The originals this was built from:
 - **[docs/mockup.html](docs/mockup.html)** — UI design mock: the Guide, the
   Player, the Channel Editor, the Library and Settings, in the "Saturday, 1994"
   broadcast direction.
+- **[docs/channel-edit-ux.html](docs/channel-edit-ux.html)** — the redesign that
+  retired the mockup's standalone Channel Editor screen and folded channel
+  editing into the Guide.
 
-Open either directly in a browser.
+Open any of them directly in a browser.
 
 ## Not in the MVP
 

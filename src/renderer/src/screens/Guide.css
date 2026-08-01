@@ -1,27 +1,20 @@
 /*
- * Screen 01 · The Guide.
+ * Screen 01 · The Guide — docs/channel-edit-ux.html, "Hot Rows".
  *
- * Straight from docs/mockup.html: a two-column body with the lineup on the left
- * and a preview aside on the right, collapsing to a single column on narrow
- * windows.
+ * One full-width column: the preview aside is gone, and the channel editor
+ * unfolds beneath a row instead (see components/ChannelFold.css).
  *
- * `.ch-num` lives here rather than in global.css because that is where the
- * mockup groups it — but note the Channel Editor reuses the same class (and the
- * <ChannelNumber> component) at a larger size. This stylesheet is imported by
- * Guide.tsx, which App.tsx imports eagerly, so it is always in the bundle.
+ * `.ch-num` itself is shared chrome and lives in global.css. This stylesheet is
+ * imported by Guide.tsx, which App.tsx imports eagerly, so it is always in the
+ * bundle.
  */
 
 .guide-body {
-  display: grid;
-  grid-template-columns: 1fr 340px;
   min-height: calc(100vh - var(--appbar-h));
 }
 
-/* ============ left column · the lineup ============ */
-
 .guide-list {
   padding: 18px 0 22px;
-  border-right: 1px solid var(--line);
 }
 
 .guide-listhead {
@@ -60,6 +53,8 @@
   margin-top: 14px;
 }
 
+/* ============ a channel: its row, plus the fold under it ============ */
+
 .ch-row {
   display: grid;
   grid-template-columns: 96px 1fr auto;
@@ -79,6 +74,13 @@
   border-left-color: var(--amber);
 }
 
+/* The open channel keeps its highlight even when the pointer wanders off, so
+   the fold below is never orphaned from the row it belongs to. */
+.ch-row.editing {
+  background: rgba(40, 51, 143, 0.3);
+  border-left-color: var(--amber);
+}
+
 /* Inset so the ring reads inside the full-bleed row instead of being clipped. */
 .ch-row:focus-visible {
   outline: 2px solid var(--amber);
@@ -89,10 +91,13 @@
   opacity: 0.45;
 }
 
-/* `.ch-num` itself is shared chrome and lives in global.css. */
-
-.ch-row.sel .ch-num small {
+.ch-row.sel .ch-num small,
+.ch-row.editing .ch-num small {
   color: var(--amber);
+}
+
+.ch-meta {
+  min-width: 0;
 }
 
 .ch-meta .ch-name {
@@ -116,12 +121,93 @@
   margin-right: 6px;
 }
 
+/*
+ * Titles and controls share the third column — both are placed in the same grid
+ * cell — so swapping one for the other cannot change the row's height. This is
+ * the whole point of the design: the list stays still while the pointer moves
+ * down it.
+ */
+.ch-shows,
+.ch-ctrls {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+
 .ch-shows {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--steel-dim);
   text-align: right;
   line-height: 1.7;
+}
+
+.ch-ctrls {
+  display: none;
+  gap: 8px;
+  align-items: center;
+}
+
+.ch-row:hover .ch-shows,
+.ch-row.editing .ch-shows,
+.ch-row:focus-within .ch-shows {
+  visibility: hidden;
+}
+
+.ch-row:hover .ch-ctrls,
+.ch-row.editing .ch-ctrls,
+.ch-row:focus-within .ch-ctrls {
+  display: flex;
+}
+
+.iconbtn {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--steel);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  flex: none;
+}
+
+.iconbtn:hover:not(:disabled) {
+  color: var(--white);
+  border-color: var(--steel-dim);
+}
+
+.iconbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.iconbtn.play {
+  color: #201302;
+  background: var(--amber);
+  border-color: transparent;
+}
+
+.iconbtn.play:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+/* ---- the fold ---- */
+
+.fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 240ms ease;
+}
+
+.fold.open {
+  grid-template-rows: 1fr;
+}
+
+.fold-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .guide-hint {
@@ -134,93 +220,27 @@
   color: var(--steel-dim);
 }
 
-/* ============ right column · the preview ============ */
-
-.guide-side {
-  padding: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  background: rgba(20, 26, 46, 0.35);
-}
-
-.preview {
-  aspect-ratio: 16 / 9;
-  border-radius: var(--radius);
-  position: relative;
-  overflow: hidden;
-  background:
-    linear-gradient(160deg, rgba(40, 51, 143, 0.85), rgba(11, 14, 20, 0.9) 70%),
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 3px);
-  border: 1px solid var(--line);
-  display: flex;
-  align-items: flex-end;
-}
-
-.preview .banner {
-  position: static;
-  transform: none;
-  margin: 12px;
-  max-width: calc(100% - 24px);
-}
-
-.preview-idle {
-  margin: auto;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  color: var(--steel-dim);
-}
-
-.side-title {
-  font-weight: 600;
-  font-size: 15.5px;
-}
-
-.side-note {
-  font-size: 13px;
-  color: var(--steel);
-  margin: -6px 0 0;
-}
-
-.side-actions {
-  display: flex;
-  gap: 10px;
-}
-
-.side-actions .btn-tune {
-  flex: 1;
-}
-
-.side-manage {
-  margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-soft);
-  display: flex;
-  justify-content: flex-start;
-}
-
 /* ============ narrow windows ============ */
 
 @media (max-width: 860px) {
-  .guide-body {
-    grid-template-columns: 1fr;
+  .ch-row {
+    grid-template-columns: 72px 1fr auto;
+    padding: 14px;
   }
 
-  .guide-list {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
+  /* No hover on touch-ish widths: the controls simply stay out, and the show
+     titles give up the column to them. */
   .ch-shows {
     display: none;
   }
 
-  .ch-row {
-    grid-template-columns: 72px 1fr;
+  .ch-ctrls {
+    display: flex;
   }
+}
 
-  .side-manage {
-    margin-top: 14px;
+@media (prefers-reduced-motion: reduce) {
+  .fold {
+    transition: none;
   }
 }

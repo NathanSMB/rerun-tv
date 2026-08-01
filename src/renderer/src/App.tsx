@@ -30,7 +30,6 @@ import type { CSSProperties, ErrorInfo, JSX, ReactNode } from 'react'
 import AppBar from './components/AppBar.js'
 import Blackout from './screens/Blackout.js'
 import Guide from './screens/Guide.js'
-import ChannelEditor from './screens/ChannelEditor.js'
 import Library from './screens/Library.js'
 import Player from './screens/Player.js'
 import Settings from './screens/Settings.js'
@@ -125,8 +124,6 @@ class ScreenErrorBoundary extends Component<BoundaryProps, BoundaryState> {
 
 function screenFor(screen: Exclude<Screen, 'player' | 'blackout'>): JSX.Element {
   switch (screen) {
-    case 'channels':
-      return <ChannelEditor />
     case 'library':
       return <Library />
     case 'settings':
