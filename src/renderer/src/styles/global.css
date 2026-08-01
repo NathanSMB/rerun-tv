@@ -73,10 +73,22 @@ a {
 }
 
 .wordmark {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--display);
   font-weight: 800;
   font-size: 17px;
   letter-spacing: 0.01em;
+}
+
+/* The mark carries its own glow as transparent padding, so it is set larger
+   than its optical size and the surplus is pulled back out of the layout —
+   otherwise the glow would push the bar taller and space the wordmark oddly. */
+.wordmark-icon {
+  width: 46px;
+  height: 46px;
+  margin: -12px -6px;
 }
 
 .wordmark span {

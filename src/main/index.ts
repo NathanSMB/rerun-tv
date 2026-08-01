@@ -19,7 +19,9 @@ import { app, BrowserWindow, net, protocol, shell } from 'electron'
 import { rmSync } from 'node:fs'
 import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import appIcon from '../../resources/icon.png?asset'
 import { EVENTS } from '../shared/ipc.js'
+import { ensureDesktopEntry } from './desktop-entry.js'
 import { ensureKwinPipRule } from './kwin-rule.js'
 import { PENDING_HW_ACCEL, type HwAccelReport, type SystemInfo } from '../shared/types.js'
 import { closeDb, openDatabase, setDb, type Db } from './db/index.js'
@@ -132,6 +134,9 @@ function createWindow(): void {
     // Matches --tube so there's no white flash before the renderer paints.
     backgroundColor: '#0b0e14',
     title: 'Rerun TV',
+    // Linux has no bundle to read an icon from, so the window carries its own;
+    // packaged builds get the same `resources/icon.png` via electron-builder.
+    icon: appIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -222,6 +227,14 @@ async function bootstrap(): Promise<void> {
   // layer and works the same whether we are on Wayland or X11 (`kwin-rule.ts`).
   // Idempotent, and a no-op off KDE.
   ensureKwinPipRule()
+  // How the taskbar gets an icon on Wayland: a desktop entry matching our
+  // `app_id`, installed the same way (`desktop-entry.ts`). The `icon` option on
+  // the window below only covers X11.
+  ensureDesktopEntry(
+    appIcon,
+    join(dataDir(), 'icon.png'),
+    process.env['APPIMAGE'] ?? `"${process.execPath}" "${app.getAppPath()}"`
+  )
   const ffmpeg = resolveFfmpeg()
 
   streamServer = await startStreamServer({

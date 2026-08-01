@@ -48,13 +48,15 @@
     "productName": "Rerun TV",
     "directories": {
       "output": "release",
-      "buildResources": "build"
+      "buildResources": "resources"
     },
     "files": [
       "out/**/*",
+      "resources/**/*",
       "package.json"
     ],
     "linux": {
+      "icon": "icon.png",
       "target": [
         "AppImage"
       ],

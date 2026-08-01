@@ -16,6 +16,7 @@
 import type { JSX } from 'react'
 import type { Screen } from '../store.js'
 import { useStore } from '../store.js'
+import headerIcon from '../assets/header-icon.png'
 
 const NAV: ReadonlyArray<{ screen: Screen; label: string }> = [
   { screen: 'guide', label: 'Guide' },
@@ -64,6 +65,7 @@ export default function AppBar(): JSX.Element {
   return (
     <header className="appbar">
       <span className="wordmark">
+        <img className="wordmark-icon" src={headerIcon} alt="" aria-hidden="true" />
         RERUN <span>TV</span>
       </span>
 

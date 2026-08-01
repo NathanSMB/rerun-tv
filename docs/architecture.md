@@ -40,7 +40,8 @@ state transition be one transaction with no await points for another tune-in to
 interleave with.
 
 Boot order in `index.ts` is deliberate: XDG data dir → **apply a staged database
-import, if one is waiting** → open and migrate the database → resolve ffmpeg and
+import, if one is waiting** → open and migrate the database → install the desktop
+entry and, on KDE, the picture-in-picture window rule → resolve ffmpeg and
 start the stream server → construct the scanner → register IPC handlers → open
 the window. The codec check runs *after* the window is on its way, because per
 plan §10 a failure is non-fatal: anything unplayable just routes to the transcode

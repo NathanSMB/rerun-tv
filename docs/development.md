@@ -51,6 +51,8 @@ src/
   main/              Node — owns the library, the database, the scheduler
     index.ts         bootstrap and window
     paths.ts         XDG data dir · database, staged-import and backup paths
+    kwin-rule.ts     the KWin overlay rule that keeps PiP above full-screen windows
+    desktop-entry.ts rerun-tv.desktop, installed at boot — the taskbar icon on Wayland
     db/
       index.ts       open + migrate
       schema.ts      the migration list
@@ -66,6 +68,7 @@ src/
     src/screens/     Guide · Player · Library · Settings (+ Blackout)
     src/components/  AppBar · ChannelFold (the guide's editor) · ChannelNumber
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
+resources/           the application icon — electron-builder's buildResources and the running window's icon
 tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
   renderer/          the DOM suites: the Player's effect decisions, the guide's fold
 docs/                this documentation, plus the original plan and mockup

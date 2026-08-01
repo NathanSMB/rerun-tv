@@ -34,6 +34,17 @@ All of this lives in `src/renderer/src/styles/tokens.css`. Shared chrome — the
 app bar, buttons, toggles, the channel banner — lives in `global.css`. **A
 component should never contain a hex value**; add a token instead.
 
+The mark — an amber rewind-loop around a play triangle — exists in two cuts.
+The glowing one without a background (`renderer/src/assets/header-icon.png`)
+sits left of the wordmark in the app bar. The one on the rounded navy tile is
+the application icon, `resources/icon.png` — electron-builder's buildResources
+directory and the running window's icon both point at the same file. On Wayland a window cannot present its own icon at all —
+the compositor looks one up from a desktop entry matching the window's `app_id`
+(`rerun-tv`, derived from the package name) — so boot installs
+`~/.local/share/applications/rerun-tv.desktop` pointing at a stable copy of the
+tile, the same write-it-ourselves move as the window rule below
+(`main/desktop-entry.ts`).
+
 ## The recurring signature: the channel banner
 
 A dial number in amber display face, the show title, and an amber-mono line:
