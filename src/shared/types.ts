@@ -303,6 +303,31 @@ export interface RestoreReceipt {
   channels: number
 }
 
+/** One backend's verdict from the startup probe. */
+export type HwProbeStatus = 'ok' | 'failed' | 'pending'
+
+/**
+ * What the startup probe learned about this machine's encoders.
+ *
+ * `vaapiDevice` is the render node the probe test-encoded on successfully, and
+ * it is not guessable: a machine with a discrete NVIDIA card and an AMD iGPU
+ * exposes `/dev/dri/renderD128` for the NVIDIA (whose VAAPI driver has *no*
+ * H.264 encode entrypoint) and `renderD129` for the iGPU that actually works.
+ * Hence enumeration rather than the conventional renderD128 default.
+ */
+export interface HwAccelReport {
+  vaapi: HwProbeStatus
+  nvenc: HwProbeStatus
+  /** The render node VAAPI encodes on, once proven. Null until then. */
+  vaapiDevice: string | null
+}
+
+export const PENDING_HW_ACCEL: HwAccelReport = {
+  vaapi: 'pending',
+  nvenc: 'pending',
+  vaapiDevice: null
+}
+
 export interface SystemInfo {
   appVersion: string
   ffmpegPath: string | null
@@ -312,6 +337,8 @@ export interface SystemInfo {
   ffmpegSource: 'system' | 'bundled' | 'missing'
   /** H.264/AAC decode asserted against an embedded test asset at startup. */
   codecCheck: 'ok' | 'failed' | 'pending'
+  /** What the startup hardware probe found, per backend. */
+  hwAccel: HwAccelReport
   dbPath: string
   dbSizeBytes: number
   streamPort: number | null
@@ -323,6 +350,20 @@ export interface SystemInfo {
 // Settings
 // ---------------------------------------------------------------------------
 
+/**
+ * Which encoder the transcode path runs on.
+ *
+ * `software` is libx264 — always present, always correct, and the fallback every
+ * other value degrades to. The two hardware backends are a *preference*, not a
+ * promise: the startup probe decides whether the machine can honour one
+ * (`SystemInfo.hwAccel`), and the stream server falls back on its own if a job
+ * dies before its first byte.
+ */
+export type HardwareAccel = 'software' | 'vaapi' | 'nvenc'
+
+/** Every hardware backend, in the order the Settings dropdown lists them. */
+export const HARDWARE_ACCELS: readonly HardwareAccel[] = ['software', 'vaapi', 'nvenc'] as const
+
 export interface AppSettings {
   /** Persisted so the player restores volume/mute on launch. */
   volume: number
@@ -333,7 +374,14 @@ export interface AppSettings {
   transcodePreset: string
   transcodeCrf: number
   transcodeAudioBitrate: string
-  hardwareEncode: boolean
+  /**
+   * Which encoder the *transcode* path uses, video decode included.
+   *
+   * Only the transcode path is affected: a `direct` file never meets ffmpeg and a
+   * `remux` file copies its video stream byte-for-byte, so neither runs a video
+   * encoder for this setting to accelerate.
+   */
+  hardwareAccel: HardwareAccel
   /** Start the next stream during the last 30 s for a gapless handoff. */
   prewarmNext: boolean
   /**
@@ -383,7 +431,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   transcodePreset: 'veryfast',
   transcodeCrf: 21,
   transcodeAudioBitrate: '192k',
-  hardwareEncode: false,
+  hardwareAccel: 'software',
   prewarmNext: true,
   loudnessEq: false,
   startScreen: 'guide',

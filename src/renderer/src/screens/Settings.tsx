@@ -4,13 +4,10 @@
  * Every knob in one place — the app never asks anyone to edit JSON (plan §8).
  * Four quiet cards: where the media lives, how it plays, how the interface
  * behaves, and what the system underneath is doing.
- *
- * Post-MVP controls (VAAPI) ship **visible but disabled**, so the settings
- * surface doesn't reshuffle as features land.
  */
 
 import { useEffect, useState, type ReactElement } from 'react'
-import type { AppSettings, ScanRoot } from '@shared/types.js'
+import type { AppSettings, ScanRoot, SystemInfo } from '@shared/types.js'
 import { SLEEP_MAX_MIN } from '@shared/types.js'
 import { useStore } from '../store.js'
 import './Settings.css'
@@ -24,6 +21,35 @@ const QUALITY_PRESETS = [
 ] as const
 
 const AUDIO_BITRATES = ['128k', '192k', '256k', '320k'] as const
+
+/**
+ * The three transcode backends. Named by the hardware the user recognises —
+ * "NVIDIA GPUs", not "NVENC alone" — because the vendor is the part anyone can
+ * check against the machine in front of them.
+ */
+const HW_ACCELS: { value: AppSettings['hardwareAccel']; label: string }[] = [
+  { value: 'software', label: 'Software (libx264)' },
+  { value: 'vaapi', label: 'VAAPI — Intel & AMD GPUs' },
+  { value: 'nvenc', label: 'NVENC — NVIDIA GPUs' }
+]
+
+/**
+ * Annotate an option with what the startup probe found.
+ *
+ * Options stay *selectable* when the probe says no: a probe can be wrong (a
+ * driver that loads late, a device that appears after launch), and choosing an
+ * absent backend is harmless — the stream server falls back to software on its
+ * own. The note is information, not a gate.
+ */
+function availabilityNote(
+  value: AppSettings['hardwareAccel'],
+  report: SystemInfo['hwAccel'] | undefined
+): string {
+  if (value === 'software' || report == null) return ''
+  const status = value === 'vaapi' ? report.vaapi : report.nvenc
+  if (status === 'pending') return ' · checking…'
+  return status === 'ok' ? ' · available' : ' · not detected'
+}
 
 const START_SCREENS: { value: AppSettings['startScreen']; label: string }[] = [
   { value: 'guide', label: 'Guide' },
@@ -208,6 +234,22 @@ export default function Settings(): ReactElement {
 
   const ffmpegOk = system != null && system.ffmpegPath != null && system.ffmpegSource !== 'missing'
 
+  /**
+   * The one sentence worth adding under the dropdown: that a selection this
+   * machine can't honour still plays, on software. Only shown when it applies,
+   * so the hint doesn't warn about a situation the user isn't in.
+   */
+  const selectedHwStatus =
+    system == null || settings.hardwareAccel === 'software'
+      ? null
+      : settings.hardwareAccel === 'vaapi'
+        ? system.hwAccel.vaapi
+        : system.hwAccel.nvenc
+  const hwHint =
+    selectedHwStatus === 'failed'
+      ? 'This machine reports no working encoder for the selected backend — transcodes will run on software.'
+      : null
+
   return (
     <div className="set-body">
       {(error != null || note != null) && (
@@ -341,18 +383,31 @@ export default function Settings(): ReactElement {
 
         <div className="set-row">
           <div>
-            <div className="set-label">
-              Hardware encode (VAAPI)
-              <span className="postmvp">POST-MVP</span>
+            <label className="set-label" htmlFor="set-hwaccel">
+              Hardware encode &amp; decode
+            </label>
+            <div className="set-hint">
+              GPU acceleration for episodes that need a full transcode. Direct and remux playback
+              never re-encode video, so they are unaffected.
+              {hwHint != null && <> {hwHint}</>}
             </div>
-            <div className="set-hint">GPU-assisted transcoding on Intel/AMD</div>
           </div>
-          <Toggle
-            checked={settings.hardwareEncode}
-            label="Hardware encode (VAAPI) — not available yet"
-            disabled
-            onChange={() => undefined}
-          />
+          <select
+            id="set-hwaccel"
+            className="selectbox"
+            value={settings.hardwareAccel}
+            disabled={locked}
+            onChange={(event) =>
+              update('hardwareAccel', event.target.value as AppSettings['hardwareAccel'])
+            }
+          >
+            {HW_ACCELS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+                {availabilityNote(option.value, system?.hwAccel)}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="set-row">
@@ -559,6 +614,50 @@ export default function Settings(): ReactElement {
               <>
                 <span className="status-dot bad" />
                 FAILED
+              </>
+            )}
+          </span>
+        </div>
+
+        <div className="set-row">
+          <div>
+            <div className="set-label">Hardware encoders</div>
+            <div className="set-hint">
+              {system == null
+                ? '—'
+                : system.hwAccel.vaapiDevice != null
+                  ? `VAAPI on ${system.hwAccel.vaapiDevice}`
+                  : 'Probed at startup with a test encode on each GPU'}
+            </div>
+          </div>
+          <span className="set-value">
+            {system == null ? (
+              <>
+                <span className="status-dot warn" />
+                checking…
+              </>
+            ) : (
+              <>
+                <span
+                  className={`status-dot${
+                    system.hwAccel.vaapi === 'ok'
+                      ? ''
+                      : system.hwAccel.vaapi === 'pending'
+                        ? ' warn'
+                        : ' bad'
+                  }`}
+                />
+                VAAPI
+                <span
+                  className={`status-dot${
+                    system.hwAccel.nvenc === 'ok'
+                      ? ''
+                      : system.hwAccel.nvenc === 'pending'
+                        ? ' warn'
+                        : ' bad'
+                  }`}
+                />
+                NVENC
               </>
             )}
           </span>

@@ -24,9 +24,17 @@ import { stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { extname } from 'node:path'
 import { effectivePlaybackPath, needsAudioTranscode, normalizeContainer } from '@shared/playback.js'
-import type { AppSettings, LoudnessMeasurement, PlaybackPath } from '@shared/types.js'
+import {
+  PENDING_HW_ACCEL,
+  type AppSettings,
+  type HardwareAccel,
+  type HwAccelReport,
+  type LoudnessMeasurement,
+  type PlaybackPath
+} from '@shared/types.js'
 import type { Db } from '../db/index.js'
 import { FfmpegSupervisor, resolveFfmpeg } from './ffmpeg.js'
+import { effectiveAccel, hwDecodeArgs, hwVideoArgs } from './hwaccel.js'
 import { planLoudness } from './loudness.js'
 
 export interface StreamServerOptions {
@@ -36,6 +44,15 @@ export interface StreamServerOptions {
    * CRF in Settings takes effect on the very next tune-in without a restart.
    */
   getSettings: () => AppSettings
+  /**
+   * What the startup hardware probe found, read per request for the same reason
+   * as `getSettings`: the probe finishes a second or two after the window opens,
+   * and an episode tuned in before then must pick up the answer when it lands
+   * rather than stay on software for the whole session.
+   *
+   * Optional so tests and any caller that doesn't care get the software path.
+   */
+  getHwAccel?: () => HwAccelReport
 }
 
 export interface StreamServer {
@@ -251,6 +268,7 @@ function sendText(res: ServerResponse, status: number, message: string): void {
  */
 export async function startStreamServer(opts: StreamServerOptions): Promise<StreamServer> {
   const { db, getSettings } = opts
+  const getHwAccel = opts.getHwAccel ?? ((): HwAccelReport => PENDING_HW_ACCEL)
   const supervisor = new FfmpegSupervisor()
 
   const selectEpisode = db.prepare<[number], EpisodeRow>(
@@ -443,63 +461,103 @@ export async function startStreamServer(opts: StreamServerOptions): Promise<Stre
     }
 
     const loudness = planLoudness(settings, row.acodec, measurementOf(row))
-    const args =
+    // Hardware acceleration is a property of the *transcode* path alone: a remux
+    // copies its video stream, so there is no encoder to accelerate.
+    const accel =
       path === 'transcode'
-        ? transcodeArgs(row.path, seekS, settings, loudness)
-        : remuxArgs(row.path, seekS, !needsAudioTranscode(row.acodec), settings, loudness)
+        ? effectiveAccel(settings.hardwareAccel, getHwAccel())
+        : ('software' as HardwareAccel)
 
     let headersSent = false
-    const child: ChildProcess = supervisor.spawn(key, args, ffmpegPath, {
-      onExit: (code, signal, stderrTail) => {
-        if (signal !== null) {
-          // We killed it: a skip, a channel change, or the client disconnecting.
-          if (!headersSent && !res.writableEnded) res.destroy()
-          return
+    /** One fallback per request, ever — a software job that fails is just a failure. */
+    let fellBack = false
+
+    /**
+     * Spawn under `key`, and on a pre-first-byte hardware failure respawn once
+     * on software.
+     *
+     * The first-fragment gate below is what makes this safe: until ffmpeg has
+     * emitted a byte, nothing has been promised to the client, so a dead
+     * hardware job can be replaced silently. The viewer pays one extra spawn
+     * cycle of tune-in latency instead of watching a channel that never starts.
+     */
+    function spawnFor(usingAccel: HardwareAccel): void {
+      const args =
+        path === 'transcode'
+          ? transcodeArgs(row.path, seekS, settings, loudness, usingAccel, getHwAccel().vaapiDevice)
+          : remuxArgs(row.path, seekS, !needsAudioTranscode(row.acodec), settings, loudness)
+
+      const child: ChildProcess = supervisor.spawn(key, args, ffmpegPath as string, {
+        onExit: (code, signal, stderrTail) => {
+          if (signal !== null) {
+            // We killed it: a skip, a channel change, or the client disconnecting.
+            // A respawn kills its predecessor, so this also covers the job the
+            // fallback just replaced — which must not tear down the response.
+            if (!headersSent && !res.writableEnded && !fellBack) res.destroy()
+            return
+          }
+          if (code === 0) {
+            if (!headersSent) sendText(res, 500, `ffmpeg produced no output\n${stderrTail}`)
+            return
+          }
+
+          // The hardware failure the probe could not rule out: a driver that
+          // refuses this particular profile, an exhausted encoder session, a GPU
+          // that went away since launch. Nothing is on the wire yet, so retry.
+          if (usingAccel !== 'software' && !headersSent && !fellBack) {
+            fellBack = true
+            console.error(
+              `[stream] ${usingAccel} transcode failed for episode ${row.id} ` +
+                `(${row.path}); falling back to software\n${stderrTail}`
+            )
+            spawnFor('software')
+            return
+          }
+
+          const error = new Error(
+            `ffmpeg ${path} job exited ${code} for episode ${row.id} ` +
+              `(${row.path})\n${stderrTail}`
+          )
+          console.error(error.message)
+          // Failing before the first byte is still reportable over HTTP; failing
+          // mid-stream can only be a truncated body.
+          if (!headersSent) sendText(res, 500, error.message)
+          else if (!res.writableEnded) res.destroy()
         }
-        if (code === 0) {
-          if (!headersSent) sendText(res, 500, `ffmpeg produced no output\n${stderrTail}`)
-          return
-        }
-        const error = new Error(
-          `ffmpeg ${path} job exited ${code} for episode ${row.id} ` +
-            `(${row.path})\n${stderrTail}`
-        )
-        console.error(error.message)
-        // Failing before the first byte is still reportable over HTTP; failing
-        // mid-stream can only be a truncated body.
-        if (!headersSent) sendText(res, 500, error.message)
-        else if (!res.writableEnded) res.destroy()
+      })
+
+      // Cap the channel after the spawn, never before: whatever was just asked
+      // for is by definition the job to keep, and anything above the cap is a
+      // leftover whose client went away without us hearing about it.
+      if (channelId !== null) supervisor.trimGroup(channelPrefix(channelId), MAX_JOBS_PER_CHANNEL)
+
+      const stdout = child.stdout
+      if (!stdout) {
+        sendText(res, 500, 'ffmpeg produced no stdout')
+        return
       }
-    })
 
-    // Cap the channel after the spawn, never before: whatever was just asked for
-    // is by definition the job to keep, and anything above the cap is a leftover
-    // whose client went away without us hearing about it.
-    if (channelId !== null) supervisor.trimGroup(channelPrefix(channelId), MAX_JOBS_PER_CHANNEL)
+      // Hold the response open until ffmpeg actually emits its first fragment, so
+      // an immediate failure (bad file, unsupported copy) surfaces as a 500 with
+      // ffmpeg's own stderr rather than a zero-byte 200 — and so a hardware job
+      // can still be swapped for a software one at this point.
+      stdout.once('data', (first: Buffer) => {
+        stdout.pause()
+        headersSent = true
+        res.writeHead(200, headers)
+        res.write(first)
+        // pipe() also ends the response when ffmpeg's stdout ends, which is the
+        // normal end of an episode.
+        stdout.pipe(res)
+      })
 
-    const stdout = child.stdout
-    if (!stdout) {
-      sendText(res, 500, 'ffmpeg produced no stdout')
-      return
+      // The client going away — skip, channel change, window closed — is the
+      // signal to stop encoding. `killIfCurrent` so a stale request can't kill
+      // the stream a newer tune-in already started on this channel's slot.
+      req.on('close', () => supervisor.killIfCurrent(key, child))
     }
 
-    // Hold the response open until ffmpeg actually emits its first fragment, so
-    // an immediate failure (bad file, unsupported copy) surfaces as a 500 with
-    // ffmpeg's own stderr rather than a zero-byte 200.
-    stdout.once('data', (first: Buffer) => {
-      stdout.pause()
-      headersSent = true
-      res.writeHead(200, headers)
-      res.write(first)
-      // pipe() also ends the response when ffmpeg's stdout ends, which is the
-      // normal end of an episode.
-      stdout.pipe(res)
-    })
-
-    // The client going away — skip, channel change, window closed — is the
-    // signal to stop encoding. `killIfCurrent` so a stale request can't kill the
-    // stream a newer tune-in already started on this channel's slot.
-    req.on('close', () => supervisor.killIfCurrent(key, child))
+    spawnFor(accel)
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -564,13 +622,21 @@ function channelKey(channelId: number, episodeId: number): string {
   return `${channelPrefix(channelId)}${episodeId}`
 }
 
-/** Everything before the input, shared by both piped paths. */
-function inputArgs(file: string, seekS: number): string[] {
+/**
+ * Everything before the input, shared by both piped paths.
+ *
+ * `decode` is the hardware decode prefix (empty on the software path and on
+ * every remux). It sits after the global flags and before `-ss`/`-i` because
+ * `-hwaccel` and friends are *per-input* options: they apply to the next `-i`,
+ * so they have to precede it.
+ */
+function inputArgs(file: string, seekS: number, decode: string[] = []): string[] {
   return [
     '-hide_banner',
     '-nostdin',
     '-loglevel',
     'error',
+    ...decode,
     // `-ss` before `-i` for a fast keyframe-aligned seek (plan §10 accepts the
     // resulting coarse seek in the MVP).
     ...(seekS > 0 ? ['-ss', String(seekS)] : []),
@@ -692,26 +758,30 @@ export function remuxArgs(
 /**
  * Transcode: the fallback for HEVC, MPEG-2, 10-bit and friends — the files whose
  * *video* Chromium genuinely cannot decode. Sized for one stream at a time —
- * preset/CRF/audio bitrate come from Settings, and `-pix_fmt yuv420p` forces
- * 8-bit 4:2:0 because that is what Chromium's H.264 decoder accepts.
+ * preset/CRF/audio bitrate come from Settings, and on the software path
+ * `-pix_fmt yuv420p` forces 8-bit 4:2:0 because that is what Chromium's H.264
+ * decoder accepts.
+ *
+ * `accel` is the **effective** backend, already resolved against the startup
+ * probe by the caller (see `effectiveAccel`) — this builder trusts it and does
+ * not second-guess whether the hardware exists. Only two segments move: the
+ * decode prefix ahead of `-i` and the video branch. Seek, maps, the AAC chain
+ * and the fMP4 mux are identical on all three, and with `'software'` the whole
+ * array is byte-identical to what this function returned before hardware
+ * support existed.
  */
 export function transcodeArgs(
   file: string,
   seekS: number,
   settings: AppSettings,
-  loudness: string[] | null = null
+  loudness: string[] | null = null,
+  accel: HardwareAccel = 'software',
+  vaapiDevice: string | null = null
 ): string[] {
   return [
-    ...inputArgs(file, seekS),
+    ...inputArgs(file, seekS, hwDecodeArgs(accel, vaapiDevice)),
     ...MAP_ARGS,
-    '-c:v',
-    'libx264',
-    '-preset',
-    settings.transcodePreset,
-    '-crf',
-    String(settings.transcodeCrf),
-    '-pix_fmt',
-    'yuv420p',
+    ...hwVideoArgs(accel, settings),
     ...aacArgs(settings, loudness),
     ...FMP4_OUTPUT_ARGS
   ]

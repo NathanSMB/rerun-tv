@@ -299,8 +299,14 @@ banner with it, so the Database row grows a line saying what was restored and
 where the previous database was saved. See
 [backup-restore.md](backup-restore.md).
 
-Post-MVP controls — hardware VAAPI encode — ship **visible but disabled**, so
-the settings surface doesn't reshuffle as features land.
+**Hardware encode & decode** is a three-way choice — Software (libx264), VAAPI,
+NVENC — and it only affects episodes on the transcode path; direct and remux
+playback never re-encode video. Each option is annotated with what the startup
+probe found ("available", "not detected"), but every option stays *selectable*:
+a probe can be wrong, and a backend this machine can't honour simply falls back
+to software at stream time. The System card reports both backends' verdicts and
+the render node VAAPI proved out. See
+[hwaccel-plan.html](hwaccel-plan.html).
 
 ## Accessibility
 

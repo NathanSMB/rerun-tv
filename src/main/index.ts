@@ -21,7 +21,7 @@ import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { EVENTS } from '../shared/ipc.js'
 import { ensureKwinPipRule } from './kwin-rule.js'
-import type { SystemInfo } from '../shared/types.js'
+import { PENDING_HW_ACCEL, type HwAccelReport, type SystemInfo } from '../shared/types.js'
 import { closeDb, openDatabase, setDb, type Db } from './db/index.js'
 import { getSettings } from './db/repositories/settings.js'
 import {
@@ -37,6 +37,7 @@ import { Scanner } from './library/scanner.js'
 import { LoudnessScanner } from './library/loudness.js'
 import { startStreamServer, type StreamServer } from './stream/server.js'
 import { checkCodecs, resolveFfmpeg } from './stream/ffmpeg.js'
+import { probeHardwareAccel } from './stream/hwaccel.js'
 import { broadcast, registerHandlers } from './ipc/handlers.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -117,6 +118,8 @@ let streamServer: StreamServer | null = null
 let scanner: Scanner | null = null
 let loudnessScanner: LoudnessScanner | null = null
 let codecStatus: SystemInfo['codecCheck'] = 'pending'
+/** What the GPU probe found. `pending` until it answers, which reads as software. */
+let hwAccelStatus: HwAccelReport = PENDING_HW_ACCEL
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -221,7 +224,11 @@ async function bootstrap(): Promise<void> {
   ensureKwinPipRule()
   const ffmpeg = resolveFfmpeg()
 
-  streamServer = await startStreamServer({ db, getSettings: () => getSettings(db) })
+  streamServer = await startStreamServer({
+    db,
+    getSettings: () => getSettings(db),
+    getHwAccel: () => hwAccelStatus
+  })
 
   scanner = new Scanner({
     db,
@@ -251,6 +258,7 @@ async function bootstrap(): Promise<void> {
     loudness: loudnessScanner,
     stream: streamServer,
     codecCheck: () => codecStatus,
+    hwAccel: () => hwAccelStatus,
     restart
   })
 
@@ -264,6 +272,25 @@ async function bootstrap(): Promise<void> {
     })
     .catch(() => {
       codecStatus = 'failed'
+    })
+
+  // Same contract as the codec check: non-fatal, never blocks the window, and
+  // until it answers every transcode runs on software (`effectiveAccel`).
+  void probeHardwareAccel(ffmpeg.ffmpegPath)
+    .then((report) => {
+      hwAccelStatus = report
+      const found = [
+        report.vaapi === 'ok' ? `vaapi (${report.vaapiDevice})` : null,
+        report.nvenc === 'ok' ? 'nvenc' : null
+      ].filter(Boolean)
+      console.log(
+        found.length > 0
+          ? `[hwaccel] available: ${found.join(', ')}`
+          : '[hwaccel] no hardware encoder available; transcodes run on libx264'
+      )
+    })
+    .catch(() => {
+      hwAccelStatus = { vaapi: 'failed', nvenc: 'failed', vaapiDevice: null }
     })
 
   if (settings.watchFolders) scanner.startWatching()

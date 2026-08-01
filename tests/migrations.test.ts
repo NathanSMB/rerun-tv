@@ -16,6 +16,7 @@ import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import { migrate, type Db } from '@main/db/index.js'
 import { MIGRATIONS } from '@main/db/schema.js'
+import { getSettings } from '@main/db/repositories/settings.js'
 import { decidePlaybackPath } from '@shared/playback.js'
 
 /** An in-memory database with the first `version` migrations applied and no more. */
@@ -214,6 +215,69 @@ describe('migration 4 — cached loudness', () => {
     const after = columnsOf(db, 'episodes')
     migrate(db)
     expect(columnsOf(db, 'episodes')).toEqual(after)
+    db.close()
+  })
+})
+
+/**
+ * Migration 5 retires the dead `hardwareEncode` toggle (docs/hwaccel-plan.html).
+ *
+ * The replacement key is *not* written by the migration, and that is the point:
+ * `getSettings` merges stored rows over `DEFAULT_SETTINGS`, so an absent
+ * `hardwareAccel` already reads as `'software'` — which is exactly what the old
+ * disabled toggle did. All the migration has to do is stop the stale row from
+ * riding along in that spread forever.
+ */
+describe('migration 5 — the hardware acceleration setting', () => {
+  function settingsOf(db: Db): Record<string, string> {
+    const rows = db.prepare('SELECT key, value FROM settings').all() as {
+      key: string
+      value: string
+    }[]
+    return Object.fromEntries(rows.map((row) => [row.key, row.value]))
+  }
+
+  it('drops the dead toggle and leaves every other setting alone', () => {
+    const db = openAtVersion(4)
+    const insert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+    insert.run('hardwareEncode', 'false')
+    insert.run('volume', '0.4')
+    insert.run('loudnessEq', 'true')
+
+    migrate(db)
+
+    const after = settingsOf(db)
+    expect(after).not.toHaveProperty('hardwareEncode')
+    expect(after.volume).toBe('0.4')
+    expect(after.loudnessEq).toBe('true')
+    db.close()
+  })
+
+  it('reads as software afterwards, which is what the dead toggle did', () => {
+    const db = openAtVersion(4)
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('hardwareEncode', 'false')
+    migrate(db)
+    expect(getSettings(db).hardwareAccel).toBe('software')
+    db.close()
+  })
+
+  it('is a no-op on a database that never had the toggle', () => {
+    const db = openAtVersion(4)
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('volume', '0.9')
+    expect(() => migrate(db)).not.toThrow()
+    expect(settingsOf(db)).toEqual({ volume: '0.9' })
+    db.close()
+  })
+
+  it('preserves a hardwareAccel a newer version already stored', () => {
+    const db = openAtVersion(4)
+    const insert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)')
+    insert.run('hardwareEncode', 'false')
+    insert.run('hardwareAccel', '"nvenc"')
+
+    migrate(db)
+
+    expect(getSettings(db).hardwareAccel).toBe('nvenc')
     db.close()
   })
 })

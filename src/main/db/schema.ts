@@ -163,5 +163,19 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE episodes ADD COLUMN loudness_lra        REAL;
   ALTER TABLE episodes ADD COLUMN loudness_thresh     REAL;
   ALTER TABLE episodes ADD COLUMN loudness_scanned_at INTEGER;
+  `,
+  // -- 5 ---------------------------------------------------------------------
+  //
+  // Hardware encode/decode (docs/hwaccel-plan.html). The old `hardwareEncode`
+  // boolean shipped visible-but-disabled and was never read by anything, so it
+  // is always `false` where it exists; it is replaced by `hardwareAccel`, a
+  // three-way choice of backend.
+  //
+  // Nothing is migrated *into* the new key: `getSettings` merges stored rows
+  // over `DEFAULT_SETTINGS`, so an absent key already reads as 'software' — the
+  // exact behaviour the dead toggle had. This only stops the stale row from
+  // riding along in that spread forever.
+  `
+  DELETE FROM settings WHERE key = 'hardwareEncode';
   `
 ]

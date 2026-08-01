@@ -57,6 +57,8 @@ export interface HandlerContext {
   stream: StreamServer
   /** Resolved once at startup; `pending` until the check finishes. */
   codecCheck: () => SystemInfo['codecCheck']
+  /** Likewise for the GPU probe — `pending` reads as "use software for now". */
+  hwAccel: () => SystemInfo['hwAccel']
   /** Tear down every subsystem and relaunch — how an import is finished. */
   restart: () => Promise<void>
 }
@@ -319,6 +321,7 @@ export function registerHandlers(ctx: HandlerContext): void {
       ffmpegVersion: ff.version,
       ffmpegSource: ff.source,
       codecCheck: ctx.codecCheck(),
+      hwAccel: ctx.hwAccel(),
       dbPath,
       dbSizeBytes,
       streamPort: ctx.stream.port,

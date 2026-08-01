@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware encode &amp; decode — implementation plan · Rerun TV</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f3f2ef;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;   /* Software (libx264) */
+    --series-2:       #eb6834;   /* VAAPI */
+    --series-3:       #1baf7a;   /* NVENC */
+    --seq-450:        #2a78d6;   /* transcode·HEVC segment */
+    --seq-300:        #6da7ec;   /* transcode·MPEG-4 segment */
+    --neutral-fill:   #d8d7d0;   /* untouched (remux) segment */
+    --good:           #0ca30c;
+    --critical:       #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --surface-2:      #242422;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --seq-450:        #3987e5;
+      --seq-300:        #1c5cab;
+      --neutral-fill:   #3a3a37;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --surface-2:      #242422;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --seq-450:        #3987e5;
+    --seq-300:        #1c5cab;
+    --neutral-fill:   #3a3a37;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text-primary);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  header.doc { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); margin: 0; max-width: 700px; }
+  h2 { font-size: 18px; font-weight: 650; margin: 48px 0 8px; letter-spacing: -0.005em; }
+  h3 { font-size: 14px; font-weight: 650; margin: 20px 0 6px; }
+  p  { margin: 8px 0; color: var(--text-secondary); }
+  p strong, li strong, td strong { color: var(--text-primary); font-weight: 600; }
+  code { font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+         background: var(--surface-2); border: 1px solid var(--border);
+         border-radius: 4px; padding: 1px 5px; color: var(--text-primary); }
+  .theme-btn {
+    flex: none; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 8px; padding: 6px 12px; font: 13px system-ui, sans-serif; cursor: pointer;
+  }
+  .theme-btn:hover { color: var(--text-primary); }
+
+  /* ---- KPI tiles ---- */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0 0; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { font-size: 12.5px; color: var(--text-secondary); }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; margin-top: 2px; }
+  .tile .note { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ---- cards & figures ---- */
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin: 12px 0; }
+  figure { margin: 14px 0 6px; }
+  figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  figcaption .t { font-size: 14px; font-weight: 650; color: var(--text-primary); }
+  figcaption .s { font-size: 12.5px; color: var(--text-muted); font-weight: 400; }
+  .chart-note { font-size: 12.5px; color: var(--text-muted); margin: 6px 0 0; }
+  .tbl-toggle {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 7px; padding: 3px 10px; font: 12px system-ui, sans-serif; cursor: pointer; flex: none;
+  }
+  .tbl-toggle:hover { color: var(--text-primary); }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .axis-t { font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .cat-t  { font-size: 12.5px; fill: var(--text-secondary); }
+  .dlabel { font-size: 11.5px; fill: var(--text-secondary); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dlabel-in { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .panel-t { font-size: 12.5px; fill: var(--text-primary); font-weight: 650; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 4px 0 8px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  table.dataview { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+  table.dataview th { text-align: left; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--grid); padding: 5px 10px 5px 0; }
+  table.dataview td { border-bottom: 1px solid var(--grid); padding: 5px 10px 5px 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .hidden { display: none; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.14); padding: 7px 11px; font-size: 12.5px; color: var(--text-secondary);
+  }
+  #tooltip b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+  /* ---- the arg rail (signature diagram) ---- */
+  .rail { display: grid; grid-template-columns: 92px 1fr; gap: 8px 10px; margin: 14px 0 4px; }
+  .rail .who { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; color: var(--text-primary); }
+  .rail .who .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .rail .row { display: flex; flex-wrap: wrap; gap: 4px; align-items: stretch; }
+  .rail .seg {
+    border: 1px solid var(--border); border-radius: 7px; padding: 5px 9px;
+    font: 11.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--surface-2); color: var(--text-secondary); white-space: nowrap;
+  }
+  .rail .seg.swap { border-style: solid; border-width: 1px 1px 1px 3px; background: var(--surface-1); color: var(--text-primary); }
+  .rail .seg.none { border-style: dashed; color: var(--text-muted); background: transparent; }
+  .rail-head { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin: 2px 0 8px; }
+  .rail-head .key { display: inline-flex; align-items: center; gap: 6px; }
+  .rail-head .chip { width: 18px; height: 12px; border: 1px solid var(--border); border-radius: 4px; display: inline-block; background: var(--surface-2); }
+  .rail-head .chip.swap { border-width: 1px 1px 1px 3px; border-left-color: var(--text-muted); background: var(--surface-1); }
+  @media (max-width: 720px) { .rail { grid-template-columns: 1fr; } .rail .who { margin-top: 6px; } }
+
+  /* ---- probe card ---- */
+  .nodes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 4px; }
+  .node { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: color-mix(in srgb, var(--text-primary) 3%, var(--surface-1)); font-size: 13px; color: var(--text-secondary); }
+  .node b { display: block; color: var(--text-primary); }
+  .node .verdict { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: var(--good); }
+  .dot.bad { background: var(--critical); }
+  @media (max-width: 640px) { .nodes { grid-template-columns: 1fr; } }
+
+  /* ---- phases ---- */
+  .phase-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; border-radius: 6px; padding: 2px 8px;
+    background: color-mix(in srgb, var(--series-1) 14%, transparent); color: var(--text-primary);
+  }
+  .effort { font-size: 12px; color: var(--text-muted); }
+  table.tasks { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 12px 0 4px; }
+  table.tasks th { text-align: left; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--grid); padding: 6px 12px 6px 0; }
+  table.tasks td { border-bottom: 1px solid var(--grid); padding: 8px 12px 8px 0; vertical-align: top; color: var(--text-secondary); }
+  table.tasks td:first-child { white-space: nowrap; color: var(--text-primary); }
+  table.map { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 4px; }
+  table.map th { text-align: left; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--grid); padding: 6px 12px 6px 0; }
+  table.map td { border-bottom: 1px solid var(--grid); padding: 6px 12px 6px 0; color: var(--text-secondary); vertical-align: top; }
+  table.map td code { white-space: nowrap; }
+  ul { margin: 6px 0; padding-left: 20px; color: var(--text-secondary); }
+  li { margin: 4px 0; }
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+  @media (max-width: 780px) { .cols2 { grid-template-columns: 1fr; } }
+
+  footer { margin-top: 48px; font-size: 12.5px; color: var(--text-muted); border-top: 1px solid var(--grid); padding-top: 14px; }
+
+  :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .tbl-toggle, .theme-btn { transition: color 120ms ease; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div>
+    <h1>Rerun TV — hardware encode &amp; decode</h1>
+    <p class="sub">Plan of record for replacing the unimplemented “Hardware encode (VAAPI)” toggle with a working
+    three-way dropdown — <strong>Software · VAAPI · NVENC</strong> — that accelerates both the decode and the encode
+    side of the full-transcode path. All numbers below are measured on this machine against the live library.</p>
+  </div>
+  <button class="theme-btn" id="themeBtn" type="button">Theme: auto</button>
+</header>
+
+<div class="kpis">
+  <div class="tile">
+    <div class="label">Episodes on the transcode path</div>
+    <div class="value">476</div>
+    <div class="note">54% of 878 — the only path this setting touches</div>
+  </div>
+  <div class="tile">
+    <div class="label">CPU per software stream</div>
+    <div class="value">1.39 cores</div>
+    <div class="note">libx264 veryfast on 10-bit HEVC 1080p, steady state</div>
+  </div>
+  <div class="tile">
+    <div class="label">Same stream on VAAPI</div>
+    <div class="value">0.03 cores</div>
+    <div class="note">45× less CPU · NVENC: 0.16 cores (9×)</div>
+  </div>
+  <div class="tile">
+    <div class="label">Catch-up speed, NVENC</div>
+    <div class="value">22.9&times;</div>
+    <div class="note">realtime after a seek or drop · software 12.6× · VAAPI 6.2×</div>
+  </div>
+</div>
+
+<h2>What this setting actually touches</h2>
+<div class="card">
+  <p>The playback decision is made at scan time and stored per episode (<code>shared/playback.ts</code>):
+  <strong>direct</strong> files are range-served off disk and <strong>remux</strong> files get a video byte-copy —
+  neither ever runs a video encoder, so hardware acceleration is irrelevant to them. Everything here concerns
+  the <strong>transcode</strong> path in <code>transcodeArgs</code> (<code>src/main/stream/server.ts:698</code>),
+  which since the library grew now carries <strong>476 of 878 episodes</strong>: 293 HEVC (x265 web rips, 143 of them
+  10-bit 1080p) and 183 MPEG-4 ASP (DVD-era XviD). Hardware mode accelerates both halves of that pipeline —
+  the decode via <code>-hwaccel</code>, the encode via <code>h264_vaapi</code> / <code>h264_nvenc</code>. Audio is
+  untouched: AAC encoding is always software (no hardware audio encoder exists), and the fMP4 mux is unchanged.</p>
+
+  <figure id="figMix">
+    <figcaption>
+      <span><span class="t">Library playback-path mix — 878 episodes</span>
+      <span class="s"> · from <code>library.db</code>, 2026-08-01</span></span>
+      <button class="tbl-toggle" data-fig="figMix" type="button">Table view</button>
+    </figcaption>
+    <div class="legend">
+      <span class="key"><span class="sw" style="background:var(--neutral-fill)"></span>Remux — video copied, not affected</span>
+      <span class="key"><span class="sw" style="background:var(--seq-450)"></span>Transcode · HEVC</span>
+      <span class="key"><span class="sw" style="background:var(--seq-300)"></span>Transcode · MPEG-4 ASP</span>
+    </div>
+    <div class="chart"></div>
+    <div class="tableview hidden"></div>
+    <p class="chart-note">Colored segments are the episodes whose playback spawns a video encoder — the population this
+    dropdown affects. The 402 remux episodes (H.264 + AC3, mostly) copy video bytes and stay on the CPU-cheap path
+    regardless of the setting.</p>
+  </figure>
+</div>
+
+<h2>Measured on this machine</h2>
+<div class="card">
+  <p>Benchmark: 60 seconds of the hardest real case in the library — 10-bit HEVC 1080p
+  (<em>Daredevil</em> S01E01) — through the exact fMP4-pipe arg shape the server uses, on this machine
+  (RTX&nbsp;5080 + AMD Granite Ridge iGPU). Steady-state playback is throttled to 1× by TCP backpressure, so
+  <strong>CPU-seconds per content-second is the per-stream CPU cost</strong>; the speed multiple is how fast the encoder
+  refills the buffer after a seek, a stall, or during a prewarm.</p>
+
+  <figure id="figBench">
+    <figcaption>
+      <span><span class="t">Per-stream CPU cost and catch-up speed, by backend</span>
+      <span class="s"> · 60 s of 10-bit HEVC 1080p → H.264/AAC fMP4</span></span>
+      <button class="tbl-toggle" data-fig="figBench" type="button">Table view</button>
+    </figcaption>
+    <div class="chart"></div>
+    <div class="tableview hidden"></div>
+    <p class="chart-note">Two measures, two panels, one axis each. NVENC's CPU share is mostly the 10-bit→8-bit format
+    conversion on download; VAAPI keeps frames on the GPU end-to-end, hence 3% of one core. VAAPI's 6.2× is the AMD
+    iGPU's encoder pace — ample for realtime playback plus a prewarm stream, slower to refill after a deep seek.</p>
+  </figure>
+
+  <table class="dataview">
+    <tr><th>Backend</th><th>Wall (60 s content)</th><th>CPU time</th><th>CPU while encoding</th><th>Speed</th><th>Output bitrate</th></tr>
+    <tr><td><strong>Software</strong> · libx264 veryfast CRF 21</td><td>4.94 s</td><td>83.6 s</td><td>1694%</td><td>12.6×</td><td>8.6 Mb/s</td></tr>
+    <tr><td><strong>NVENC</strong> · h264_nvenc p4 CQ 21, CUDA decode</td><td>2.89 s</td><td>9.3 s</td><td>321%</td><td>22.9×</td><td>11.2 Mb/s</td></tr>
+    <tr><td><strong>VAAPI</strong> · h264_vaapi QP 24, full-GPU path</td><td>9.69 s</td><td>1.8 s</td><td>18%</td><td>6.2×</td><td>5.8 Mb/s</td></tr>
+  </table>
+
+  <h3>The probe finding that shaped the design</h3>
+  <p>VAAPI device selection is not guessable. On this machine <code>/dev/dri/renderD128</code> is the RTX 5080 —
+  its VAAPI driver exposes <em>no H.264 encode entrypoint</em> and fails with
+  <code>No usable encoding entrypoint found for profile VAProfileH264High</code>. The working device is the AMD iGPU
+  on <code>renderD129</code>. So the capability probe must <strong>enumerate render nodes and test-encode on each</strong>,
+  not default to renderD128 the way most VAAPI examples do.</p>
+  <div class="nodes">
+    <div class="node"><b>/dev/dri/renderD128 — NVIDIA RTX 5080</b>
+      VAAPI H.264 encode entrypoint missing (nvidia driver exposes decode only).
+      <span class="verdict"><span class="dot bad"></span>h264_vaapi fails · h264_nvenc OK via CUDA</span></div>
+    <div class="node"><b>/dev/dri/renderD129 — AMD Granite Ridge iGPU</b>
+      Full VAAPI encode path verified, including the 10-bit→NV12 fold and software-decode fallback for XviD.
+      <span class="verdict"><span class="dot ok"></span>h264_vaapi OK — the probe's pick</span></div>
+  </div>
+</div>
+
+<h2>Design — one dropdown, three arg recipes</h2>
+<div class="card">
+  <p>The setting becomes <code>hardwareAccel: 'software' | 'vaapi' | 'nvenc'</code> (replacing
+  <code>hardwareEncode: boolean</code>, which shipped disabled and was never read). Only two segments of the
+  ffmpeg command line swap per backend — the decode prefix ahead of <code>-i</code> and the video branch — while
+  the seek, stream maps, audio chain, and fMP4 mux stay byte-identical. That containment is the whole safety
+  argument: the software row below is exactly today's command.</p>
+
+  <div class="rail-head">
+    <span class="key"><span class="chip"></span>shared — identical across backends</span>
+    <span class="key"><span class="chip swap"></span>swapped per backend</span>
+  </div>
+  <div class="rail">
+    <div class="who"><span class="sw" style="background:var(--series-1)"></span>Software</div>
+    <div class="row">
+      <span class="seg none">no decode prefix</span>
+      <span class="seg">-ss &lt;t&gt; -i file</span>
+      <span class="seg">-map 0:v:0 -map 0:a:0? -map_chapters -1</span>
+      <span class="seg swap" style="border-left-color:var(--series-1)">-c:v libx264 -preset &lt;p&gt; -crf &lt;q&gt; -pix_fmt yuv420p</span>
+      <span class="seg">-c:a aac -b:a &lt;br&gt; -af &lt;loudness,aformat&gt;</span>
+      <span class="seg">-movflags frag… -f mp4 pipe:1</span>
+    </div>
+
+    <div class="who"><span class="sw" style="background:var(--series-2)"></span>VAAPI</div>
+    <div class="row">
+      <span class="seg swap" style="border-left-color:var(--series-2)">-init_hw_device vaapi=va:&lt;node&gt; -hwaccel vaapi -hwaccel_output_format vaapi -filter_hw_device va</span>
+      <span class="seg">-ss &lt;t&gt; -i file</span>
+      <span class="seg">-map …</span>
+      <span class="seg swap" style="border-left-color:var(--series-2)">-vf format=nv12|vaapi,hwupload,scale_vaapi=format=nv12 -c:v h264_vaapi -rc_mode CQP -qp &lt;q+3&gt;</span>
+      <span class="seg">-c:a aac …</span>
+      <span class="seg">-movflags … pipe:1</span>
+    </div>
+
+    <div class="who"><span class="sw" style="background:var(--series-3)"></span>NVENC</div>
+    <div class="row">
+      <span class="seg swap" style="border-left-color:var(--series-3)">-hwaccel cuda</span>
+      <span class="seg">-ss &lt;t&gt; -i file</span>
+      <span class="seg">-map …</span>
+      <span class="seg swap" style="border-left-color:var(--series-3)">-c:v h264_nvenc -preset &lt;p2–p6&gt; -rc vbr -cq &lt;q&gt; -b:v 0 -pix_fmt yuv420p</span>
+      <span class="seg">-c:a aac …</span>
+      <span class="seg">-movflags … pipe:1</span>
+    </div>
+  </div>
+
+  <p>Two deliberate robustness choices, both verified against real files:</p>
+  <ul>
+    <li><strong>VAAPI filter chain tolerates decode fallback.</strong> <code>format=nv12|vaapi,hwupload</code> accepts
+    frames whether the decoder produced VAAPI surfaces or fell back to software (MPEG-4 ASP has no VAAPI decoder —
+    the 183 XviD episodes decode on CPU and still hardware-encode; verified at 38.5×).
+    <code>scale_vaapi=format=nv12</code> folds 10-bit P010 surfaces to 8-bit, which <code>h264_vaapi</code> requires.</li>
+    <li><strong>NVENC takes frames from system memory.</strong> Using plain <code>-hwaccel cuda</code> (no
+    <code>-hwaccel_output_format cuda</code>) means decoded frames land in RAM, so any codec NVDEC can't decode falls
+    back to software decode transparently and the encode still works (XviD verified at 57.7×). The cost is the copy +
+    format conversion — the 321% CPU above — which is still 5× cheaper than software.</li>
+  </ul>
+
+  <h3>Quality mapping — the Settings tiers, per backend</h3>
+  <p>The existing “Transcode quality” dropdown keeps its four tiers; each backend interprets a tier through its own
+  rate control. CRF, CQ, and QP are different scales, so the two hardware columns were <strong>calibrated against
+  libx264's measured bitrate</strong> on real content rather than assumed.</p>
+  <table class="map">
+    <tr><th>Settings tier</th><th>libx264 (today, unchanged)</th><th>h264_nvenc</th><th>h264_vaapi</th></tr>
+    <tr><td>ultrafast · CRF 23</td><td><code>-preset ultrafast -crf 23</code></td><td><code>-preset p2 -rc vbr -cq 23 -b:v 0</code></td><td><code>-rc_mode CQP -qp 22</code></td></tr>
+    <tr><td>veryfast · CRF 21 <em>(default)</em></td><td><code>-preset veryfast -crf 21</code></td><td><code>-preset p4 -rc vbr -cq 21 -b:v 0</code></td><td><code>-rc_mode CQP -qp 20</code></td></tr>
+    <tr><td>fast · CRF 20</td><td><code>-preset fast -crf 20</code></td><td><code>-preset p5 -rc vbr -cq 20 -b:v 0</code></td><td><code>-rc_mode CQP -qp 19</code></td></tr>
+    <tr><td>medium · CRF 19</td><td><code>-preset medium -crf 19</code></td><td><code>-preset p6 -rc vbr -cq 19 -b:v 0</code></td><td><code>-rc_mode CQP -qp 18</code></td></tr>
+  </table>
+
+  <h3>What the calibration pass found</h3>
+  <p>VAAPI's first cut mapped the default tier to <strong>QP 24</strong>, on the theory that a fixed-function encoder
+  wants a few points of slack. Measured against three scenes from a 10-bit HEVC source — picked by sweeping the
+  episode for luma and motion, not by eye — that ran <strong>45–59% below libx264's bitrate</strong> for the same
+  tier, and the missing bits showed up as visible blocking in shadow. <strong>QP 20</strong> lands within ~10% and
+  restores the detail; the whole column shifted four points to keep the tiers ordered. NVENC needed no correction —
+  it erred generous (+39%) and was clean by eye.</p>
+
+  <figure id="figQp">
+    <figcaption>
+      <span><span class="t">Bitrate vs. libx264 at the same quality tier</span>
+      <span class="s"> · three scenes, 10 s each, 10-bit HEVC 1080p → H.264</span></span>
+      <button class="tbl-toggle" data-fig="figQp" type="button">Table view</button>
+    </figcaption>
+    <div class="legend">
+      <span class="key"><span class="sw" style="background:var(--series-2)"></span>VAAPI QP 24 — shipped first, artifacts</span>
+      <span class="key"><span class="sw" style="background:var(--series-3)"></span>VAAPI QP 20 — calibrated</span>
+    </div>
+    <div class="chart"></div>
+    <div class="tableview hidden"></div>
+    <p class="chart-note">Zero is parity with libx264 at the same tier. The residual spread at QP 20 is inherent:
+    x264's CRF adapts per-frame to complexity, while VAAPI's CQP is a constant quantizer with no such feedback, so no
+    single QP tracks CRF across all content.</p>
+  </figure>
+</div>
+
+<!-- ================= PHASE 1 ================= -->
+<h2>Phase 1 — The setting, the arg builders, the dropdown</h2>
+<div class="card">
+  <div class="phase-head"><span class="badge">PHASE 1</span><span class="effort">Effort: small (about half a day) · independently shippable · software path byte-identical</span></div>
+  <p>Everything needed for the feature to work when the user picks a backend that actually exists on their machine.
+  A new <code>stream/hwaccel.ts</code> module owns the three recipes; <code>transcodeArgs</code> composes them; the
+  Settings screen swaps the dead toggle for a live dropdown. No probing yet — Phase 2's job — so the dropdown trusts
+  the user, and Phase 3's fallback is the safety net behind that trust.</p>
+
+  <table class="tasks">
+    <tr><th>Where</th><th>Change</th></tr>
+    <tr><td><code>src/shared/types.ts</code></td><td>New <code>export type HardwareAccel = 'software' | 'vaapi' | 'nvenc'</code>. In <code>AppSettings</code>, replace <code>hardwareEncode: boolean</code> with <code>hardwareAccel: HardwareAccel</code>; <code>DEFAULT_SETTINGS.hardwareAccel = 'software'</code>. Settings reads merge over defaults, so no data migration is needed for the new key.</td></tr>
+    <tr><td><code>src/main/db/schema.ts</code></td><td>Append migration: <code>DELETE FROM settings WHERE key = 'hardwareEncode'</code>. The toggle shipped disabled so the row is always <code>false</code> when present — pure housekeeping, but it keeps a stale key from riding along in <code>getSettings</code>' spread forever.</td></tr>
+    <tr><td><code>src/main/stream/hwaccel.ts</code> <em>(new)</em></td><td>The three recipes as pure builders: <code>hwDecodeArgs(accel, vaapiDevice)</code> (the pre-<code>-i</code> prefix), <code>hwVideoArgs(accel, settings)</code> (<code>-vf</code>/<code>-c:v</code>/rate control, with the tier mapping table above). An unrecognized <code>accel</code> value answers the software recipe — a hand-edited settings row must degrade, never break playback.</td></tr>
+    <tr><td><code>src/main/stream/server.ts</code></td><td><code>transcodeArgs(file, seekS, settings, loudness)</code> composes <code>hwDecodeArgs</code> before <code>inputArgs</code> and <code>hwVideoArgs</code> in place of the current libx264 block. With <code>'software'</code> the output array is byte-identical to today (the existing <code>transcodeArgs</code> tests hold unmodified). Map args, <code>aacArgs</code>, loudness chain, and <code>FMP4_OUTPUT_ARGS</code> untouched.</td></tr>
+    <tr><td><code>src/renderer/…/Settings.tsx</code></td><td>Replace the disabled toggle row (<code>Settings.tsx:342-356</code>) with a <code>selectbox</code> dropdown matching the screen's other selects: <strong>Software (libx264)</strong> / <strong>VAAPI — Intel &amp; AMD GPUs</strong> / <strong>NVENC — NVIDIA GPUs</strong>. Drop the POST-MVP badge. Hint: “GPU decode + encode for the episodes that need a full transcode. Remux and direct playback never re-encode video.”</td></tr>
+    <tr><td><code>tests/stream.test.ts</code></td><td>Arg-builder assertions per backend: VAAPI args contain <code>hwupload</code> + <code>scale_vaapi=format=nv12</code> and never <code>-crf</code>/<code>-pix_fmt</code>; NVENC args contain <code>-cq</code> + mapped <code>-preset pN</code> and never <code>-crf</code>; both keep <code>-map_chapters -1</code>, the AAC layout guard, and <code>pipe:1</code> last; software equals today's array exactly. Loudness filters compose identically on all three.</td></tr>
+  </table>
+
+  <div class="cols2">
+    <div>
+      <h3>Acceptance criteria</h3>
+      <ul>
+        <li><code>npm run typecheck</code> and the full suite green; existing <code>transcodeArgs</code> tests pass unmodified.</li>
+        <li>Dropdown persists across restart; the very next tune-in uses the new args (settings are read per request — no restart needed).</li>
+        <li>On this machine: an HEVC episode plays under all three selections (VAAPI via the Phase-2 device answer; until then <code>RERUN_VAAPI_DEVICE=/dev/dri/renderD129</code>).</li>
+        <li>An XviD episode plays under both hardware selections (decode-fallback chains verified above).</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Risks &amp; notes</h3>
+      <ul>
+        <li>Until Phase 2 lands, VAAPI defaults its device; on multi-GPU machines like this one that guess is wrong. Ship Phases 1+2 in the same release if possible; the env override is the stopgap.</li>
+        <li><s>Rate-control mapping is a starting point</s> — <strong>done:</strong> the calibration pass moved VAAPI's column four points tighter (QP 24 → 20 at the default tier). See “What the calibration pass found” above.</li>
+        <li>The Library screen's TRANSCODE tag is untouched: it describes the file, not the encoder that serves it.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ================= PHASE 2 ================= -->
+<h2>Phase 2 — Probe at startup, tell the truth in Settings</h2>
+<div class="card">
+  <div class="phase-head"><span class="badge">PHASE 2</span><span class="effort">Effort: small-medium (half a day to a day) · same pattern as the existing <code>checkCodecs</code> assertion</span></div>
+  <p>The app already proves at startup that ffmpeg can produce the one stream shape Chromium needs
+  (<code>checkCodecs</code>, a 0.2-second lavfi encode). This phase extends that idea per backend: a tiny test encode
+  through <code>h264_nvenc</code>, and through <code>h264_vaapi</code> on <em>each</em> <code>/dev/dri/renderD*</code>
+  node until one passes — the renderD128/129 finding above is exactly why enumeration, not convention, picks the
+  device. Results surface in <code>SystemInfo</code> and the Settings screen, and the stream server consults them so a
+  selected-but-absent backend routes to software without ever spawning a doomed job.</p>
+
+  <table class="tasks">
+    <tr><th>Where</th><th>Change</th></tr>
+    <tr><td><code>src/main/stream/hwaccel.ts</code></td><td><code>probeHardwareAccel(ffmpegPath)</code>: for NVENC one lavfi test encode; for VAAPI, enumerate render nodes (injectable lister for tests), test-encode on each, record the first passing device. <code>RERUN_VAAPI_DEVICE</code> env override skips enumeration — same escape-hatch convention as <code>RERUN_FFMPEG_PATH</code>. 15 s timeout per candidate, children killed on settle, result cached for the process lifetime.</td></tr>
+    <tr><td><code>src/shared/types.ts</code></td><td><code>SystemInfo</code> gains <code>hwAccel: { nvenc: 'ok' | 'failed' | 'pending'; vaapi: 'ok' | 'failed' | 'pending'; vaapiDevice: string | null }</code>.</td></tr>
+    <tr><td><code>src/main/index.ts</code></td><td>Kick the probe off beside <code>checkCodecs</code> — async, non-fatal, never blocks startup. Store the answer next to <code>codecStatus</code>; hand a getter into the IPC context.</td></tr>
+    <tr><td><code>src/main/ipc/handlers.ts</code></td><td>Thread <code>hwAccel</code> through <code>system.getInfo</code>, like <code>codecCheck</code>.</td></tr>
+    <tr><td><code>src/main/stream/server.ts</code></td><td><code>servePipe</code> resolves the <em>effective</em> backend: selected backend's probe not <code>'ok'</code> → software recipe (and one <code>console.warn</code> naming the reason). Probe <code>'pending'</code> during the first seconds after launch also answers software — a stream must never wait on a probe.</td></tr>
+    <tr><td><code>src/renderer/…/Settings.tsx</code></td><td>Dropdown options annotate availability from <code>system.hwAccel</code> (“NVENC — NVIDIA GPUs · not detected”); options stay selectable — the probe can be wrong, and Phase 3 makes a wrong selection harmless. System card gains a “Hardware encoders” row: status dot per backend, VAAPI's chosen device path shown the way the ffmpeg path is.</td></tr>
+    <tr><td><code>tests/</code></td><td>Probe arg spelling and device-enumeration order as pure tests with an injected node lister; a <code>skipIf</code>-gated integration probe on machines with real hardware; SystemInfo plumbing asserted in <code>handlers</code> tests.</td></tr>
+  </table>
+
+  <div class="cols2">
+    <div>
+      <h3>Acceptance criteria</h3>
+      <ul>
+        <li>On this machine the probe answers: NVENC <strong>ok</strong>, VAAPI <strong>ok</strong> on <code>/dev/dri/renderD129</code> (never 128).</li>
+        <li>Startup latency unchanged — probe runs after the window is up, like <code>checkCodecs</code>.</li>
+        <li>Selecting a failed backend plays via software with a single logged warning, not a broken stream.</li>
+        <li>Settings shows both backends' verdicts within a few seconds of launch.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Risks &amp; notes</h3>
+      <ul>
+        <li>A probe passing on lavfi 64×64 doesn't guarantee every profile/resolution — real-file failures exist (driver quirks, session limits). That residue is Phase 3's job.</li>
+        <li>Render nodes can appear/disappear (eGPU, driver reload). The probe is per-process; a restart re-answers. Good enough for a living-room app.</li>
+        <li>NVENC concurrent-session cap on consumer GPUs is 8 on current drivers; prewarm needs 2 per channel. No headroom issue, noted for exotic multi-channel futures.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ================= PHASE 3 ================= -->
+<h2>Phase 3 — Runtime fallback: a wrong selection can never break playback</h2>
+<div class="card">
+  <div class="phase-head"><span class="badge">PHASE 3</span><span class="effort">Effort: small (a few hours) · rides on the existing first-byte gate in <code>servePipe</code></span></div>
+  <p><code>servePipe</code> already holds the HTTP response open until ffmpeg emits its first fragment, so a
+  hardware job that dies on startup (driver mismatch, exhausted sessions, unplugged eGPU — the failures no probe
+  can promise away) is detectable <em>before</em> any bytes reach the player. This phase turns that gate into a
+  one-shot retry: hardware job exits non-zero with <code>headersSent === false</code> → log the backend and ffmpeg's
+  stderr tail → respawn under the same supervisor key with the software recipe. The viewer sees tune-in take a
+  beat longer; they never see a dead channel.</p>
+
+  <table class="tasks">
+    <tr><th>Where</th><th>Change</th></tr>
+    <tr><td><code>src/main/stream/server.ts</code></td><td>In <code>servePipe</code>'s <code>onExit</code>: if the job used hardware, exited non-zero, and no bytes were sent — respawn once with software args under the same key (a <code>fellBack</code> flag forbids a second retry). Signal-kills (skip, channel change) keep today's behavior; failures after first byte keep today's truncated-body semantics — the MSE pump's retry already covers that. The respawn re-arms the first-fragment gate so a genuine file error still surfaces as a 500 with real stderr.</td></tr>
+    <tr><td>diagnostics</td><td>One <code>console.error</code> per fallback: backend, episode id, stderr tail. It's the breadcrumb that separates “driver broke” from “file broke” when a report comes in.</td></tr>
+    <tr><td><code>tests/stream.test.ts</code></td><td>Integration (skipIf no ffmpeg): settings select VAAPI with <code>RERUN_VAAPI_DEVICE=/dev/null/nope</code> — the request still answers 200 with an <code>ftyp</code> body, and the supervisor saw exactly two spawns for the key. A hard-broken input file under a hardware selection still 500s with ffmpeg's message (fallback doesn't mask real errors).</td></tr>
+    <tr><td><code>scripts/soak.mjs</code></td><td>Accept a backend argument and run the existing 6-episode soak per available backend — the same harness that guards the stall fix guards this.</td></tr>
+  </table>
+
+  <div class="cols2">
+    <div>
+      <h3>Acceptance criteria</h3>
+      <ul>
+        <li>Bogus VAAPI device: every transcode episode still plays; exactly one fallback log line per job.</li>
+        <li>Prewarm + fallback interact safely: a falling-back prewarm job stays within the two-jobs-per-channel cap (<code>trimGroup</code> semantics unchanged).</li>
+        <li>Soak run green on software, NVENC, and VAAPI on this machine.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Risks &amp; notes</h3>
+      <ul>
+        <li>Fallback doubles worst-case tune-in latency for the failing backend (~two spawn cycles). Acceptable: it's the failure path, and the log says why.</li>
+        <li>A hardware job that fails <em>mid-stream</em> is not retried server-side — deliberately. The pump's existing reconnect requests a fresh URL with <code>?t=</code>, and that fresh request gets the fallback logic again.</li>
+        <li>Optional polish, not in scope: surfacing “last transcode fell back to software” in Settings → System.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<h2>Verification &amp; rollout</h2>
+<div class="card">
+  <ul>
+    <li><strong>Order:</strong> Phase 1 and 2 land together in one release if possible (the device answer makes VAAPI trustworthy); Phase 3 immediately after. Each phase is a separate commit with its tests green.</li>
+    <li><strong>Manual matrix on this machine:</strong> {HEVC 10-bit 1080p, XviD SD} × {Software, VAAPI, NVENC} × {tune-in, seek, prewarm handoff} — 18 cells, ~20 minutes with the soak harness doing the watching.</li>
+    <li><strong>Quality eyeball:</strong> one dark scene and one high-motion scene per backend at the default tier before declaring the CQ/QP mapping final; adjust the two hardware columns only.</li>
+    <li><strong>Rollback:</strong> the setting defaults to <code>'software'</code>, which is today's exact command line. Reverting any phase reverts to a working state; no schema or data is at risk (the one migration deletes a dead row).</li>
+  </ul>
+</div>
+
+<footer>
+  Sources: <code>library.db</code> episode/codec census 2026-08-01 (878 episodes) · encode benchmark on this machine,
+  60 s of 10-bit HEVC 1080p and 30 s of XviD SD through the production fMP4 arg shape (logs in <code>/tmp/bench-*.log</code>) ·
+  VAAPI entrypoint probe against renderD128/renderD129. Palette: reference categorical slots 1–3, validated light and dark
+  (all checks pass; light-mode slot 3 sub-3:1 → direct labels + table views ship, per the relief rule).
+</footer>
+
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- theme toggle: auto → light → dark ---------- */
+  var btn = document.getElementById('themeBtn');
+  var modes = ['auto', 'light', 'dark'];
+  var mode = 0;
+  btn.addEventListener('click', function () {
+    mode = (mode + 1) % 3;
+    var m = modes[mode];
+    if (m === 'auto') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = m;
+    btn.textContent = 'Theme: ' + m;
+    renderAll();
+  });
+
+  /* ---------- tooltip ---------- */
+  var tip = document.getElementById('tooltip');
+  function showTip(html, x, y) {
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    var pad = 14;
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = Math.min(x + pad, window.innerWidth - w - 8);
+    var top = y - h - pad < 8 ? y + pad : y - h - pad;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+
+  function attachTips(svg) {
+    svg.querySelectorAll('[data-tip]').forEach(function (el) {
+      el.addEventListener('mousemove', function (e) { showTip(el.dataset.tip, e.clientX, e.clientY); });
+      el.addEventListener('mouseleave', hideTip);
+    });
+  }
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  var SVG = 'http://www.w3.org/2000/svg';
+  function el(name, attrs, text) {
+    var node = document.createElementNS(SVG, name);
+    for (var k in attrs) node.setAttribute(k, attrs[k]);
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  /* ================= figMix — one stacked horizontal bar ================= */
+  var MIX = [
+    { name: 'Remux — video copied', n: 402, color: '--neutral-fill', ink: '--text-secondary',
+      tip: '<b>402 episodes</b> remux (H.264 video copied; 328 get an AC3→AAC audio encode)<br>Not affected by this setting' },
+    { name: 'Transcode · HEVC', n: 293, color: '--seq-450', ink: '#fff',
+      tip: '<b>293 episodes</b> HEVC/x265 (254 AAC + 39 E-AC3; 143 are 10-bit 1080p)<br>Full video re-encode — accelerated by this setting' },
+    { name: 'Transcode · MPEG-4 ASP', n: 183, color: '--seq-300', ink: '--text-primary',
+      tip: '<b>183 episodes</b> DVD-era XviD (MPEG-4 ASP + MP3)<br>Full video re-encode — accelerated by this setting' }
+  ];
+  var MIX_TOTAL = 878;
+
+  function renderMix() {
+    var fig = document.getElementById('figMix');
+    var host = fig.querySelector('.chart');
+    host.innerHTML = '';
+    var W = 940, H = 96, padL = 8, padR = 8, barY = 18, barH = 40;
+    var innerW = W - padL - padR;
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+      'aria-label': 'Stacked bar: 402 remux episodes unaffected; 293 HEVC and 183 MPEG-4 episodes on the accelerated transcode path' });
+
+    var x = padL;
+    MIX.forEach(function (seg, i) {
+      var w = innerW * seg.n / MIX_TOTAL - (i < MIX.length - 1 ? 2 : 0);
+      var fill = seg.color[0] === '-' ? cssVar(seg.color) : seg.color;
+      var r = el('rect', { x: x, y: barY, width: Math.max(0, w), height: barH, rx: 4, fill: fill, 'data-tip': seg.tip });
+      svg.appendChild(r);
+      var inkColor = seg.ink[0] === '-' ? cssVar(seg.ink) : seg.ink;
+      var label = el('text', { x: x + w / 2, y: barY + barH / 2 + 4, 'text-anchor': 'middle',
+        class: 'dlabel-in', fill: inkColor, 'pointer-events': 'none' }, String(seg.n));
+      svg.appendChild(label);
+      x += w + 2;
+    });
+
+    /* baseline captions under the bar ends */
+    svg.appendChild(el('text', { x: padL, y: barY + barH + 22, class: 'axis-t' }, '0'));
+    svg.appendChild(el('text', { x: padL + innerW * 402 / MIX_TOTAL, y: barY + barH + 22, class: 'axis-t', 'text-anchor': 'middle' }, '402 · untouched'));
+    svg.appendChild(el('text', { x: W - padR, y: barY + barH + 22, class: 'axis-t', 'text-anchor': 'end' }, '878 episodes · 476 accelerated (54%)'));
+
+    host.appendChild(svg);
+    attachTips(svg);
+
+    var tbl = fig.querySelector('.tableview');
+    tbl.innerHTML = '<table class="dataview"><tr><th>Segment</th><th>Episodes</th><th>Share</th><th>Affected by the setting</th></tr>' +
+      '<tr><td>Remux (H.264 video copied)</td><td>402</td><td>45.8%</td><td>No — video is a byte copy</td></tr>' +
+      '<tr><td>Transcode · HEVC / x265</td><td>293</td><td>33.4%</td><td>Yes — full decode + encode</td></tr>' +
+      '<tr><td>Transcode · MPEG-4 ASP (XviD)</td><td>183</td><td>20.8%</td><td>Yes — full decode + encode</td></tr>' +
+      '<tr><td><strong>Total</strong></td><td><strong>878</strong></td><td>100%</td><td>476 accelerated (54%)</td></tr></table>';
+  }
+
+  /* ================= figBench — two panels, one measure each ================= */
+  var BACKENDS = [
+    { name: 'Software', sub: 'libx264 veryfast', color: '--series-1', cpu: 139, speed: 12.6,
+      cpuShort: '139%', cpuLabel: '139% of one core', speedLabel: '12.6×' },
+    { name: 'VAAPI', sub: 'AMD iGPU, full-GPU path', color: '--series-2', cpu: 3.0, speed: 6.2,
+      cpuShort: '3%', cpuLabel: '3% of one core', speedLabel: '6.2×' },
+    { name: 'NVENC', sub: 'RTX 5080, CUDA decode', color: '--series-3', cpu: 15.5, speed: 22.9,
+      cpuShort: '15.5%', cpuLabel: '15.5% of one core', speedLabel: '22.9×' }
+  ];
+
+  function renderBench() {
+    var fig = document.getElementById('figBench');
+    var host = fig.querySelector('.chart');
+    host.innerHTML = '';
+    var W = 940, H = 190;
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+      'aria-label': 'Two bar panels: per-stream CPU cost (software 139%, VAAPI 3%, NVENC 15.5% of one core) and catch-up speed (12.6, 6.2, 22.9 times realtime)' });
+
+    var panels = [
+      { title: 'CPU per stream at 1× playback (% of one core)', key: 'cpu', labelKey: 'cpuShort', max: 150, x0: 10, x1: 455 },
+      { title: 'Catch-up speed (× realtime)', key: 'speed', labelKey: 'speedLabel', max: 25, x0: 495, x1: 925 }
+    ];
+    var rowH = 34, barH = 18, topY = 34, labelW = 78;
+
+    panels.forEach(function (p) {
+      svg.appendChild(el('text', { x: p.x0, y: 16, class: 'panel-t' }, p.title));
+      var plotX = p.x0 + labelW, plotW = p.x1 - plotX;
+      /* baseline */
+      svg.appendChild(el('line', { x1: plotX, y1: topY - 6, x2: plotX, y2: topY + rowH * 3 - 10, stroke: cssVar('--baseline'), 'stroke-width': 1 }));
+
+      BACKENDS.forEach(function (b, i) {
+        var y = topY + i * rowH;
+        var v = b[p.key];
+        var w = Math.max(3, plotW * v / p.max);
+        svg.appendChild(el('text', { x: p.x0, y: y + barH - 4, class: 'cat-t' }, b.name));
+        svg.appendChild(el('rect', { x: plotX, y: y, width: w, height: barH, rx: 4, fill: cssVar(b.color),
+          'data-tip': '<b>' + b.name + '</b> · ' + b.sub + '<br>' + p.title.split(' (')[0] + ': <b>' + (p.key === 'cpu' ? b.cpuLabel : b.speedLabel) + '</b>' }));
+        svg.appendChild(el('text', { x: plotX + w + 7, y: y + barH - 4, class: 'dlabel' }, b[p.labelKey]));
+      });
+    });
+
+    host.appendChild(svg);
+    attachTips(svg);
+
+    var tbl = fig.querySelector('.tableview');
+    tbl.innerHTML = '<table class="dataview"><tr><th>Backend</th><th>CPU per stream (steady state)</th><th>Catch-up speed</th></tr>' +
+      BACKENDS.map(function (b) {
+        return '<tr><td>' + b.name + ' · ' + b.sub + '</td><td>' + b.cpuLabel + '</td><td>' + b.speedLabel + '</td></tr>';
+      }).join('') + '</table>';
+  }
+
+  /* ================= figQp — deviation from libx264, diverging around zero ================= */
+  var QP = [
+    { scene: 'Dark + moving', at: '41:50', sw: 8061, qp24: -56, qp20: 0 },
+    { scene: 'Dark + moving', at: '2:22', sw: 3428, qp24: -59, qp20: -22 },
+    { scene: 'High motion', at: '18:28', sw: 8165, qp24: -45, qp20: 10 }
+  ];
+
+  function renderQp() {
+    var fig = document.getElementById('figQp');
+    if (!fig) return;
+    var host = fig.querySelector('.chart');
+    host.innerHTML = '';
+    var W = 940, rowH = 46, topY = 26, H = topY + QP.length * rowH + 14;
+    var labelW = 150, plotX = labelW, plotW = W - labelW - 60;
+    // Domain -60…+20, so zero sits where parity actually is.
+    var lo = -60, hi = 20;
+    var xOf = function (v) { return plotX + plotW * (v - lo) / (hi - lo); };
+    var zero = xOf(0);
+
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img',
+      'aria-label': 'Bitrate deviation from libx264: VAAPI QP 24 runs 45 to 59 percent under; QP 20 runs between 22 percent under and 10 percent over' });
+
+    // Zero reference — the only gridline that means anything here.
+    svg.appendChild(el('line', { x1: zero, y1: topY - 8, x2: zero, y2: topY + QP.length * rowH - 6,
+      stroke: cssVar('--baseline'), 'stroke-width': 1 }));
+    svg.appendChild(el('text', { x: zero, y: topY - 12, 'text-anchor': 'middle', class: 'axis-t' }, 'parity with libx264'));
+
+    QP.forEach(function (row, i) {
+      var y = topY + i * rowH;
+      svg.appendChild(el('text', { x: 0, y: y + 14, class: 'cat-t' }, row.scene));
+      svg.appendChild(el('text', { x: 0, y: y + 29, class: 'axis-t' }, row.at + ' · ' + row.sw + ' kb/s'));
+
+      [['qp24', '--series-2', 0], ['qp20', '--series-3', 15]].forEach(function (spec) {
+        var v = row[spec[0]];
+        var x0 = Math.min(zero, xOf(v)), x1 = Math.max(zero, xOf(v));
+        svg.appendChild(el('rect', { x: x0, y: y + spec[2], width: Math.max(2, x1 - x0), height: 12, rx: 3,
+          fill: cssVar(spec[1]),
+          'data-tip': '<b>' + row.scene + '</b> ' + row.at + '<br>' +
+            (spec[0] === 'qp24' ? 'VAAPI QP 24' : 'VAAPI QP 20') + ': <b>' +
+            (v > 0 ? '+' : '') + v + '%</b> vs libx264' }));
+        svg.appendChild(el('text', { x: (v < 0 ? x0 - 6 : x1 + 6), y: y + spec[2] + 10,
+          'text-anchor': v < 0 ? 'end' : 'start', class: 'dlabel' }, (v > 0 ? '+' : '') + v + '%'));
+      });
+    });
+
+    host.appendChild(svg);
+    attachTips(svg);
+
+    fig.querySelector('.tableview').innerHTML =
+      '<table class="dataview"><tr><th>Scene</th><th>libx264 CRF 21</th><th>VAAPI QP 24</th><th>VAAPI QP 20</th></tr>' +
+      QP.map(function (r) {
+        return '<tr><td>' + r.scene + ' · ' + r.at + '</td><td>' + r.sw + ' kb/s</td><td>' +
+          r.qp24 + '%</td><td>' + (r.qp20 > 0 ? '+' : '') + r.qp20 + '%</td></tr>';
+      }).join('') + '</table>';
+  }
+
+  /* ---------- table-view toggles ---------- */
+  document.querySelectorAll('.tbl-toggle').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var fig = document.getElementById(button.dataset.fig);
+      var chart = fig.querySelector('.chart');
+      var table = fig.querySelector('.tableview');
+      var showingTable = !table.classList.contains('hidden');
+      table.classList.toggle('hidden', showingTable);
+      chart.classList.toggle('hidden', !showingTable);
+      button.textContent = showingTable ? 'Table view' : 'Chart view';
+    });
+  });
+
+  function renderAll() { renderMix(); renderBench(); renderQp(); }
+  renderAll();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+})();
+</script>
+</body>
+</html>

@@ -24,7 +24,7 @@ import {
   transcodeArgs,
   type StreamServer
 } from '@main/stream/server.js'
-import { DEFAULT_SETTINGS } from '@shared/types.js'
+import { DEFAULT_SETTINGS, type AppSettings, type HwAccelReport } from '@shared/types.js'
 
 const DIRECT_BODY = Buffer.from('0123456789'.repeat(100)) // 1000 bytes, easy to index
 
@@ -34,6 +34,12 @@ const noFfmpeg = ffmpeg.ffmpegPath === null
 let db: Db
 let server: StreamServer
 let dir: string
+/**
+ * Live settings and probe report, so a test can select a backend for one request
+ * and put them back afterwards — both are read per request by the server.
+ */
+let settings: AppSettings = DEFAULT_SETTINGS
+let hwAccel: HwAccelReport = { vaapi: 'failed', nvenc: 'failed', vaapiDevice: null }
 let directId: number
 let missingFileId: number
 let remuxId = 0
@@ -136,7 +142,11 @@ beforeAll(async () => {
     remuxAc3Id = insertEpisode(ac3, 'remux', 'matroska,webm', 1, 5, 'ac3')
   }
 
-  server = await startStreamServer({ db, getSettings: () => DEFAULT_SETTINGS })
+  server = await startStreamServer({
+    db,
+    getSettings: () => settings,
+    getHwAccel: () => hwAccel
+  })
 })
 
 afterAll(async () => {
@@ -358,6 +368,88 @@ describe.skipIf(noFfmpeg)('piped paths', () => {
     const res = await fetch(server.urlFor(id))
     expect(res.status).toBe(500)
     expect(await res.text()).toMatch(/ffmpeg/i)
+  })
+})
+
+/**
+ * Phase 3 of docs/hwaccel-plan.html: the failures a startup probe cannot rule
+ * out — a driver that refuses one particular profile, an exhausted encoder
+ * session, a GPU unplugged since launch — must cost a beat of tune-in latency,
+ * never a dead channel.
+ *
+ * The lever is a VAAPI device that does not exist. The probe report claims it
+ * works, so the server builds a hardware command; ffmpeg then fails on
+ * `-init_hw_device` before emitting a byte, which is precisely the window the
+ * fallback lives in.
+ */
+describe.skipIf(noFfmpeg)('hardware fallback', () => {
+  /** Select a backend for one request, then put the world back. */
+  async function withAccel<T>(
+    accel: AppSettings['hardwareAccel'],
+    report: HwAccelReport,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    settings = { ...DEFAULT_SETTINGS, hardwareAccel: accel }
+    hwAccel = report
+    try {
+      return await fn()
+    } finally {
+      settings = DEFAULT_SETTINGS
+      hwAccel = { vaapi: 'failed', nvenc: 'failed', vaapiDevice: null }
+    }
+  }
+
+  const BOGUS: HwAccelReport = {
+    vaapi: 'ok',
+    nvenc: 'failed',
+    vaapiDevice: '/dev/dri/definitely-not-a-render-node'
+  }
+
+  it('serves the episode on software when the hardware job dies at startup', async () => {
+    await withAccel('vaapi', BOGUS, async () => {
+      const res = await fetch(server.urlFor(transcodeId, 0, 31))
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('video/mp4')
+      const body = Buffer.from(await res.arrayBuffer())
+      // A real fMP4 body, produced by the libx264 job that replaced the dead one.
+      expect(body.subarray(4, 8).toString('latin1')).toBe('ftyp')
+    })
+  })
+
+  it('leaves no orphaned job behind after a fallback', async () => {
+    await withAccel('vaapi', BOGUS, async () => {
+      const res = await fetch(server.urlFor(transcodeId, 0, 32))
+      await res.arrayBuffer()
+      // Both the failed hardware job and its software replacement are done; the
+      // channel's slot must be empty, not holding a corpse.
+      expect(server.activeKeys().filter((key) => key.startsWith('channel:32:'))).toEqual([])
+    })
+  })
+
+  /**
+   * The fallback must not become a way for genuine errors to disappear: a file
+   * ffmpeg cannot read fails on software too, and that is the message the user
+   * needs to see.
+   */
+  it('still reports a real file error rather than masking it', async () => {
+    await withAccel('vaapi', BOGUS, async () => {
+      const broken = join(dir, 'broken-hw.mkv')
+      writeFileSync(broken, Buffer.from('this is not a matroska file either'))
+      const id = insertEpisode(broken, 'transcode', 'matroska,webm', 3, 1)
+      const res = await fetch(server.urlFor(id, 0, 33))
+      expect(res.status).toBe(500)
+      expect(await res.text()).toMatch(/ffmpeg/i)
+    })
+  })
+
+  /** A remux never runs a video encoder, so a hardware selection cannot reach it. */
+  it('does not touch the remux path', async () => {
+    await withAccel('vaapi', BOGUS, async () => {
+      const res = await fetch(server.urlFor(remuxId, 0, 34))
+      expect(res.status).toBe(200)
+      const body = Buffer.from(await res.arrayBuffer())
+      expect(body.subarray(4, 8).toString('latin1')).toBe('ftyp')
+    })
   })
 })
 

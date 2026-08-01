@@ -17,7 +17,7 @@ instant.
 | --- | --- | --- |
 | **direct** | Chromium-native container *and* codecs — `mp4`/`m4v`/`mov`/`webm` with h264/vp8/vp9/av1 + aac/mp3/opus/vorbis/flac (or no audio at all) | Serve the file with HTTP range support. Seeking is native. |
 | **remux** | The **video** codec is one Chromium decodes, but something else isn't: the container (the MKV case) or the soundtrack (the AC3 case) | `-c:v copy` into a fragmented MP4 pipe, plus `-c:a aac` only when the audio needs it. Stream copy is I/O-bound, so it starts in milliseconds. |
-| **transcode** | The **video** codec itself is unplayable — HEVC, MPEG-2, 10-bit… | `ffmpeg libx264 -preset veryfast -crf 21` + `aac 192k`, also into an fMP4 pipe. |
+| **transcode** | The **video** codec itself is unplayable — HEVC, MPEG-2, 10-bit… | `ffmpeg libx264 -preset veryfast -crf 21` + `aac 192k`, also into an fMP4 pipe. Optionally GPU-accelerated — see below. |
 
 **The video codec alone decides between remux and transcode**, because it is the
 only stream whose re-encode is expensive. That split is phase 1 of the stall fix:
@@ -242,6 +242,42 @@ keep working.
 test asset. It runs in the background after the window opens and a failure is
 **non-fatal** — per plan §10, anything unplayable simply routes to the transcode
 path. The result surfaces in Settings → System.
+
+## Hardware encode & decode
+
+The `hardwareAccel` setting — `software` | `vaapi` | `nvenc` — chooses the
+encoder for the **transcode** path only. A `direct` file never meets ffmpeg and a
+`remux` copies its video stream byte-for-byte, so neither has an encoder to
+accelerate. `stream/hwaccel.ts` owns the three recipes, and exactly two segments
+of the command line move: the decode prefix ahead of `-i`, and the video branch.
+The seek, the stream maps, the AAC chain (there is no hardware audio encoder) and
+the fMP4 mux are identical on all three — which is what makes `software` provably
+the command line the app shipped with.
+
+Three things carry the feature past "it works on my machine":
+
+- **The probe enumerates, it does not guess.** `probeHardwareAccel()` runs a real
+  test encode per backend at startup, and for VAAPI it tries *every*
+  `/dev/dri/renderD*` node until one passes. The device is not conventional: on a
+  machine with a discrete NVIDIA card and an AMD iGPU, `renderD128` is the NVIDIA
+  — whose VAAPI driver exposes decode but **no H.264 encode entrypoint** — while
+  `renderD129` is the iGPU that works. Hardcoding renderD128, as every VAAPI
+  example does, would report "unavailable" on a machine with a working encoder in
+  it. `RERUN_VAAPI_DEVICE` overrides the search.
+- **Both chains tolerate a software decode.** VAAPI's
+  `format=nv12|vaapi,hwupload` accepts frames from either kind of decoder, and
+  `scale_vaapi=format=nv12` folds 10-bit P010 down to the 8-bit surface
+  `h264_vaapi` requires. NVENC deliberately omits `-hwaccel_output_format cuda`,
+  so frames land in system memory and a codec NVDEC can't decode (every XviD rip)
+  still hardware-*encodes*.
+- **A wrong selection can never break playback.** `effectiveAccel()` degrades a
+  backend the probe didn't prove — `pending` included, so a tune-in during the
+  first seconds after launch starts on a path that certainly works. Past that,
+  `servePipe` retries once on software if a hardware job exits non-zero *before
+  its first byte*, which the existing first-fragment gate makes safe: nothing has
+  been promised to the client yet. Failures after the first byte are left alone —
+  the pump's reconnect requests a fresh URL, and that request gets the fallback
+  logic again.
 
 ## Seeking in the player
 
