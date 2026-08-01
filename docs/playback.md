@@ -190,6 +190,43 @@ again (see [development.md](development.md#the-renderer-layer-testsrenderer)).
 Change what this section says and that harness has to be taught the new
 behaviour by hand.
 
+## Picture-in-picture across a handoff
+
+The floating window shows *one element*, and a handoff swaps which of the two
+stacked surfaces is on air — so the session has to move with it. Three facts,
+all measured against Electron 38.8.6 rather than taken from the spec (the spike
+is reproducible from [pip-plan.html](pip-plan.html) §2):
+
+**Document PiP does not work.** `documentPictureInPicture.requestWindow()` throws
+`InvalidStateError: Internal error: no window`. That rules out floating the whole
+stage — our OSD included — and forces the per-element approach everything below
+is shaped around.
+
+**A fresh entry needs user activation; a transfer does not.**
+`video.requestPictureInPicture()` outside a gesture throws `NotAllowedError:
+Must be handling a user gesture if there isn't already an element in
+Picture-in-Picture` — but while a session exists, *another* element may take it
+over with no activation at all. So the handoff transfers, and the rule that
+falls out of it is the one `player/pip.ts` is built to keep: **never exit before
+requesting.** Exit first and the gesture-free window closes with the session; the
+picture could not come back until the viewer pressed something.
+
+**A transfer fires `leavepictureinpicture` on the old element**, before the new
+element's `enterpictureinpicture` and before the promise resolves — measured
+`enter:a`, `promise:a`, `leave:a`, `enter:b`, `promise:b`. Read naively that
+middle event is the viewer closing the window, and reading it that way hauls the
+picture back inline in the middle of every handoff. The controller's
+`requesting` phase is that disambiguation; it is the same shape as `wantsPlayRef`
+above, and for the same reason — the event does not carry intent, so the state
+around it has to.
+
+A `src` swap on the element in PiP keeps the session, so seeks, Retry and the
+one-episode-channel reload all survive. As with `ended`, none of this is
+discoverable from `tests/`: happy-dom has no PiP at all, so the controller is
+DOM-free and driven by these orderings in `tests/pip.test.ts`, while
+`tests/renderer/pip.test.tsx` models them — including the gesture rule — and
+holds the Player's wiring to them.
+
 ## Finding ffmpeg
 
 `resolveFfmpeg()` prefers the **system binary** — on Arch that's

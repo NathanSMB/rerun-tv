@@ -35,6 +35,20 @@
  *    the already-buffered element simply starts playing — no tune-in latency, no
  *    black frame. With `prewarmNext` off nothing is prewarmed and the second
  *    surface stays empty, which is exactly the single-element behaviour.
+ *
+ * 5. **Picture-in-picture is a session that moves between those two elements.**
+ *    Unlike fullscreen there is no wrapper to hand it: PiP floats one `<video>`.
+ *    So the session has to follow every swap, and it can — a transfer to another
+ *    element needs no user gesture while a session is live, which a *fresh* entry
+ *    does (docs/pip-plan.html §2). All of that intent lives in `player/pip.ts`;
+ *    this screen only executes the commands it returns, and is the only place
+ *    that touches `requestPictureInPicture()`.
+ *
+ * While PiP is floating the viewer may leave for the guide, and then this screen
+ * stays *mounted but hidden* (`floating`) so the streams, the handoffs and the
+ * sleep timer all keep running. Hidden means `opacity: 0`, never `display: none`
+ * — the same rule the standby surface follows, and what keeps frames flowing to
+ * the floating window.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -48,6 +62,7 @@ import VideoSurface, {
   type VideoSource,
   type VideoSurfaceHandle
 } from '../player/VideoSurface.js'
+import { createPipMachine, isFloating, type PipEvent } from '../player/pip.js'
 import { endsPlayableUnit, useStore } from '../store.js'
 import './Player.css'
 
@@ -146,11 +161,35 @@ function reconcile(stage: StageState, playing: NowPlaying | null): StageState {
   return writeSlot(writeSlot(stage, stage.active, slotFor(playing)), standbySlot, null)
 }
 
+/**
+ * The Media Session, when there is one.
+ *
+ * Guarded rather than assumed: the renderer test harness runs in happy-dom,
+ * which has no `navigator.mediaSession` at all, and this is a garnish — the
+ * floating window's skip button and the OS media keys — not something the player
+ * may refuse to mount without.
+ */
+function mediaSession(): MediaSession | null {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return null
+  const session = navigator.mediaSession
+  return typeof session?.setActionHandler === 'function' ? session : null
+}
+
 // ---------------------------------------------------------------------------
 // Player
 // ---------------------------------------------------------------------------
 
-export default function Player(): JSX.Element | null {
+export interface PlayerProps {
+  /**
+   * Mounted only to keep the channel alive while the picture floats in a PiP
+   * window and the viewer browses somewhere else. The screen is off-stage: no
+   * keyboard map (a <kbd>Space</kbd> in the Library must not pause the
+   * channel), no fullscreen, no chrome worth revealing.
+   */
+  floating?: boolean
+}
+
+export default function Player({ floating = false }: PlayerProps): JSX.Element | null {
   const nowPlaying = useStore((s) => s.nowPlaying)
   const pendingNext = useStore((s) => s.pendingNext)
   const upNext = useStore((s) => s.upNext)
@@ -163,6 +202,8 @@ export default function Player(): JSX.Element | null {
   const advance = useStore((s) => s.advance)
   const prewarm = useStore((s) => s.prewarm)
   const leavePlayer = useStore((s) => s.leavePlayer)
+  const navigate = useStore((s) => s.navigate)
+  const setPipActive = useStore((s) => s.setPipActive)
   const armSleep = useStore((s) => s.armSleep)
   const adjustSleep = useStore((s) => s.adjustSleep)
   const sleepNow = useStore((s) => s.sleepNow)
@@ -194,6 +235,15 @@ export default function Player(): JSX.Element | null {
   const [paused, setPaused] = useState(false)
   const [failed, setFailed] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+
+  /**
+   * The PiP session controller. Created once — it holds the phase that tells a
+   * transfer's `leavepictureinpicture` apart from the viewer closing the window,
+   * so re-creating it on a render would lose exactly the thing it is for.
+   */
+  const [pip] = useState(createPipMachine)
+  /** Mirror of `isFloating(pip.state)`, because the machine is not React state. */
+  const [pipFloating, setPipFloating] = useState(false)
 
   const [osdVisible, setOsdVisible] = useState(true)
   const [sleepOpen, setSleepOpen] = useState(false)
@@ -241,11 +291,138 @@ export default function Player(): JSX.Element | null {
 
   const showToast = prewarmNext && upNext != null && !failed && inUpNextWindow && !sleepPending
 
-  /** The element on air. Everything transport-related goes through this. */
-  const activeVideo = useCallback((): HTMLVideoElement | null => {
-    const handle = stage.active === 'a' ? surfaceA.current : surfaceB.current
+  /** One surface's element, by slot. Null until that surface has mounted. */
+  const videoForSlot = useCallback((slot: string): HTMLVideoElement | null => {
+    const handle = slot === 'a' ? surfaceA.current : surfaceB.current
     return handle?.element ?? null
-  }, [stage.active])
+  }, [])
+
+  /** The element on air. Everything transport-related goes through this. */
+  const activeVideo = useCallback(
+    (): HTMLVideoElement | null => videoForSlot(stage.active),
+    [videoForSlot, stage.active]
+  )
+
+  // ---- picture-in-picture -------------------------------------------------
+
+  /**
+   * Feed the controller one event and carry out whatever it asks for. The only
+   * place in the app that touches the PiP DOM API.
+   *
+   * It recurses through its own name — a request resolving is another event —
+   * and the recursion is bounded: a transfer can queue at most one further
+   * transfer, and both terminate in `active` or `idle`.
+   */
+  const pipStep = useCallback(
+    function step(event: PipEvent): void {
+      const command = pip.send(event)
+      const floatingNow = isFloating(pip.state)
+      setPipFloating(floatingNow)
+      // The store's copy is what keeps this screen mounted while the viewer is
+      // off browsing (App.tsx). Written here because the machine is the truth.
+      setPipActive(floatingNow)
+      if (!command) return
+
+      switch (command.type) {
+        case 'enter':
+        case 'transfer': {
+          const video = videoForSlot(command.slot)
+          if (!video || typeof video.requestPictureInPicture !== 'function') {
+            step({ type: 'failed' })
+            return
+          }
+          void video.requestPictureInPicture().then(
+            () => step({ type: 'entered', slot: command.slot }),
+            (error: unknown) => {
+              // `NotAllowedError` here means the entry escaped its gesture — a
+              // bug in the caller, not in the viewer's setup, so it is worth
+              // saying out loud rather than failing silently.
+              console.warn('[player] picture-in-picture refused:', error)
+              step({ type: 'failed' })
+            }
+          )
+          break
+        }
+        case 'exit':
+          if (document.pictureInPictureElement) {
+            void document.exitPictureInPicture().catch(() => undefined)
+          }
+          break
+        case 'returnInline':
+          // The picture is on the page again, so the page had better be showing
+          // it. A no-op when the player is already the visible screen, which is
+          // the common case; the one that matters is closing the floating window
+          // from the guide.
+          if (useStore.getState().screen !== 'player') navigate('player')
+          break
+      }
+    },
+    [pip, videoForSlot, setPipActive, navigate]
+  )
+
+  /**
+   * The button and <kbd>P</kbd>. Both arrive inside a user gesture, which is the
+   * only moment a *fresh* session may be opened, so the request must not be
+   * deferred to an effect (docs/pip-plan.html §2, fact R5).
+   */
+  const togglePip = useCallback(() => {
+    // Fullscreen and a floating window are mutually exclusive states of the same
+    // picture; asking for one means leaving the other.
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+    pipStep({ type: 'toggle', slot: stage.active })
+  }, [pipStep, stage.active])
+
+  /**
+   * `leavepictureinpicture`, from anywhere in the tree.
+   *
+   * Listened for on the document in the capture phase rather than on each
+   * `<video>`: the elements come and go through ref callbacks, and this way a
+   * surface that mounts later cannot miss its listener. Chromium was measured
+   * firing these with `bubbles: true` on the element, so both phases would work
+   * — capture is the one that does not depend on that.
+   */
+  useEffect(() => {
+    const onLeave = (event: Event): void => {
+      const target = event.target
+      for (const slot of ['a', 'b']) {
+        if (videoForSlot(slot) === target) {
+          pipStep({ type: 'left', slot })
+          return
+        }
+      }
+    }
+    document.addEventListener('leavepictureinpicture', onLeave, true)
+    return () => document.removeEventListener('leavepictureinpicture', onLeave, true)
+  }, [pipStep, videoForSlot])
+
+  /**
+   * Leaving the screen for good closes the window. A blackout means dark, and a
+   * floating window is a light source like any other; `teardown` deliberately
+   * does not steer navigation on the way out.
+   *
+   * Keyed on `pip` alone (which never changes) so this runs exactly once, at
+   * unmount — a dependency on `pipStep` would tear the session down every time
+   * one of its inputs changed.
+   */
+  useEffect(() => {
+    return () => {
+      const command = pip.send({ type: 'teardown' })
+      if (command?.type === 'exit' && document.pictureInPictureElement) {
+        void document.exitPictureInPicture().catch(() => undefined)
+      }
+      useStore.getState().setPipActive(false)
+    }
+  }, [pip])
+
+  /**
+   * A dead stream in a floating window is a frozen frame with no explanation —
+   * the Retry/Skip card is on the page it isn't showing. So the picture comes
+   * home to meet it.
+   */
+  useEffect(() => {
+    if (!failed || !pipFloating) return
+    pipStep({ type: 'toggle', slot: stage.active })
+  }, [failed, pipFloating, pipStep, stage.active])
 
   // ---- OSD visibility -----------------------------------------------------
 
@@ -386,6 +563,10 @@ export default function Player(): JSX.Element | null {
     // The standby was muted while hidden; it is the picture now.
     applyVolume(video)
     if (wantsPlayRef.current && video.paused) void video.play().catch(() => undefined)
+    // …and if the picture is floating, the window has to come with it. The
+    // controller answers with a *transfer* — never an exit followed by a fresh
+    // entry, which would need a gesture nobody made at an automatic handoff.
+    pipStep({ type: 'swapped', slot: stage.active })
     // Keyed on the swap alone: `applyVolume` changing is the volume effect's job,
     // and re-running this on it would fight the transport.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -415,17 +596,31 @@ export default function Player(): JSX.Element | null {
 
   // ---- transport ----------------------------------------------------------
 
+  /**
+   * A *human* asking for playback or for silence — the OSD button, <kbd>Space</kbd>,
+   * a media key, or the floating window's own play/pause.
+   *
+   * `wantsPlayRef` is set here and nowhere else, and that is load-bearing: it is
+   * what the sleep timer's paused branch reads to tell a viewer who walked away
+   * from the several pauses Chromium performs on its own (see "Expiry while
+   * paused" below).
+   */
+  const setPlaying = useCallback(
+    (wanted: boolean) => {
+      const video = activeVideo()
+      if (!video) return
+      wantsPlayRef.current = wanted
+      if (wanted) void video.play().catch(() => setFailed(true))
+      else video.pause()
+    },
+    [activeVideo]
+  )
+
   const togglePlay = useCallback(() => {
     const video = activeVideo()
     if (!video) return
-    if (video.paused) {
-      wantsPlayRef.current = true
-      void video.play().catch(() => setFailed(true))
-    } else {
-      wantsPlayRef.current = false
-      video.pause()
-    }
-  }, [activeVideo])
+    setPlaying(video.paused)
+  }, [activeVideo, setPlaying])
 
   /**
    * Perform the seek. `direct` files are real files behind range requests, so
@@ -497,6 +692,55 @@ export default function Player(): JSX.Element | null {
   const skip = useCallback(() => runAdvance(false), [runAdvance])
   const handleEnded = useCallback(() => runAdvance(true), [runAdvance])
 
+  // ---- media session ------------------------------------------------------
+
+  /**
+   * The transport controls we don't draw.
+   *
+   * Chromium's floating PiP window has its own play/pause, and shows a skip
+   * button *only* when a `nexttrack` handler is registered — so this is what puts
+   * one there. Routing those buttons through `setPlaying`/`skip` rather than
+   * letting them poke the element directly is what keeps `wantsPlayRef` honest:
+   * a pause from the floating window is a human pausing, and must read as one.
+   *
+   * (If a future Chromium bypasses the session for its overlay buttons, the
+   * element pauses anyway and the OSD stays truthful; the only thing lost is the
+   * sleep timer's paused branch firing for that pause — it would wait for the
+   * end of the episode instead, which is the safe direction to be wrong in.)
+   *
+   * On Linux this also lands on MPRIS, so the keyboard's own media keys work.
+   */
+  useEffect(() => {
+    const session = mediaSession()
+    if (!session) return
+    session.setActionHandler('play', () => setPlaying(true))
+    session.setActionHandler('pause', () => setPlaying(false))
+    session.setActionHandler('nexttrack', () => skip())
+    return () => {
+      session.setActionHandler('play', null)
+      session.setActionHandler('pause', null)
+      session.setActionHandler('nexttrack', null)
+    }
+  }, [setPlaying, skip])
+
+  /** What the floating window and the OS media popup are titled. */
+  useEffect(() => {
+    const session = mediaSession()
+    if (!session || !nowPlaying || typeof MediaMetadata === 'undefined') return
+    const { episode, channelNumber, channelName } = nowPlaying
+    session.metadata = new MediaMetadata({
+      title: episode.title ?? episode.code,
+      artist: episode.showTitle,
+      album: `CH ${String(channelNumber).padStart(2, '0')} · ${channelName}`
+    })
+  }, [nowPlaying])
+
+  useEffect(() => {
+    const session = mediaSession()
+    if (!session) return
+    session.playbackState = paused ? 'paused' : 'playing'
+  }, [paused])
+
   /**
    * The moon, and <kbd>S</kbd>.
    *
@@ -542,10 +786,13 @@ export default function Player(): JSX.Element | null {
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined)
     } else {
+      // The other direction of the same exclusivity as `togglePip`: the picture
+      // cannot be both filling the screen and floating beside it.
+      if (pipFloating) pipStep({ type: 'toggle', slot: stage.active })
       // The stage, never a video — see the file header.
       void stageRef.current?.requestFullscreen().catch(() => undefined)
     }
-  }, [])
+  }, [pipFloating, pipStep, stage.active])
 
   useEffect(() => {
     const onChange = (): void => {
@@ -567,8 +814,13 @@ export default function Player(): JSX.Element | null {
    * Bound on `window` for the lifetime of the screen. Keystrokes are ignored
    * when a text field or one of our sliders has focus, so the scrub bar's own
    * ←/→ never doubles as "skip episode".
+   *
+   * A *floating* player binds nothing at all: it is mounted only to keep the
+   * channel running, and a window-level map from an off-stage screen would make
+   * <kbd>Space</kbd> in the Library pause the television.
    */
   useEffect(() => {
+    if (floating) return
     const onKeyDown = (e: globalThis.KeyboardEvent): void => {
       const target = e.target as HTMLElement | null
       if (
@@ -609,6 +861,12 @@ export default function Player(): JSX.Element | null {
           e.preventDefault()
           toggleMute()
           break
+        case 'p':
+        case 'P':
+          e.preventDefault()
+          // Inside the keydown handler, so the entry still counts as a gesture.
+          togglePip()
+          break
         case 's':
         case 'S':
           e.preventDefault()
@@ -628,7 +886,12 @@ export default function Player(): JSX.Element | null {
           if (document.fullscreenElement) {
             void document.exitFullscreen().catch(() => undefined)
           } else if (Date.now() - leftFullscreenAtRef.current > 400) {
-            void leavePlayer()
+            // With the picture floating, Esc is "go and browse", not "stop
+            // watching": the channel keeps playing in the corner and this screen
+            // stays mounted behind the guide. Only a viewer with nothing floating
+            // means to end the session.
+            if (pipFloating) navigate('guide')
+            else void leavePlayer()
           }
           break
         default:
@@ -639,12 +902,16 @@ export default function Player(): JSX.Element | null {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
+    floating,
     reveal,
     togglePlay,
     skip,
     toggleFullscreen,
     toggleMute,
     toggleSleepPanel,
+    togglePip,
+    pipFloating,
+    navigate,
     sleepOpen,
     setVolume,
     leavePlayer,
@@ -713,7 +980,8 @@ export default function Player(): JSX.Element | null {
   return (
     <div
       ref={stageRef}
-      className={`stage${chromeVisible ? '' : ' idle'}`}
+      className={`stage${chromeVisible ? '' : ' idle'}${floating ? ' is-offscreen' : ''}`}
+      aria-hidden={floating}
       onMouseMove={reveal}
       onPointerDown={reveal}
     >
@@ -739,6 +1007,37 @@ export default function Player(): JSX.Element | null {
           Up next on CH {dial} · <b>{upNext.showTitle}</b> <code>{upNext.code}</code>
           {upNext.title ? ` “${upNext.title}”` : ''}
           {standbySlot !== null && <span className="toast-ready"> · ready</span>}
+        </div>
+      )}
+
+      {/*
+        Chromium paints its own "Playing in picture-in-picture" over the blanked
+        element — outside the DOM, so it cannot be styled or suppressed — which
+        means this card must not repeat it. It carries what the browser's line
+        does not: which channel is in the window, and the two things worth doing
+        from here. Its wrapper is click-through, so the OSD underneath — scrub,
+        volume, the sleep timer — keeps working on the same element.
+      */}
+      {pipFloating && !failed && (
+        <div className="pip-placard">
+          <div className="pp-card">
+            <div className="pp-title">Keep watching while you browse</div>
+            <div className="pp-sub">
+              CH {dial} · {episodeLine}
+            </div>
+            <div className="pp-actions">
+              <button type="button" className="btn btn-tune" onClick={togglePip}>
+                Bring it back
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => navigate('guide')}
+              >
+                Browse the guide
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -895,6 +1194,9 @@ export default function Player(): JSX.Element | null {
               <kbd>S</kbd>sleep
             </span>
             <span>
+              <kbd>P</kbd>pip
+            </span>
+            <span>
               <kbd>F</kbd>fullscreen
             </span>
             <span>
@@ -905,6 +1207,18 @@ export default function Player(): JSX.Element | null {
           <span className="timecode">
             <b>{formatDuration(position)}</b> / {formatDuration(totalS)}
           </span>
+
+          <button
+            type="button"
+            className={`osd-btn pip${pipFloating ? ' is-floating' : ''}`}
+            aria-label="Picture-in-picture"
+            aria-pressed={pipFloating}
+            onClick={togglePip}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M19 11h-8v6h8v-6zm2-8H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16.02H3V4.97h18v14.05z" />
+            </svg>
+          </button>
 
           <button
             type="button"

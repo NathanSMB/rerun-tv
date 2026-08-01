@@ -263,12 +263,21 @@ class Cdp {
     })
   }
 
-  /** Evaluate an expression in the page and return its value. */
+  /**
+   * Evaluate an expression in the page and return its value.
+   *
+   * `userGesture` is on so `--eval` can reach the APIs Chromium gates behind
+   * user activation — `requestPictureInPicture()` and `requestFullscreen()`,
+   * neither of which can be driven from a bare evaluate. The cost is that this
+   * harness cannot observe the *absence* of activation; that rule is pinned in
+   * `tests/renderer/pip.test.tsx`, where the model enforces it.
+   */
   async evaluate(expression) {
     const result = await this.send('Runtime.evaluate', {
       expression,
       returnByValue: true,
-      awaitPromise: true
+      awaitPromise: true,
+      userGesture: true
     })
     if (result.exceptionDetails) {
       throw new Error(

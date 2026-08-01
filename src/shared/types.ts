@@ -317,6 +317,16 @@ export interface SystemInfo {
   streamPort: number | null
   /** Set once this database arrived via an import; null on a normal database. */
   lastRestore: RestoreReceipt | null
+  /**
+   * The desktop session, and the window system Chromium actually connected to.
+   *
+   * They differ exactly when `pipKeepOnTop` has sent a Wayland session through
+   * XWayland — which is the only reason the renderer asks. Settings shows the
+   * toggle only on a Wayland session, because on X11 the app is already where
+   * the setting would put it.
+   */
+  session: 'wayland' | 'x11' | 'other'
+  windowSystem: 'wayland' | 'x11' | 'other'
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +354,19 @@ export interface AppSettings {
    * direct-play file down the remux pipe. See `stream/loudness.ts`.
    */
   loudnessEq: boolean
+  /**
+   * Let the picture-in-picture window pin itself above other windows — which on
+   * Linux is really the question "X11 or Wayland?".
+   *
+   * A Wayland client cannot raise itself above other clients; there is no
+   * protocol for it, so Chromium's request is silently a no-op and the floating
+   * window is one any other window can bury. The same build under XWayland gets
+   * `_NET_WM_STATE_ABOVE`/`STAYS_ON_TOP`/`STICKY` for free. So this setting
+   * selects the platform at launch (`main/boot-config.ts`), and costs XWayland's
+   * fractional scaling to buy it. Ignored outside a Wayland session, and it
+   * takes effect on the next start.
+   */
+  pipKeepOnTop: boolean
   startScreen: 'guide' | 'channels' | 'library' | 'settings'
   /** Seconds of idle before the OSD fades. */
   osdHideAfterS: number
@@ -386,6 +409,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hardwareEncode: false,
   prewarmNext: true,
   loudnessEq: false,
+  pipKeepOnTop: true,
   startScreen: 'guide',
   osdHideAfterS: 3,
   sleepTimerDefaultMin: 30

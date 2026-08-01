@@ -29,6 +29,8 @@ import type {
 } from '../../shared/types.js'
 import type { Db } from '../db/index.js'
 import { backupsDir, databasePath, stagedImportMetaPath, stagedImportPath } from '../paths.js'
+import { currentWindowSystem, isWaylandSession, writeBootConfig } from '../boot-config.js'
+import { syncKwinPipRule } from '../kwin-rule.js'
 import { discardStagedImport, getRestoreReceipt, inspectAndStage } from '../services/restore.js'
 import { getSettings, setSetting } from '../db/repositories/settings.js'
 import * as libraryRepo from '../db/repositories/library.js'
@@ -298,6 +300,16 @@ export function registerHandlers(ctx: HandlerContext): void {
       if (settings.loudnessEq) ctx.loudness.start()
       else ctx.loudness.stop()
     }
+    // The opposite case: a setting that cannot take effect until the *next*
+    // launch, because it decides which window system Chromium connects to. The
+    // database keeps owning it; this only leaves a copy somewhere that can be
+    // read before the database exists (`boot-config.ts`).
+    if (key === 'pipKeepOnTop') {
+      writeBootConfig({ pipKeepOnTop: settings.pipKeepOnTop })
+      // The KWin half, unlike the platform half, applies immediately — the rule
+      // is read by the compositor, not by our command line.
+      syncKwinPipRule(settings.pipKeepOnTop)
+    }
     return settings
   })
 
@@ -322,7 +334,9 @@ export function registerHandlers(ctx: HandlerContext): void {
       dbPath,
       dbSizeBytes,
       streamPort: ctx.stream.port,
-      lastRestore: getRestoreReceipt(db)
+      lastRestore: getRestoreReceipt(db),
+      session: isWaylandSession() ? 'wayland' : process.platform === 'linux' ? 'x11' : 'other',
+      windowSystem: currentWindowSystem()
     }
   })
 

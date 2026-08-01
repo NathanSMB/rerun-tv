@@ -8,7 +8,7 @@
  * scheduler. Two bugs lived in the gap and shipped past a green suite
  * (docs/playback.md § "Two things Chromium does around `ended`").
  *
- * Two things are scripted; everything between them is production code:
+ * Three things are scripted; everything between them is production code:
  *
  * 1. **The media elements.** happy-dom supplies DOM globals so `react-dom` can
  *    mount the real component, but its `<video>` is an inert stub — so `paused`,
@@ -18,7 +18,10 @@
  *    the decision reads, and a fake would have to restate it. It takes its
  *    plain-`src` branch here (happy-dom has no `MediaSource`); the pump that
  *    branch skips is DOM-free and pinned by `mse.test.ts`.
- * 2. **The preload bridge** (`fixtures.tsx`), at the same `RerunApi` seam
+ * 2. **Picture-in-picture**, which happy-dom does not implement at all — model
+ *    below, and it enforces Chromium's gesture rule rather than merely allowing
+ *    what the Player asks for.
+ * 3. **The preload bridge** (`fixtures.tsx`), at the same `RerunApi` seam
  *    `handoff.test.ts` fakes.
  *
  * Tests never hand-fire raw events. They speak the vocabulary this module
@@ -140,6 +143,130 @@ function videos(): HTMLVideoElement[] {
   return Array.from(document.querySelectorAll('video'))
 }
 
+// ---------------------------------------------------------------------------
+// The measured picture-in-picture model
+// ---------------------------------------------------------------------------
+
+/**
+ * PiP as Electron 38 was measured performing it (docs/pip-plan.html §2).
+ *
+ * Three facts are baked in, and each one is a rule the Player has to obey rather
+ * than a convenience:
+ *
+ * 1. **A fresh entry throws `NotAllowedError` outside a user gesture**, while a
+ *    transfer to another element with a session already live does not. So the
+ *    model tracks activation, and only the vocabulary's clicks and keystrokes
+ *    supply it. A Player that deferred its entry to an effect fails here exactly
+ *    as it would in the app.
+ * 2. **A transfer emits `leavepictureinpicture` on the old element**, before the
+ *    new element's `enterpictureinpicture` and before the promise resolves:
+ *    measured `enter:a`, `promise:a`, `leave:a`, `enter:b`, `promise:b`. That
+ *    middle event is the one a naive implementation reads as "the viewer closed
+ *    the window", which would break every handoff.
+ * 3. The events **bubble**, which is what lets the Player listen once on the
+ *    document instead of chasing elements through ref callbacks.
+ */
+interface PipModel {
+  /** Every session change, in order: `enter:<slot>`, `leave:<slot>`, `exit`. */
+  log: string[]
+  element(): HTMLVideoElement | null
+  /** The window closing itself — the ✕, "back to tab", or the OS. */
+  close(): void
+}
+
+let pipInstalled = false
+let pipElement: HTMLVideoElement | null = null
+let pipLog: string[] = []
+/** Non-zero while a click or keystroke the vocabulary dispatched is in flight. */
+let gestureDepth = 0
+
+const slotOf = (el: HTMLVideoElement | null): string =>
+  el === null ? 'none' : ['a', 'b'][videos().indexOf(el)] ?? '?'
+
+function firePip(el: HTMLVideoElement, type: string): void {
+  el.dispatchEvent(new Event(type, { bubbles: true }))
+}
+
+function installPipModel(): PipModel {
+  if (!pipInstalled) {
+    pipInstalled = true
+
+    Object.defineProperty(document, 'pictureInPictureEnabled', {
+      configurable: true,
+      get: () => true
+    })
+    Object.defineProperty(document, 'pictureInPictureElement', {
+      configurable: true,
+      get: () => pipElement
+    })
+
+    HTMLVideoElement.prototype.requestPictureInPicture = function (
+      this: HTMLVideoElement
+    ): Promise<PictureInPictureWindow> {
+      if (pipElement === null && gestureDepth === 0) {
+        const error = new Error(
+          "Must be handling a user gesture if there isn't already an element in Picture-in-Picture."
+        )
+        error.name = 'NotAllowedError'
+        return Promise.reject(error)
+      }
+      const previous = pipElement
+      return new Promise((resolve) => {
+        // A round trip through Chromium's window manager: the events land on a
+        // later task than the call, and the promise settles after them.
+        setTimeout(() => {
+          if (previous && previous !== this) {
+            pipElement = null
+            pipLog.push(`leave:${slotOf(previous)}`)
+            firePip(previous, 'leavepictureinpicture')
+          }
+          pipElement = this
+          pipLog.push(`enter:${slotOf(this)}`)
+          firePip(this, 'enterpictureinpicture')
+          resolve({ width: 512, height: 288 } as PictureInPictureWindow)
+        }, 0)
+      })
+    }
+
+    document.exitPictureInPicture = function (): Promise<void> {
+      const leaving = pipElement
+      pipElement = null
+      pipLog.push('exit')
+      if (leaving) firePip(leaving, 'leavepictureinpicture')
+      return Promise.resolve()
+    }
+  }
+
+  pipElement = null
+  pipLog = []
+  gestureDepth = 0
+  return {
+    get log() {
+      return pipLog
+    },
+    element: () => pipElement,
+    close: () => {
+      if (pipElement === null) return
+      pipLog.push(`closed:${slotOf(pipElement)}`)
+      pipElement = null
+    }
+  }
+}
+
+/**
+ * Run something with user activation, the way a real click or keystroke carries
+ * it. Synchronous on purpose: Chromium's activation does not survive an await,
+ * and neither should this — an entry that escaped its gesture must fail here.
+ */
+function withGesture<T>(run: () => T): T {
+  gestureDepth += 1
+  try {
+    return run()
+  } finally {
+    gestureDepth -= 1
+  }
+}
+
 /**
  * A stream that has opened: fresh timestamps, paused at zero, and the load
  * events that follow. `VideoSurface` forwards only the active surface's, which
@@ -183,13 +310,22 @@ function letPlaysTake(): void {
 
 /**
  * The screen switch, as `App.tsx` makes it: the Player owns the window while
- * `screen === 'player'` and is unmounted the moment it doesn't — which is what
+ * `screen === 'player'`, and is unmounted the moment it doesn't — which is what
  * a blackout looks like from in here. The other screens are not this layer's
  * business, so they are not mounted.
+ *
+ * The exception is the one App.tsx makes: with the picture floating in a PiP
+ * window the Player stays mounted, off-stage, so the channel keeps running while
+ * the viewer browses. It is rendered from the same slot either way — remounting
+ * it would drop the elements the floating window is playing — and a blackout
+ * still outranks it, because the sleep timer wins.
  */
 function Shell(): JSX.Element | null {
   const screen = useStore((s) => s.screen)
-  return screen === 'player' ? <Player /> : null
+  const pipActive = useStore((s) => s.pipActive)
+  if (screen === 'blackout') return null
+  if (screen === 'player') return <Player />
+  return pipActive ? <Player floating /> : null
 }
 
 type StoreState = ReturnType<typeof useStore.getState>
@@ -231,6 +367,20 @@ export interface Scenario {
   sleepPanel(): HTMLElement | null
   /** The moon button. */
   sleepButton(): HTMLElement
+
+  // ---- picture-in-picture ----
+  /** Press the PiP button in the OSD row — a gesture, like the real one. */
+  clickPip(): Promise<void>
+  /** Which surface the floating window is showing, or null for none. */
+  pipSlot(): string | null
+  /** Every session change the model saw: `enter:a`, `leave:a`, `exit`. */
+  pipLog(): string[]
+  /** The floating window's ✕ (and "back to tab") — no gesture, as in Chromium. */
+  closePipWindow(): Promise<void>
+  /** Ask for PiP from outside any gesture, the way an effect would. */
+  enterPipWithoutGesture(): Promise<void>
+  /** The stream dying under the player: what raises the Retry/Skip card. */
+  breakStream(): Promise<void>
   /** T−30s: reserve the next pick into the standby surface. */
   prewarm(): Promise<void>
   /** A human asking to pause — the OSD button, the only thing that means it. */
@@ -259,6 +409,7 @@ export async function openPlayer(
   settings: Partial<AppSettings> = {}
 ): Promise<Scenario> {
   installMediaModel()
+  const pip = installPipModel()
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
   const bridge = scriptedBridge(deck)
@@ -272,6 +423,7 @@ export async function openPlayer(
     pendingNext: null,
     sleepUntil: null,
     sleepMinutes: null,
+    pipActive: false,
     channels: [],
     volume: DEFAULT_SETTINGS.volume,
     muted: DEFAULT_SETTINGS.muted,
@@ -335,7 +487,7 @@ export async function openPlayer(
   const click = async (label: string): Promise<void> => {
     const el = button(label)
     await act(async () => {
-      el.click()
+      withGesture(() => el.click())
       await macrotask()
     })
     await settle()
@@ -444,7 +596,11 @@ export async function openPlayer(
     press: async (key) => {
       const target = document.activeElement ?? document.body
       await act(async () => {
-        target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+        // A keystroke carries user activation, which is what lets <kbd>P</kbd>
+        // open a fresh session at all.
+        withGesture(() =>
+          target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+        )
         await macrotask()
       })
       await settle()
@@ -473,6 +629,50 @@ export async function openPlayer(
     sleepPanel: () => document.querySelector<HTMLElement>('.sleep-panel'),
 
     sleepButton: sleepButtonEl,
+
+    // ---- picture-in-picture ----
+
+    clickPip: () => click('Picture-in-picture'),
+
+    pipSlot: () => {
+      const el = pip.element()
+      return el === null ? null : slotOf(el)
+    },
+
+    pipLog: () => [...pip.log],
+
+    /**
+     * Chromium gives us one event for both the ✕ and "back to tab", and no way
+     * to tell them apart — so there is one way to fire it here too.
+     */
+    closePipWindow: async () => {
+      const el = pip.element()
+      if (!el) throw new Error('nothing is in picture-in-picture')
+      await act(async () => {
+        pip.close()
+        firePip(el, 'leavepictureinpicture')
+        await macrotask()
+      })
+      await settle()
+    },
+
+    enterPipWithoutGesture: async () => {
+      const el = activeVideo()
+      await act(async () => {
+        await el.requestPictureInPicture().catch(() => undefined)
+        await macrotask()
+      })
+      await settle()
+    },
+
+    breakStream: async () => {
+      const el = activeVideo()
+      await act(async () => {
+        el.dispatchEvent(new Event('error'))
+        await macrotask()
+      })
+      await settle()
+    },
 
     at: async (seconds) => {
       const el = activeVideo()

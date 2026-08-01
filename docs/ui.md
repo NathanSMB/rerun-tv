@@ -83,7 +83,105 @@ on. In the last 30 seconds an *up next* toast appears while the next stream
 pre-warms.
 
 Keyboard map (plan §7): `Space` play/pause · `↑`/`↓` volume · `→` skip · `F`
-fullscreen · `Esc` back to the guide · `M` mute · `S` sleep timer.
+fullscreen · `Esc` back to the guide · `M` mute · `S` sleep timer · `P`
+picture-in-picture.
+
+### Picture-in-picture — the channel follows you
+
+A PiP button in the OSD row, or `P`, floats the picture in an always-on-top
+window (designed in [pip-plan.html](pip-plan.html)). It is *element* PiP —
+Document PiP is not implemented in Electron 38, so there is no way to put our own
+OSD in the floating window; the controls in it are Chromium's.
+
+Three consequences are worth knowing before touching any of it:
+
+- **Entering needs a user gesture; moving does not.** The request lives inside
+  the click/key handler for that reason. A fresh entry outside a gesture throws
+  `NotAllowedError`, which is why the session is *transferred* between the two
+  stacked surfaces at a handoff and never closed and reopened —
+  `player/pip.ts` exists to keep that invariant, and its `transferring` phase is
+  what tells a transfer's `leavepictureinpicture` (fired on the old element)
+  apart from the viewer closing the window.
+- **Esc becomes "go and browse".** With the picture floating, leaving the player
+  screen no longer stops the channel: `App.tsx` keeps the Player mounted and
+  off-stage (`opacity: 0`, never `display: none` — a displayless element stops
+  decoding, and the floating window is fed by that decoder), so streams,
+  handoffs and the sleep timer all run on. Closing the window brings the picture,
+  and the viewer, back to the player. `Esc` with nothing floating still leaves.
+- **Chromium paints its own "Playing in picture-in-picture" over the blanked
+  element**, outside the DOM and beyond styling. Our placard therefore says
+  something else — which channel is in the window, and what can be done from
+  here — rather than repeating it.
+
+Both the button and `P` are refused nothing else: fullscreen and PiP are
+mutually exclusive states of the same picture, so asking for one leaves the
+other. A blackout closes the window — a floating window is a light source too.
+
+#### Staying on top, and the Wayland problem
+
+A floating window that anything can bury is not picture-in-picture, and on
+Wayland that is exactly what it is: **a Wayland client cannot raise itself above
+other clients** — there is no protocol for it. Chromium asks anyway and the
+request is silently dropped; the window also has no titlebar, so there is no
+window menu to fix it by hand either. Run the identical build through XWayland
+and the same window arrives with `_NET_WM_STATE_ABOVE`, `STAYS_ON_TOP` and
+`STICKY` already set, which KWin honours. Measured both ways on Plasma 6.
+
+So **Settings → Interface → "Keep picture-in-picture above other windows"**
+(Wayland sessions only, on by default) chooses the platform, and the app
+**relaunches itself** with `--ozone-platform=x11` to apply it. The relaunch is
+not a stylistic choice: Chromium initialises its Ozone platform during
+browser-process startup, *before* the main script runs, so
+`app.commandLine.appendSwitch('ozone-platform', …)` and
+`ELECTRON_OZONE_PLATFORM_HINT` are both too late to have any effect from inside
+the app. The setting is mirrored to `~/.local/share/rerun-tv/boot.json`
+(`main/boot-config.ts`) because it must be readable before the database opens.
+Turning it off costs the pinning and buys back native Wayland rendering.
+
+**In `npm run dev` the app does not relaunch — the dev script picks the platform
+instead** (`scripts/dev.mjs`). It has to be that way round: `electron-vite dev`
+owns the Electron process and treats it exiting as the app closing, so a
+relaunch takes the dev server down and leaves the new window pointed at a
+`localhost` that has stopped listening — a blank app. The script reads the same
+`boot.json` and forwards `--ozone-platform=x11` after `--`, which is how
+electron-vite passes arguments through to Electron. Two things that look like
+they should work and do not: appending the flag before `--` (electron-vite
+rejects options it does not know) and `ELECTRON_OZONE_PLATFORM_HINT=x11`
+(ignored outright by Electron 38.8.6 — measured; the flag is the only lever).
+
+#### Beating a full-screen window
+
+Pinning is not enough on its own: KWin stacks an *active* full-screen window
+above everything in the "keep above" layer, so a full-screen game covers the
+floating window anyway. Nothing a client can ask for escapes that — the layers
+that outrank it are assignable only from a **window rule**.
+
+So on KDE the app writes one (`main/kwin-rule.ts`), tied to the same setting:
+
+| Field | Value |
+|---|---|
+| Window class (application) | Unimportant |
+| Window types | Normal window |
+| Window title | Exact match → `Picture in picture` |
+| Layer | Force → Overlay |
+
+Matching is by title because Chromium's PiP window carries **no `WM_CLASS` and
+no window role** — measured. That is slightly broad: another Chromium-based
+browser's PiP window shares the title and would be lifted too.
+
+The rule is one group in `~/.config/kwinrulesrc` with a fixed id, so writing it
+is idempotent; every other rule in the file is preserved byte-for-byte, and
+switching the setting off removes ours and nothing else (`tests/kwin-rule.test.ts`
+pins the round trip). KWin is asked to reload over D-Bus, so it applies without
+logging out. Off KDE, none of this happens.
+
+Doing it by hand instead: System Settings → Window Management → Window Rules →
+Add New… There is no titlebar to right-click, so the usual route (right-click →
+Configure Special Window Settings) does not exist for this window.
+
+`nexttrack`, `play` and `pause` are registered as Media Session actions, which is
+what puts a skip button in the floating window's controls and, on Linux, wires
+the keyboard's media keys through MPRIS.
 
 ### The sleep timer
 

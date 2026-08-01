@@ -125,6 +125,16 @@ interface AppState {
   pendingNext: NowPlaying | null
   volume: number
   muted: boolean
+  /**
+   * The picture is in a floating picture-in-picture window.
+   *
+   * Written by the Player, which owns the session (`player/pip.ts`), and read by
+   * the shell for one purpose: while this is true the Player stays **mounted**
+   * even though another screen is on show, because unmounting it would tear down
+   * the streams the floating window is playing. It is a mirror of the session,
+   * never a request for one — nothing but the Player may set it.
+   */
+  pipActive: boolean
 
   // ---- sleep timer ----
   /**
@@ -182,6 +192,8 @@ interface AppState {
 
   setVolume(volume: number): void
   toggleMute(): void
+  /** Mirror the Player's PiP session into the store. See `pipActive`. */
+  setPipActive(active: boolean): void
   setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void>
 }
 
@@ -217,6 +229,10 @@ async function goDark(
     pendingNext: null,
     sleepUntil: null,
     sleepMinutes: null,
+    // A floating window is a light source too, and this screen exists to emit
+    // nothing. Clearing it here unmounts the Player, whose teardown closes the
+    // session; the Player would also close it on its own, and both are cheap.
+    pipActive: false,
     screen: 'blackout'
   })
   void get().refreshChannels()
@@ -241,6 +257,7 @@ export const useStore = create<AppState>((set, get) => ({
   pendingNext: null,
   volume: DEFAULT_SETTINGS.volume,
   muted: DEFAULT_SETTINGS.muted,
+  pipActive: false,
 
   sleepUntil: null,
   sleepMinutes: null,
@@ -435,6 +452,10 @@ export const useStore = create<AppState>((set, get) => ({
         pendingNext: null,
         sleepUntil: null,
         sleepMinutes: null,
+        // Leaving is a decision to stop watching, so nothing keeps floating —
+        // unlike Esc *with* the picture in a window, which is a decision to go
+        // and browse and never reaches this action at all.
+        pipActive: false,
         screen: 'guide'
       })
       void get().refreshChannels()
@@ -496,6 +517,10 @@ export const useStore = create<AppState>((set, get) => ({
     const muted = !get().muted
     set({ muted })
     if (get().settings.rememberVolume) void bridge().settings.set('muted', muted)
+  },
+
+  setPipActive(active) {
+    if (get().pipActive !== active) set({ pipActive: active })
   },
 
   async setSetting(key, value) {

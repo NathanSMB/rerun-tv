@@ -13,6 +13,16 @@
  *  3. Catch a screen's render error so a bad channel row can't turn the whole
  *     window white. The boundary is keyed by screen, so simply navigating
  *     elsewhere clears the crash.
+ *
+ * The one wrinkle is picture-in-picture. While the channel is floating in a PiP
+ * window the viewer can go and browse, and the Player has to *stay mounted* —
+ * unmounting it would drop the `<video>` elements the window is playing and kill
+ * the ffmpeg pipes behind them. So the Player is rendered from a fixed slot in
+ * the tree whichever screen is showing, and merely goes off-stage (`floating`)
+ * when it is not the one being looked at. Keeping the slot fixed is what makes
+ * React treat the navigation as a prop change rather than a remount; moving it,
+ * or wrapping it conditionally, would restart every stream on the way to the
+ * guide.
  */
 
 import { Component, useEffect, useState } from 'react'
@@ -130,6 +140,7 @@ function screenFor(screen: Exclude<Screen, 'player' | 'blackout'>): JSX.Element 
 export default function App(): JSX.Element {
   const ready = useStore((s) => s.ready)
   const screen = useStore((s) => s.screen)
+  const pipActive = useStore((s) => s.pipActive)
   const [bootError, setBootError] = useState<Error | null>(null)
 
   useEffect(() => {
@@ -172,18 +183,9 @@ export default function App(): JSX.Element {
     )
   }
 
-  // The Player owns the entire window: full-bleed video, no chrome around it,
-  // so fullscreen handoffs never have to escape a layout wrapper.
-  if (screen === 'player') {
-    return (
-      <ScreenErrorBoundary key="player">
-        <Player />
-      </ScreenErrorBoundary>
-    )
-  }
-
-  // The blackout takes the window for the opposite reason: an app bar is a light
-  // source, and this screen exists to emit nothing.
+  // The blackout takes the window for the opposite reason a player does: an app
+  // bar is a light source, and this screen exists to emit nothing. It is checked
+  // first because it outranks a floating window — the sleep timer wins.
   if (screen === 'blackout') {
     return (
       <ScreenErrorBoundary key="blackout">
@@ -192,12 +194,31 @@ export default function App(): JSX.Element {
     )
   }
 
+  const watching = screen === 'player'
+  // Mounted but off-stage: the channel plays on in a PiP window while the viewer
+  // browses. See the file header for why this slot must not move.
+  const keepPlayerAlive = pipActive && !watching
+
   return (
-    <div className="app-shell">
-      <AppBar />
-      <main className="app-scroll">
-        <ScreenErrorBoundary key={screen}>{screenFor(screen)}</ScreenErrorBoundary>
-      </main>
-    </div>
+    <>
+      {(watching || keepPlayerAlive) && (
+        <ScreenErrorBoundary key="player">
+          <Player floating={!watching} />
+        </ScreenErrorBoundary>
+      )}
+      {/*
+        The Player owns the entire window when it is the screen: full-bleed
+        video, no chrome around it, so fullscreen handoffs never have to escape a
+        layout wrapper.
+      */}
+      {!watching && (
+        <div className="app-shell">
+          <AppBar />
+          <main className="app-scroll">
+            <ScreenErrorBoundary key={screen}>{screenFor(screen)}</ScreenErrorBoundary>
+          </main>
+        </div>
+      )}
+    </>
   )
 }

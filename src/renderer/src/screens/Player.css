@@ -25,6 +25,24 @@
 }
 
 /*
+ * Mounted, playing, and not the screen you are looking at: the channel running
+ * on in a picture-in-picture window while the guide is up (App.tsx).
+ *
+ * `opacity: 0`, never `display: none` — the same rule the standby surface
+ * follows, and here it is load-bearing twice over: a displayless element stops
+ * decoding, and the floating window is fed by exactly that decoder. Taken out of
+ * flow so the shell above it lays out as if this were not here, and put behind
+ * everything so a stray hit test can never land on it.
+ */
+.stage.is-offscreen {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/*
  * Two stacked surfaces, one on air and one buffering the next episode (see the
  * header of Player.tsx). The standby is `opacity: 0` rather than `display: none`
  * on purpose: a hidden element still decodes, and the whole point of prewarming
@@ -57,6 +75,7 @@
 .stage .onair,
 .stage .toast,
 .stage .sleep-panel,
+.stage .pip-placard,
 .stage .osd {
   z-index: 2;
 }
@@ -346,6 +365,64 @@
   .kbd-hints {
     display: none;
   }
+}
+
+/* ---- picture-in-picture ---- */
+
+/* Floating is a state, like an armed sleep timer — same amber register. */
+.osd-btn.pip.is-floating {
+  color: var(--amber);
+}
+
+/*
+ * Chromium blanks the in-page element while it is floating, so this says where
+ * the picture went rather than leaving a black rectangle to be interpreted.
+ *
+ * The wrapper is click-through and the card is not: the OSD below stays live,
+ * because every control on it still drives the same element — the picture being
+ * elsewhere changes nothing about scrubbing, volume or the sleep timer.
+ */
+.pip-placard {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pip-placard .pp-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 30px;
+  text-align: center;
+  background: rgba(5, 7, 12, 0.82);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.pip-placard .pp-title {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 18px;
+  color: var(--white);
+}
+
+.pip-placard .pp-sub {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--steel);
+}
+
+.pip-placard .pp-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 /* ---- playback failure ---- */
