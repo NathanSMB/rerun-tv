@@ -117,46 +117,19 @@ Both the button and `P` are refused nothing else: fullscreen and PiP are
 mutually exclusive states of the same picture, so asking for one leaves the
 other. A blackout closes the window — a floating window is a light source too.
 
-#### Staying on top, and the Wayland problem
+#### Staying on top: one window rule
 
-A floating window that anything can bury is not picture-in-picture, and on
-Wayland that is exactly what it is: **a Wayland client cannot raise itself above
-other clients** — there is no protocol for it. Chromium asks anyway and the
-request is silently dropped; the window also has no titlebar, so there is no
-window menu to fix it by hand either. Run the identical build through XWayland
-and the same window arrives with `_NET_WM_STATE_ABOVE`, `STAYS_ON_TOP` and
-`STICKY` already set, which KWin honours. Measured both ways on Plasma 6.
+A floating window that anything can bury is not picture-in-picture, and
+**nothing the app can say from inside itself fixes that**. On Wayland a client
+cannot raise itself above other clients at all — there is no protocol for it, so
+Chromium asks and the request is silently dropped. On X11 it can ask, and
+`_NET_WM_STATE_ABOVE` lands it in KWin's "keep above" layer — which an *active*
+full-screen window still outranks, so a game covers it anyway. Either way the
+layers that beat a full-screen window are assignable only by the compositor,
+from a **window rule**. The floating window has no titlebar either, so there is
+not even a window menu to fix it by hand.
 
-So **Settings → Interface → "Keep picture-in-picture above other windows"**
-(Wayland sessions only, on by default) chooses the platform, and the app
-**relaunches itself** with `--ozone-platform=x11` to apply it. The relaunch is
-not a stylistic choice: Chromium initialises its Ozone platform during
-browser-process startup, *before* the main script runs, so
-`app.commandLine.appendSwitch('ozone-platform', …)` and
-`ELECTRON_OZONE_PLATFORM_HINT` are both too late to have any effect from inside
-the app. The setting is mirrored to `~/.local/share/rerun-tv/boot.json`
-(`main/boot-config.ts`) because it must be readable before the database opens.
-Turning it off costs the pinning and buys back native Wayland rendering.
-
-**In `npm run dev` the app does not relaunch — the dev script picks the platform
-instead** (`scripts/dev.mjs`). It has to be that way round: `electron-vite dev`
-owns the Electron process and treats it exiting as the app closing, so a
-relaunch takes the dev server down and leaves the new window pointed at a
-`localhost` that has stopped listening — a blank app. The script reads the same
-`boot.json` and forwards `--ozone-platform=x11` after `--`, which is how
-electron-vite passes arguments through to Electron. Two things that look like
-they should work and do not: appending the flag before `--` (electron-vite
-rejects options it does not know) and `ELECTRON_OZONE_PLATFORM_HINT=x11`
-(ignored outright by Electron 38.8.6 — measured; the flag is the only lever).
-
-#### Beating a full-screen window
-
-Pinning is not enough on its own: KWin stacks an *active* full-screen window
-above everything in the "keep above" layer, so a full-screen game covers the
-floating window anyway. Nothing a client can ask for escapes that — the layers
-that outrank it are assignable only from a **window rule**.
-
-So on KDE the app writes one (`main/kwin-rule.ts`), tied to the same setting:
+So on KDE the app writes the rule itself, on every boot (`main/kwin-rule.ts`):
 
 | Field | Value |
 |---|---|
@@ -165,19 +138,36 @@ So on KDE the app writes one (`main/kwin-rule.ts`), tied to the same setting:
 | Window title | Exact match → `Picture in picture` |
 | Layer | Force → Overlay |
 
+Because KWin enforces the rule rather than the client requesting it, **it works
+the same on Wayland and on X11** — which is why it is the whole mechanism, with
+no setting attached. There is nothing to turn on and nothing to restart for.
+
+> An earlier build also relaunched itself onto XWayland with
+> `--ozone-platform=x11`, chosen by a "Keep picture-in-picture above other
+> windows" setting mirrored to `~/.local/share/rerun-tv/boot.json`. It bought
+> `_NET_WM_STATE_ABOVE` — a strict subset of what the rule already does — and
+> cost per-monitor DPI and crisp fractional scaling for it. All of it is gone;
+> boot deletes the stale setting row and `boot.json` on the way past. If
+> Chromium ever ships the xdg-pip protocol KWin has supported since Plasma 6.5,
+> the rule goes too and PiP is kept above natively.
+
 Matching is by title because Chromium's PiP window carries **no `WM_CLASS` and
-no window role** — measured. That is slightly broad: another Chromium-based
-browser's PiP window shares the title and would be lifted too.
+no window role** under XWayland — measured. That is slightly broad: another
+Chromium-based browser's PiP window shares the title and would be lifted too.
 
 The rule is one group in `~/.config/kwinrulesrc` with a fixed id, so writing it
-is idempotent; every other rule in the file is preserved byte-for-byte, and
-switching the setting off removes ours and nothing else (`tests/kwin-rule.test.ts`
-pins the round trip). KWin is asked to reload over D-Bus, so it applies without
-logging out. Off KDE, none of this happens.
+is idempotent; every other rule in the file is preserved byte-for-byte, and the
+removal half round-trips exactly (`tests/kwin-rule.test.ts` pins both). KWin is
+asked to reload over D-Bus, so it applies without logging out. Off KDE, none of
+this happens — and with no XWayland fallback left, a non-KDE Wayland compositor
+gets an ordinary floating window.
 
-Doing it by hand instead: System Settings → Window Management → Window Rules →
-Add New… There is no titlebar to right-click, so the usual route (right-click →
-Configure Special Window Settings) does not exist for this window.
+To remove or edit it: System Settings → Window Management → Window Rules, where
+it appears as "Rerun TV — picture-in-picture above full-screen windows". The app
+will write it again on its next start. Adding one by hand instead is the same
+screen → Add New…; there is no titlebar to right-click, so the usual route
+(right-click → Configure Special Window Settings) does not exist for this
+window.
 
 `nexttrack`, `play` and `pause` are registered as Media Session actions, which is
 what puts a skip button in the floating window's controls and, on Linux, wires

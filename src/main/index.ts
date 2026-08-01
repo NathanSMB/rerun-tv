@@ -16,23 +16,18 @@
  */
 
 import { app, BrowserWindow, net, protocol, shell } from 'electron'
+import { rmSync } from 'node:fs'
 import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { EVENTS } from '../shared/ipc.js'
-import {
-  currentWindowSystem,
-  ozonePlatformOverride,
-  recordWindowSystem,
-  relaunchPlatform,
-  writeBootConfig
-} from './boot-config.js'
-import { syncKwinPipRule } from './kwin-rule.js'
+import { ensureKwinPipRule } from './kwin-rule.js'
 import type { SystemInfo } from '../shared/types.js'
-import { closeDb, openDatabase, setDb } from './db/index.js'
+import { closeDb, openDatabase, setDb, type Db } from './db/index.js'
 import { getSettings } from './db/repositories/settings.js'
 import {
   backupsDir,
   configureAppPaths,
+  dataDir,
   databasePath,
   stagedImportMetaPath,
   stagedImportPath
@@ -45,61 +40,6 @@ import { checkCodecs, resolveFfmpeg } from './stream/ffmpeg.js'
 import { broadcast, registerHandlers } from './ipc/handlers.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-
-/**
- * The window system, chosen before anything else can be.
- *
- * This is the one setting that cannot come from the database: it decides which
- * display server Chromium connects to, and the database is not open until well
- * after that point — deliberately, because the staged-import swap has to happen
- * while nothing holds the file. So the value is mirrored to a small JSON file
- * the moment it changes, and read back here (`boot-config.ts`). Why it matters:
- * a Wayland client cannot raise itself above other windows, so a
- * picture-in-picture window that stays put is only possible through XWayland.
- *
- * **It has to be a relaunch, not a switch.** `app.commandLine.appendSwitch()`
- * is the obvious move and it does nothing at all: Chromium initialises its Ozone
- * platform during browser-process startup, which happens *before* this script
- * runs, so by the time any JavaScript could ask, the connection to the display
- * server is already made. (Measured: the switch applied cleanly, `app` reported
- * what we asked for, and the process was still on Wayland with no X11 window to
- * its name.) The same is true of `ELECTRON_OZONE_PLATFORM_HINT`. What is left is
- * to start again with the flag on the real command line.
- *
- * The cost is one extra process start — no window is created on this pass, and
- * it only happens when the launcher did not already pass the flag. The relaunch
- * cannot loop: `ozonePlatformOverride` returns null the moment an explicit
- * `--ozone-platform` is present, which the new process always has.
- */
-/**
- * ...and it may only relaunch when nothing is supervising this process.
- *
- * `electron-vite dev` starts the renderer's dev server, then launches Electron as
- * its child and treats that child exiting as "the app is closed" — so a relaunch
- * takes the dev server down with it, and the replacement comes up pointing at a
- * `localhost` that is no longer listening: a blank window, and a shell prompt
- * back. `ELECTRON_RENDERER_URL` is exactly the signal for that, and already the
- * flag `createWindow` uses to tell dev from production.
- *
- * Passing `--ozone-platform=x11` on the command line still works in dev; it is
- * only the *self*-relaunch that has to sit out.
- */
-const wantedOzone = ozonePlatformOverride()
-const ozone = relaunchPlatform()
-if (wantedOzone !== null && ozone === null) {
-  // `npm run dev` normally passes the flag for us (`scripts/dev.mjs`), so this
-  // is reached by running `electron-vite dev` directly.
-  console.info(
-    `[boot] dev: staying on the session default — a relaunch would take the dev ` +
-      `server with it. Start with --ozone-platform=${wantedOzone} for window pinning.`
-  )
-}
-const relaunching = ozone !== null
-if (relaunching) {
-  app.relaunch({ args: [...process.argv.slice(1), `--ozone-platform=${ozone}`] })
-  app.exit(0)
-}
-recordWindowSystem(currentWindowSystem())
 
 /**
  * The renderer's origin, `app://bundle`.
@@ -234,6 +174,29 @@ async function restart(): Promise<void> {
   app.exit(0)
 }
 
+/**
+ * Clear out what the XWayland era left behind.
+ *
+ * Keeping the floating window on top used to mean relaunching onto XWayland,
+ * chosen by a `pipKeepOnTop` setting and mirrored to a `boot.json` beside the
+ * database so it could be read before the database was open. The KWin rule does
+ * the whole job now, so both are gone from the code — and nothing else is left
+ * to tidy them off disk. Never throws: leftovers are inert, and a failed cleanup
+ * must not cost anyone their television.
+ */
+function removeXwaylandLeftovers(db: Db): void {
+  try {
+    db.prepare("DELETE FROM settings WHERE key = 'pipKeepOnTop'").run()
+  } catch (error) {
+    console.warn('[boot] could not drop the stale pipKeepOnTop setting:', error)
+  }
+  try {
+    rmSync(join(dataDir(), 'boot.json'))
+  } catch {
+    // Absent on every run but the first after upgrading, which is the point.
+  }
+}
+
 async function bootstrap(): Promise<void> {
   // Before anything opens the database: if an import is staged, this is the one
   // moment nothing holds a handle on the file, so the swap is safe here.
@@ -248,15 +211,14 @@ async function bootstrap(): Promise<void> {
   setDb(db)
   if (receipt) recordRestoreReceipt(db, receipt)
 
+  removeXwaylandLeftovers(db)
+
   const settings = getSettings(db)
-  // Re-sync the boot cache with the database now that it is open. Normally a
-  // no-op — the handler writes it on every change — but a restored backup
-  // arrives with its own value and nothing else would ever reconcile the two.
-  writeBootConfig({ pipKeepOnTop: settings.pipKeepOnTop })
-  // Likewise the KWin rule, which is the other half of "keep it on top" and the
-  // half no window can ask for itself (`kwin-rule.ts`). Idempotent, and a no-op
-  // off KDE.
-  syncKwinPipRule(settings.pipKeepOnTop)
+  // How the picture-in-picture window stays above a full-screen game: a KWin
+  // window rule, which is the only thing that can put a window in the overlay
+  // layer and works the same whether we are on Wayland or X11 (`kwin-rule.ts`).
+  // Idempotent, and a no-op off KDE.
+  ensureKwinPipRule()
   const ffmpeg = resolveFfmpeg()
 
   streamServer = await startStreamServer({ db, getSettings: () => getSettings(db) })
@@ -313,12 +275,7 @@ async function bootstrap(): Promise<void> {
 
 // A single instance owns the database and the stream port; a second launch
 // should just focus the window that's already running.
-//
-// Skipped entirely while relaunching onto another window system: this process is
-// on its way out and must not take the lock the replacement is about to ask for.
-if (relaunching) {
-  // Nothing. `app.exit(0)` above ends this process; the flagged one takes over.
-} else if (!app.requestSingleInstanceLock()) {
+if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => {

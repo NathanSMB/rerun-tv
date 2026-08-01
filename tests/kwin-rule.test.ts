@@ -12,8 +12,11 @@
  * below is a variation on *leave everything else exactly as it was*.
  */
 
-import { describe, expect, it } from 'vitest'
-import { applyPipRule, isKwinSession, PIP_RULE_ID } from '@main/kwin-rule.js'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { applyPipRule, ensureKwinPipRule, isKwinSession, PIP_RULE_ID } from '@main/kwin-rule.js'
 
 /** A real file, from a real session: the viewer's own rule for another browser. */
 const EXISTING = `[9c4473ff-befd-4196-ba10-6af4fa403962]
@@ -145,5 +148,69 @@ describe('knowing when to keep out of it', () => {
     expect(isKwinSession({ XDG_CURRENT_DESKTOP: 'GNOME' } as NodeJS.ProcessEnv)).toBe(false)
     expect(isKwinSession({ XDG_CURRENT_DESKTOP: 'sway' } as NodeJS.ProcessEnv)).toBe(false)
     expect(isKwinSession({} as NodeJS.ProcessEnv)).toBe(false)
+  })
+})
+
+/**
+ * Installing it for real, which is the part that changed.
+ *
+ * The rule used to follow a setting, and a Wayland session only got it after the
+ * app relaunched itself onto XWayland. Now it is written on every boot, on
+ * whichever window system the session happens to run — because the compositor
+ * enforces the rule, so nothing about it depends on the protocol we spoke to get
+ * a window. These cases pin exactly that.
+ */
+describe('installing it at boot', () => {
+  const KDE_WAYLAND = { XDG_CURRENT_DESKTOP: 'KDE', XDG_SESSION_TYPE: 'wayland' }
+  const KDE_X11 = { XDG_CURRENT_DESKTOP: 'KDE', XDG_SESSION_TYPE: 'x11' }
+
+  let dir: string
+  let path: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rerun-kwin-'))
+    path = join(dir, 'kwinrulesrc')
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  it('installs on a Wayland session, where no client could ask for this itself', () => {
+    expect(ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv)).toBe(true)
+
+    const written = readFileSync(path, 'utf8')
+    expect(read(written, PIP_RULE_ID, 'layer')).toBe('overlay')
+    expect(read(written, 'General', 'rules')).toBe(PIP_RULE_ID)
+  })
+
+  it('installs the identical rule on an X11 session', () => {
+    const onX11 = join(dir, 'x11-session')
+    const onWayland = join(dir, 'wayland-session')
+
+    expect(ensureKwinPipRule(onX11, KDE_X11 as NodeJS.ProcessEnv)).toBe(true)
+    ensureKwinPipRule(onWayland, KDE_WAYLAND as NodeJS.ProcessEnv)
+
+    // The window system never enters into it: the rule is the compositor's.
+    expect(readFileSync(onX11, 'utf8')).toBe(readFileSync(onWayland, 'utf8'))
+  })
+
+  it('reports no change on the second boot, so KWin is left alone', () => {
+    expect(ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv)).toBe(true)
+    expect(ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv)).toBe(false)
+  })
+
+  it('keeps the viewer’s rules when it adds ours', () => {
+    writeFileSync(path, EXISTING, 'utf8')
+
+    ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv)
+
+    const written = readFileSync(path, 'utf8')
+    expect(written).toContain('Description=Window settings for zen')
+    expect(read(written, 'General', 'count')).toBe('2')
+  })
+
+  it('writes nothing at all off KDE', () => {
+    const env = { XDG_CURRENT_DESKTOP: 'GNOME', XDG_SESSION_TYPE: 'wayland' }
+
+    expect(ensureKwinPipRule(path, env as NodeJS.ProcessEnv)).toBe(false)
+    expect(() => readFileSync(path, 'utf8')).toThrow()
   })
 })

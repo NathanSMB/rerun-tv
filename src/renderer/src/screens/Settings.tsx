@@ -480,38 +480,6 @@ export default function Settings(): ReactElement {
           />
         </div>
 
-        {/*
-          Only on Wayland, because that is the only session where the answer
-          changes anything: an X11 session is already where this would send us.
-        */}
-        {system?.session === 'wayland' && (
-          <div className="set-row">
-            <div>
-              <div className="set-label">Keep picture-in-picture above other windows</div>
-              <div className="set-hint">
-                Runs the app through XWayland, the only way a window can pin itself above
-                others &mdash; Wayland has no protocol for it. Costs crisp fractional
-                scaling.{' '}
-                {settings.pipKeepOnTop === (system.windowSystem === 'x11') ? (
-                  <>
-                    Currently on <b>{system.windowSystem === 'x11' ? 'XWayland' : 'Wayland'}</b>.
-                  </>
-                ) : (
-                  <b>Restart to apply.</b>
-                )}{' '}
-                On KDE it also installs a window rule so full-screen windows can&rsquo;t
-                cover it; switching this off removes the rule again.
-              </div>
-            </div>
-            <Toggle
-              checked={settings.pipKeepOnTop}
-              label="Keep picture-in-picture above other windows"
-              disabled={locked}
-              onChange={(next) => update('pipKeepOnTop', next)}
-            />
-          </div>
-        )}
-
         <div className="shortcuts" aria-label="Keyboard shortcuts">
           <span>
             <kbd>Space</kbd>pause

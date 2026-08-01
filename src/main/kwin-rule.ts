@@ -3,20 +3,26 @@
  *
  * ## Why this file exists
  *
- * `pipKeepOnTop` gets the floating window pinned above ordinary windows — see
- * `boot-config.ts`. It does not get it above a **full-screen** window, and no
- * amount of code in the app can: KWin stacks windows in fixed layers, and
- * `_NET_WM_STATE_ABOVE` (which Chromium already sets, and which is everything
- * the X11 protocol offers a client here) lands in `AboveLayer` — *below* the
- * layer a full-screen game occupies. The layers that outrank it are assignable
- * only by the compositor, from a **window rule**. There is no property, no
- * window type and no Electron API that reaches them.
+ * Nothing a client can say keeps a window above a **full-screen** window. KWin
+ * stacks windows in fixed layers, and `_NET_WM_STATE_ABOVE` — which Chromium
+ * already sets, and which is everything the X11 protocol offers a client here —
+ * lands in `AboveLayer`, *below* the layer a full-screen game occupies. On
+ * Wayland there is not even that: no protocol exists for raising yourself, so
+ * the request is silently a no-op. The layers that outrank a full-screen window
+ * are assignable only by the compositor, from a **window rule**. There is no
+ * property, no window type and no Electron API that reaches them.
  *
  * So the rule is the mechanism, and the only question is who writes it. Making
  * the viewer add it by hand is a poor answer for a feature that is meant to work
  * out of the box — and a worse one here than usual, because the floating window
  * has no titlebar, so the usual route (right-click → Configure Special Window
  * Settings) does not exist for it. This module writes it instead.
+ *
+ * Because the rule is enforced by the compositor rather than requested by the
+ * client, it works the same on Wayland and on X11 — which is why this is now the
+ * *whole* mechanism. An earlier build also relaunched itself onto XWayland to
+ * borrow `_NET_WM_STATE_ABOVE`; that only ever bought a subset of what the rule
+ * already does, and cost per-monitor DPI and crisp fractional scaling to buy it.
  *
  * ## What it is careful about
  *
@@ -26,18 +32,25 @@
  * - **Everything else in the file is preserved**, including rules the viewer
  *   wrote, in their original order and with their original keys.
  * - **It owns exactly one group**, identified by a fixed id. Running twice
- *   changes nothing; turning the setting off removes that group and nothing
- *   else; a viewer who edits our rule keeps their edits until they toggle the
- *   setting, at which point ours is authoritative again.
+ *   changes nothing, so every boot can call `ensureKwinPipRule()` blindly; a
+ *   viewer who edits our rule keeps their edits until the next boot, at which
+ *   point ours is authoritative again.
  * - **It does nothing at all off KDE.** No KWin, no rules file, no business
  *   writing one.
  *
- * The matching is by window *title*, because Chromium's picture-in-picture
- * window carries no `WM_CLASS` and no window role — measured; the title is the
- * only handle it offers. That is a slightly broad match: another Chromium-based
- * browser's PiP window uses the same title and would be lifted too. Narrower is
- * not available, and the failure mode is "another video window also stays on
- * top", which is what someone who turned this on wants anyway.
+ * The rule is standing infrastructure, not a preference: there is no setting to
+ * turn it off, and uninstalling it is System Settings → Window Management →
+ * Window Rules, where it appears under its description like any other. The
+ * removal half of the merge stays exercised by the tests and is one call away if
+ * a cleanup path is ever wanted.
+ *
+ * The matching is by window *title*, because under XWayland Chromium's
+ * picture-in-picture window carries no `WM_CLASS` and no window role —
+ * measured; the title is the only handle it offers. That is a slightly broad
+ * match: another Chromium-based browser's PiP window uses the same title and
+ * would be lifted too. Narrower is not available, and the failure mode is
+ * "another video window also stays on top", which is what someone watching a
+ * show over a game wants anyway.
  */
 
 import { execFile } from 'node:child_process'
@@ -185,11 +198,14 @@ function reconfigureKwin(): void {
 }
 
 /**
- * Bring the rules file in line with the setting. Safe to call on every boot.
+ * Write the rule, or take it away. Safe to call on every boot.
  *
  * Returns whether the file was actually changed, which is the only reason to
  * disturb KWin. Never throws: this is a nicety layered on a nicety, and a
  * read-only config directory must not stop the television from starting.
+ *
+ * `ensureKwinPipRule()` is the caller boot uses; `enabled: false` is kept for
+ * the tests and for whoever eventually wants an uninstall path.
  */
 export function syncKwinPipRule(
   enabled: boolean,
@@ -232,4 +248,19 @@ export function syncKwinPipRule(
   )
   reconfigureKwin()
   return true
+}
+
+/**
+ * Install the rule. What boot calls, on every session and every platform.
+ *
+ * Unconditional by design: the rule is how picture-in-picture stays above a
+ * full-screen window at all, it is the same rule whether Chromium spoke Wayland
+ * or X11 to get here, and `isKwinSession` already declines everywhere it would
+ * mean nothing.
+ */
+export function ensureKwinPipRule(
+  path = kwinRulesPath(),
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return syncKwinPipRule(true, path, env)
 }
