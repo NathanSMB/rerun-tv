@@ -231,6 +231,30 @@ a {
 
 /* ============ buttons & controls ============ */
 
+/*
+ * A button that reads as a link. Real button semantics (it performs an action,
+ * it isn't a destination) with none of a button's weight — used wherever a
+ * secondary action sits inside running text.
+ */
+.linkbtn {
+    font-family: var(--body);
+    font-size: 12px;
+    color: var(--amber);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+.linkbtn:hover:not(:disabled) {
+    text-decoration: underline;
+}
+
+.linkbtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .btn {
     font-family: var(--body);
     font-weight: 600;
@@ -248,7 +272,7 @@ a {
 
 .btn-tune {
     background: var(--amber);
-    color: #201302;
+    color: var(--amber-ink);
 }
 
 .btn-tune:hover:not(:disabled) {
@@ -332,7 +356,7 @@ a {
 
 .toggle.on::after {
     left: 19px;
-    background: #201302;
+    background: var(--amber-ink);
 }
 
 .toggle:disabled {
@@ -428,18 +452,6 @@ kbd {
     font-weight: 600;
 }
 
-.postmvp {
-    font-family: var(--mono);
-    font-size: 9.5px;
-    color: var(--steel-dim);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 1px 6px;
-    margin-left: 8px;
-    letter-spacing: 0.1em;
-    vertical-align: 2px;
-}
-
 .status-dot {
     width: 7px;
     height: 7px;
@@ -471,4 +483,52 @@ kbd {
     background: var(--amber);
     border-radius: 3px;
     transition: width 200ms ease;
+}
+
+/* ============ error text ============ */
+
+/*
+ * The house style for a failure message shown beside the control that caused it.
+ * Screens add their own spacing; the colour and size are shared so four screens
+ * can't drift into four different-looking errors.
+ */
+.form-error {
+    color: var(--danger);
+    font-size: 12.5px;
+}
+
+/*
+ * The shell's banner for a failed store action (see `App.tsx` ErrorBanner):
+ * things with no control to sit next to, like a tune-in that never arrived.
+ */
+.app-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 22px 12px;
+    padding: 9px 14px;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--white);
+    font-size: 12.5px;
+}
+
+/*
+ * Present to assistive technology, absent from the picture. Used for live
+ * regions whose visible counterpart says the same thing in fewer words (the
+ * app bar's scan pill) — clip-path rather than `display: none`, which would
+ * take it out of the accessibility tree along with the layout.
+ */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
 }

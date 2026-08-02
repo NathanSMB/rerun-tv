@@ -39,8 +39,6 @@
 }
 
 .lib-error {
-    color: var(--danger);
-    font-size: 12.5px;
     margin: 8px 0 0;
 }
 
@@ -246,25 +244,6 @@
 }
 
 /* Ungroup reads as a link but is a real button — it mutates the library. */
-.lib-side .linkbtn {
-    font-family: var(--body);
-    font-size: 12px;
-    color: var(--amber);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-}
-
-.lib-side .linkbtn:hover:not(:disabled) {
-    text-decoration: underline;
-}
-
-.lib-side .linkbtn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
 .side-tip {
     font-size: 12.5px;
     color: var(--steel);

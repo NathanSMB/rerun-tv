@@ -104,6 +104,12 @@ export class Scanner {
     #lastEmitDone = 0;
 
     #watcher: FSWatcher | null = null;
+    /**
+     * The roots the watcher is currently subscribed to. Held as a field rather
+     * than captured in the event closures so `startWatching()` can reconcile it
+     * when a root is added or removed while the app is running.
+     */
+    #watchRoots: string[] = [];
     /** Serialises watcher events so two probes never race on the same pass. */
     #watchQueue: Promise<void> = Promise.resolve();
 
@@ -221,11 +227,31 @@ export class Scanner {
      * `ignoreInitial` because the scan already covered what exists, and
      * `awaitWriteFinish` because a file still being copied would otherwise be
      * probed at whatever length it had reached.
+     *
+     * Safe to call again after the root list changes: an existing watcher is
+     * reconciled in place rather than left subscribed to the old set, so a root
+     * added from Settings is watched immediately instead of at the next launch.
      */
     startWatching(): void {
-        if (this.#watcher || this.#disposed) return;
+        if (this.#disposed) return;
         const roots = listScanRoots(this.#db).map((r) => r.path);
+
+        if (this.#watcher) {
+            const current = new Set(this.#watchRoots);
+            const next = new Set(roots);
+            for (const root of next)
+                if (!current.has(root)) this.#watcher.add(root);
+            for (const root of current)
+                if (!next.has(root)) this.#watcher.unwatch(root);
+            this.#watchRoots = roots;
+            // chokidar keeps a watcher alive with nothing subscribed; closing it
+            // means the next added root builds a fresh one with correct options.
+            if (roots.length === 0) this.stopWatching();
+            return;
+        }
+
         if (roots.length === 0) return;
+        this.#watchRoots = roots;
 
         const watcher = watch(roots, {
             ignoreInitial: true,
@@ -235,11 +261,13 @@ export class Scanner {
                 pollInterval: 200,
             },
         });
+        // `this.#watchRoots`, not the captured `roots`, so an event from a root
+        // added later still resolves to an owning root.
         watcher.on("add", (path) =>
-            this.#enqueue(() => this.#ingestWatched(path, roots)),
+            this.#enqueue(() => this.#ingestWatched(path, this.#watchRoots)),
         );
         watcher.on("change", (path) =>
-            this.#enqueue(() => this.#ingestWatched(path, roots)),
+            this.#enqueue(() => this.#ingestWatched(path, this.#watchRoots)),
         );
         watcher.on("unlink", (path) => this.#enqueue(() => this.#forget(path)));
         watcher.on("error", (err) => {
@@ -253,6 +281,7 @@ export class Scanner {
     stopWatching(): void {
         void this.#watcher?.close();
         this.#watcher = null;
+        this.#watchRoots = [];
     }
 
     /** Release the watcher and unblock a paused pass so shutdown can't hang. */

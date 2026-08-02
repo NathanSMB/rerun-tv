@@ -3,9 +3,11 @@
 ## Requirements
 
 - **Node** 20+ (developed on 24)
-- **ffmpeg / ffprobe** on `PATH` — on Arch, `pacman -S ffmpeg`. The app prefers
-  the system binary and falls back to a bundled static build; without either,
+- **ffmpeg / ffprobe** on `PATH` — on Arch, `pacman -S ffmpeg`. Without them
   only `direct`-play files work and everything else returns a clear 503.
+  (`resolveFfmpeg` will use a static build placed in `resources/` if one is
+  there, but no release bundles one — ffmpeg is always the system binary, which
+  is also why shipping Rerun TV raises no GPL question.)
 - A C toolchain, because `better-sqlite3` compiles a native module.
 
 ## Setup
@@ -71,14 +73,20 @@ src/
   preload/index.ts   contextBridge — the only thing the renderer can see
   renderer/          React + TypeScript
     src/store.ts     the Zustand store; the `screen` field is the router
+    src/utils.ts     errorText · plural · useBusyAction (the shared busy lock)
     src/screens/     Guide · Player · Library · Settings (+ Blackout)
     src/components/  AppBar · ChannelFold (the guide's editor) · ChannelNumber
+                     AssignPanel · ArcBuilder · AddShowPanel · SeasonModeSeg
+                     SleepPanel · Slider · Toggle
+    src/hooks/       useTunedSection (the Settings rail's scroll spy)
+    src/player/      mse.ts · pip.ts · stage.ts (all DOM-free) · VideoSurface.tsx
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
 .husky/              the pre-commit hook — Biome over the staged files
 biome.json           formatter + linter config, the one source of style truth
 resources/           the application icon — electron-builder's buildResources and the running window's icon
 tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
   renderer/          the DOM suites: the Player's effect decisions, the guide's fold
+  helpers/           db fixtures · media clips · the Electron stub (handlers.test.ts)
 docs/                this documentation, plus the original plan and mockup
 ```
 
@@ -91,10 +99,13 @@ docs/                this documentation, plus the original plan and mockup
   the method to `RerunApi`, then the channel name to `IPC`, then implement it in
   `preload/index.ts` and `main/ipc/handlers.ts`. Both sides fail to typecheck
   until you do.
-- **All SQL lives in `db/repositories/`.** Rows are camel-cased there so no
-  snake_case ever reaches the renderer.
+- **All *writes* live in `db/repositories/`,** and rows are camel-cased there so
+  no snake_case ever reaches the renderer. Read-model queries — joins written to
+  shape one view — live beside their view model in `services/` and `scheduler/`
+  rather than becoming one-caller repository functions named after screens.
 - **No hardcoded colours in components.** Add a token to
-  `renderer/src/styles/tokens.css` instead.
+  `renderer/src/styles/tokens.css` instead — including the inks that sit *on* a
+  filled surface (`--amber-ink`, `--danger-ink`).
 - **Schema changes are append-only.** Add an entry to `MIGRATIONS` in
   `db/schema.ts`; never edit an existing one. `PRAGMA user_version` tracks
   what's applied.
@@ -223,6 +234,20 @@ the real schema and the real migrations. The stream tests start a real HTTP
 server on an ephemeral port; the cases that need ffmpeg skip themselves when it
 isn't installed.
 
+`handlers.test.ts` is the one suite that loads Electron — as a stub. Vitest
+aliases the `electron` module to `tests/helpers/electron.ts`, a recorder for
+`ipcMain.handle` and `BrowserWindow.webContents.send` whose `dialog` methods
+throw rather than return something plausible. That lets the *real*
+`registerHandlers` run against a real in-memory database, which matters because
+`handlers.ts` is the only glue between the subsystems and every other suite
+either bypasses it or fakes it. Electron is a process boundary, so this is the
+same class of fake as the preload bridge — not module mocking, which this repo
+does not use anywhere.
+
+`desktop-entry.test.ts` and `kwin-rule.test.ts` are both about writing into
+directories that belong to the user's desktop, and both are variations on
+*leave everything else exactly as it was*.
+
 `restore.test.ts` is the exception that uses real files in a temp directory,
 because the whole point of that module is filesystem behaviour — what survives a
 rejected import, what gets copied before a swap, what happens to a stale WAL
@@ -232,7 +257,12 @@ sidecar. An in-memory database would test none of it.
 machine against bytes a real ffmpeg produced, with the exact arguments the stream
 server uses. That works in Node only because `player/mse.ts` is deliberately
 DOM-free and is listed in `tsconfig.node.json`, so a stray DOM reference fails the
-build. `handoff.test.ts` drives the store's schedule-advance logic against the
+build. `stage.test.ts` gets the same treatment for `player/stage.ts`: the
+double-buffered handoff is a pure state machine, so the transition that makes a
+handoff free — the standby slot keeping its *object identity* through a
+promotion, which is what stops React remounting the element and discarding its
+buffer — can be asserted directly rather than inferred from two elements in a
+DOM harness. `handoff.test.ts` drives the store's schedule-advance logic against the
 real scheduler over a real database, with only the IPC hop faked — the one thing
 worth that much scaffolding, because getting it wrong double-spends the schedule.
 

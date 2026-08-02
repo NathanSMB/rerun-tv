@@ -183,6 +183,25 @@ export function effectivePlaybackPath(
         : stored;
 }
 
+/**
+ * Re-point a stream URL at a seek offset.
+ *
+ * The piped paths cannot seek in the element — the body is a live pipe — so a
+ * seek is a fresh request at `?t=`. This lives beside the rest of the playback
+ * contract because both processes construct that URL: the main process mints it
+ * (`stream/server.ts` `urlFor`) and the renderer re-points it on scrub. Uses
+ * `set`, not concatenation, so re-seeking a URL that already carries a `t`
+ * replaces it — the server reads the *first* `t` it finds, so an appended one
+ * would be silently ignored.
+ */
+export function withSeek(streamUrl: string, seconds: number): string {
+    const url = new URL(streamUrl);
+    const at = Math.max(0, Math.floor(seconds));
+    if (at > 0) url.searchParams.set("t", String(at));
+    else url.searchParams.delete("t");
+    return url.toString();
+}
+
 /** `S04E11`, or `S01E03-E04` for a file holding a double episode. */
 export function episodeCode(
     season: number,

@@ -15,14 +15,11 @@
 
 import type { AppSettings, ScanRoot, SystemInfo } from "@shared/types.js";
 import { SLEEP_MAX_MIN } from "@shared/types.js";
-import {
-    type ReactElement,
-    type RefObject,
-    useEffect,
-    useRef,
-    useState,
-} from "react";
+import { type ReactElement, useRef, useState } from "react";
+import Toggle from "../components/Toggle.js";
+import { useTunedSection } from "../hooks/useTunedSection.js";
 import { useStore } from "../store.js";
+import { useBusyAction } from "../utils.js";
 import "./Settings.css";
 
 /**
@@ -56,68 +53,6 @@ const SECTIONS = [
         blurb: "What the machinery underneath is doing",
     },
 ] as const;
-
-/** How far below the top of the scroller a section counts as the one being read. */
-const TUNE_LINE_PX = 96;
-
-/**
- * Which stop the reader is on.
- *
- * Scroll-position based rather than an `IntersectionObserver`, because of the
- * bottom of the page: the last section is shorter than the window, so it never
- * becomes the top-most intersecting element and the dial stays stuck on 03 no
- * matter how far you scroll. Reaching the end of the scroll *is* the signal
- * that you have arrived at the last stop, and only a scroll position can say
- * that.
- */
-function useTunedSection(bodyRef: RefObject<HTMLDivElement | null>): string {
-    const [tuned, setTuned] = useState<string>(SECTIONS[0].id);
-
-    useEffect(() => {
-        const scroller = bodyRef.current?.closest(".app-scroll");
-        if (!(scroller instanceof HTMLElement)) return;
-
-        function read(): void {
-            if (!(scroller instanceof HTMLElement)) return;
-            const stops = SECTIONS.map((section) =>
-                document.getElementById(section.id),
-            ).filter((node): node is HTMLElement => node != null);
-            if (stops.length === 0) return;
-
-            // Bottomed out: the last stop is the one being looked at, whatever the
-            // section tops say. Guarded on the page actually scrolling — on a window
-            // tall enough to hold every section, "the end of the scroll" is also the
-            // top of the page, and the dial would open on 04 and stay there.
-            const scrollable =
-                scroller.scrollHeight > scroller.clientHeight + 2;
-            if (
-                scrollable &&
-                scroller.scrollTop + scroller.clientHeight >=
-                    scroller.scrollHeight - 2
-            ) {
-                setTuned(stops[stops.length - 1].id);
-                return;
-            }
-
-            const line = scroller.getBoundingClientRect().top + TUNE_LINE_PX;
-            let next = stops[0].id;
-            for (const stop of stops) {
-                if (stop.getBoundingClientRect().top <= line) next = stop.id;
-            }
-            setTuned(next);
-        }
-
-        read();
-        scroller.addEventListener("scroll", read, { passive: true });
-        window.addEventListener("resize", read);
-        return () => {
-            scroller.removeEventListener("scroll", read);
-            window.removeEventListener("resize", read);
-        };
-    }, [bodyRef]);
-
-    return tuned;
-}
 
 /** x264 preset + CRF travel together, so one control writes both settings. */
 const QUALITY_PRESETS = [
@@ -182,10 +117,6 @@ function sleepDurationLabel(minutes: number): string {
     return rest === 0 ? hoursLabel : `${hours} h ${rest} min`;
 }
 
-function errorText(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
-}
-
 function formatMb(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
@@ -199,39 +130,19 @@ function formatDate(iso: string): string {
     return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
-/** The mockup's pill switch, wired as a real `role="switch"` control. */
-function Toggle({
-    checked,
-    label,
-    disabled,
-    onChange,
-}: {
-    checked: boolean;
-    label: string;
-    disabled?: boolean;
-    onChange: (next: boolean) => void;
-}): ReactElement {
-    return (
-        <button
-            type="button"
-            className={`toggle${checked ? " on" : ""}`}
-            role="switch"
-            aria-checked={checked}
-            aria-label={label}
-            disabled={disabled}
-            onClick={() => onChange(!checked)}
-        />
-    );
-}
-
-/** One stop's heading — the name, and what the section is for. */
+/**
+ * One stop's heading — the name, and what the section is for.
+ *
+ * Takes the section itself rather than its id: looking it back up out of
+ * `SECTIONS` needed a non-null assertion the compiler couldn't verify, for no
+ * gain over passing the object the caller already has.
+ */
 function SectionHead({
-    id,
+    section,
 }: {
-    id: (typeof SECTIONS)[number]["id"];
+    section: (typeof SECTIONS)[number];
 }): ReactElement {
-    // biome-ignore lint/style/noNonNullAssertion: `id` is typed as one of SECTIONS' own ids, so the lookup is total by construction — the compiler just can't see through `find`
-    const section = SECTIONS.find((s) => s.id === id)!;
+    const id = section.id;
     return (
         <div className="set-head">
             <h2 id={`${id}-title`}>{section.name}</h2>
@@ -240,19 +151,43 @@ function SectionHead({
     );
 }
 
+/**
+ * The System section's status dot.
+ *
+ * `ok` is the unmodified green, `warn` amber ("still checking", "paused"), `bad`
+ * red. A named component rather than the four near-identical nested ternaries
+ * this replaced — those were the one place in the screen where reading the
+ * markup did not tell you what colour anything would be.
+ */
+function StatusDot({
+    status,
+}: {
+    status: "ok" | "warn" | "bad";
+}): ReactElement {
+    const suffix = status === "ok" ? "" : ` ${status}`;
+    return <span className={`status-dot${suffix}`} />;
+}
+
+/** `pending` reads as "still working", anything else as pass/fail. */
+function probeStatus(value: string | null | undefined): "ok" | "warn" | "bad" {
+    if (value == null || value === "pending") return "warn";
+    return value === "ok" ? "ok" : "bad";
+}
+
 export default function Settings(): ReactElement {
     const settings = useStore((s) => s.settings);
     const system = useStore((s) => s.system);
     const setSetting = useStore((s) => s.setSetting);
     const refreshLibrary = useStore((s) => s.refreshLibrary);
+    const roots = useStore((s) => s.roots);
+    const refreshRoots = useStore((s) => s.refreshRoots);
 
-    const [roots, setRoots] = useState<ScanRoot[] | null>(null);
-    const [busy, setBusy] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const { busy, error, run: runAction } = useBusyAction();
+    /** A one-line confirmation after an action that produced no visible change. */
     const [note, setNote] = useState<string | null>(null);
 
     const bodyRef = useRef<HTMLDivElement | null>(null);
-    const tuned = useTunedSection(bodyRef);
+    const tuned = useTunedSection(bodyRef, SECTIONS);
 
     const locked = busy !== null;
 
@@ -266,40 +201,20 @@ export default function Settings(): ReactElement {
         });
     }
 
-    useEffect(() => {
-        let alive = true;
-        window.rerun.library
-            .listRoots()
-            .then((next) => {
-                if (alive) setRoots(next);
-            })
-            .catch((err: unknown) => {
-                if (alive) {
-                    setRoots([]);
-                    setError(errorText(err));
-                }
-            });
-        return () => {
-            alive = false;
-        };
-    }, []);
-
-    /** Run one settings/system call with a lock, a note on success and a visible error. */
+    /**
+     * One settings/system call under the shared busy lock, plus this screen's
+     * extra: a returned string becomes a confirmation note ("Backup written
+     * to…"), because several of these actions have no other visible result.
+     */
     async function run(
         key: string,
         fn: () => Promise<string | null>,
     ): Promise<void> {
-        setBusy(key);
-        setError(null);
         setNote(null);
-        try {
+        await runAction(key, async () => {
             const message = await fn();
             if (message != null) setNote(message);
-        } catch (err) {
-            setError(errorText(err));
-        } finally {
-            setBusy(null);
-        }
+        });
     }
 
     function update<K extends keyof AppSettings>(
@@ -328,7 +243,11 @@ export default function Settings(): ReactElement {
         void run("addRoot", async () => {
             const path = await window.rerun.system.pickFolder();
             if (path == null) return null;
-            setRoots(await window.rerun.library.addRoot(path));
+            await window.rerun.library.addRoot(path);
+            // Re-read rather than trusting the mutation's return value: the roots
+            // are shared with the Library screen now, and one path in and out of
+            // the store is what keeps the two from disagreeing.
+            await refreshRoots();
             await refreshLibrary();
             return `Added ${path}. It will be scanned on the next pass.`;
         });
@@ -340,7 +259,8 @@ export default function Settings(): ReactElement {
         );
         if (!ok) return;
         void run(`removeRoot:${root.id}`, async () => {
-            setRoots(await window.rerun.library.removeRoot(root.id));
+            await window.rerun.library.removeRoot(root.id);
+            await refreshRoots();
             await refreshLibrary();
             return `Removed ${root.path}.`;
         });
@@ -461,7 +381,7 @@ export default function Settings(): ReactElement {
                     id="set-library"
                     aria-labelledby="set-library-title"
                 >
-                    <SectionHead id="set-library" />
+                    <SectionHead section={SECTIONS[0]} />
 
                     {roots == null && (
                         <div className="set-row set-muted">
@@ -544,7 +464,7 @@ export default function Settings(): ReactElement {
                     id="set-playback"
                     aria-labelledby="set-playback-title"
                 >
-                    <SectionHead id="set-playback" />
+                    <SectionHead section={SECTIONS[1]} />
 
                     <div className="set-row">
                         <div>
@@ -696,7 +616,7 @@ export default function Settings(): ReactElement {
                     id="set-interface"
                     aria-labelledby="set-interface-title"
                 >
-                    <SectionHead id="set-interface" />
+                    <SectionHead section={SECTIONS[2]} />
 
                     <div className="set-row">
                         <label className="set-label" htmlFor="set-start">
@@ -846,7 +766,7 @@ export default function Settings(): ReactElement {
                     id="set-system"
                     aria-labelledby="set-system-title"
                 >
-                    <SectionHead id="set-system" />
+                    <SectionHead section={SECTIONS[3]} />
 
                     <div className="set-row">
                         <div>
@@ -860,18 +780,18 @@ export default function Settings(): ReactElement {
                         <span className="set-value">
                             {system == null ? (
                                 <>
-                                    <span className="status-dot warn" />
+                                    <StatusDot status="warn" />
                                     checking…
                                 </>
                             ) : ffmpegOk ? (
                                 <>
-                                    <span className="status-dot" />
+                                    <StatusDot status="ok" />
                                     <b>{system.ffmpegVersion ?? "installed"}</b>
                                     · {system.ffmpegPath}
                                 </>
                             ) : (
                                 <>
-                                    <span className="status-dot bad" />
+                                    <StatusDot status="bad" />
                                     not found
                                 </>
                             )}
@@ -889,17 +809,17 @@ export default function Settings(): ReactElement {
                             {system == null ||
                             system.codecCheck === "pending" ? (
                                 <>
-                                    <span className="status-dot warn" />
+                                    <StatusDot status="warn" />
                                     pending
                                 </>
                             ) : system.codecCheck === "ok" ? (
                                 <>
-                                    <span className="status-dot" />
+                                    <StatusDot status="ok" />
                                     OK
                                 </>
                             ) : (
                                 <>
-                                    <span className="status-dot bad" />
+                                    <StatusDot status="bad" />
                                     FAILED
                                 </>
                             )}
@@ -920,31 +840,21 @@ export default function Settings(): ReactElement {
                         <span className="set-value">
                             {system == null ? (
                                 <>
-                                    <span className="status-dot warn" />
+                                    <StatusDot status="warn" />
                                     checking…
                                 </>
                             ) : (
                                 <>
-                                    <span
-                                        className={`status-dot${
-                                            system.hwAccel.vaapi === "ok"
-                                                ? ""
-                                                : system.hwAccel.vaapi ===
-                                                    "pending"
-                                                  ? " warn"
-                                                  : " bad"
-                                        }`}
+                                    <StatusDot
+                                        status={probeStatus(
+                                            system.hwAccel.vaapi,
+                                        )}
                                     />
                                     VAAPI
-                                    <span
-                                        className={`status-dot${
-                                            system.hwAccel.nvenc === "ok"
-                                                ? ""
-                                                : system.hwAccel.nvenc ===
-                                                    "pending"
-                                                  ? " warn"
-                                                  : " bad"
-                                        }`}
+                                    <StatusDot
+                                        status={probeStatus(
+                                            system.hwAccel.nvenc,
+                                        )}
                                     />
                                     NVENC
                                 </>

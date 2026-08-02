@@ -364,17 +364,6 @@ export class FfmpegSupervisor {
     }
 
     /**
-     * Stop every job under `prefix` except `keep` — used when a prewarmed episode
-     * is promoted: the outgoing encoder goes, the incoming one carries on with the
-     * buffer it has already built.
-     */
-    killByPrefixExcept(prefix: string, keep: string): void {
-        for (const key of [...this.jobs.keys()]) {
-            if (key !== keep && key.startsWith(prefix)) this.kill(key);
-        }
-    }
-
-    /**
      * Cap a key group at `limit` live jobs, killing the oldest first.
      *
      * Newest-wins is the only safe rule here: the oldest job under a channel

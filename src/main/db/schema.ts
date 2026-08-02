@@ -10,10 +10,20 @@
  * schema, append a new entry to `MIGRATIONS`; never edit an existing one.
  */
 
-import { SUPPORTED_VIDEO_CODECS } from "@shared/playback.js";
-
-/** `'h264','avc1',…` — the video codecs migration 3 re-labels, as a SQL list. */
-const VIDEO_CODEC_SQL_LIST = SUPPORTED_VIDEO_CODECS.map(
+/**
+ * The video codecs migration 3 re-labels, frozen as literals.
+ *
+ * Deliberately *not* derived from `SUPPORTED_VIDEO_CODECS` in
+ * `@shared/playback.js`: a migration's text is history, and building it from a
+ * live constant means adding a codec there silently rewrites a migration that
+ * has already run everywhere. Databases created after such an edit would take a
+ * different path through history than databases that migrated before it.
+ *
+ * Adding a codec to the shared list is still all that's needed for new scans —
+ * this list is only about what migration 3 did on the day it shipped.
+ */
+const MIGRATION_3_VIDEO_CODECS = ["h264", "avc1", "vp8", "vp9", "av1"];
+const VIDEO_CODEC_SQL_LIST = MIGRATION_3_VIDEO_CODECS.map(
     (codec) => `'${codec}'`,
 ).join(", ");
 
@@ -179,5 +189,19 @@ export const MIGRATIONS: string[] = [
     // riding along in that spread forever.
     `
   DELETE FROM settings WHERE key = 'hardwareEncode';
+  `,
+    // -- 6 ---------------------------------------------------------------------
+    //
+    // An index for `play_log.episode_id`, which carries an ON DELETE CASCADE with
+    // nothing behind it. SQLite has to find the referencing rows on every episode
+    // delete, and without an index that is a full scan of the log *per row* — the
+    // scanner's prune can delete hundreds in one pass after an unmounted root or a
+    // renamed folder.
+    //
+    // The log is also the one table with no upper bound: a row per airing, forever,
+    // and only `lastAired` ever reads it. Rows are tiny so this is not urgent, but
+    // the index is what stops the growth being felt in the *delete* path.
+    `
+  CREATE INDEX IF NOT EXISTS idx_playlog_episode ON play_log(episode_id);
   `,
 ];

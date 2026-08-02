@@ -30,6 +30,16 @@ interface Pill {
     tone: "ok" | "warn";
     /** Whether to render the status dot at all. */
     dot: boolean;
+    /**
+     * What a screen reader is told, which is deliberately *not* `text`.
+     *
+     * `text` carries a running count, and a live region wired straight to it
+     * would announce "SCANNING · 1,204 / 40,000" on every progress push —
+     * hundreds of interruptions during one scan of a large library. This is the
+     * pill's *state* instead, so the announcement fires when the situation
+     * changes rather than when a number does.
+     */
+    announcement: string;
 }
 
 const n = (value: number): string => value.toLocaleString();
@@ -45,32 +55,46 @@ export default function AppBar(): JSX.Element {
 
     let pill: Pill;
     if (scan.error) {
-        pill = { text: "SCAN FAILED · OPEN LIBRARY", tone: "warn", dot: true };
+        pill = {
+            text: "SCAN FAILED · OPEN LIBRARY",
+            tone: "warn",
+            dot: true,
+            announcement: "Library scan failed",
+        };
     } else if (scan.state === "scanning") {
         pill = {
             text: `SCANNING · ${n(scan.done)} / ${n(scan.total)}`,
             tone: "ok",
             dot: true,
+            announcement: "Scanning the library",
         };
     } else if (scan.state === "paused") {
         pill = {
             text: `SCAN PAUSED · ${n(scan.done)} / ${n(scan.total)}`,
             tone: "warn",
             dot: true,
+            announcement: "Library scan paused",
         };
     } else if (totalEpisodes === 0) {
-        pill = { text: "NO LIBRARY · ADD A FOLDER", tone: "warn", dot: false };
+        pill = {
+            text: "NO LIBRARY · ADD A FOLDER",
+            tone: "warn",
+            dot: false,
+            announcement: "No library yet — add a folder",
+        };
     } else if (unmatched > 0) {
         pill = {
             text: `${n(unmatched)} UNMATCHED · ${n(totalEpisodes)} EPISODES`,
             tone: "warn",
             dot: true,
+            announcement: "Some files are waiting to be matched",
         };
     } else {
         pill = {
             text: `LIBRARY OK · ${n(totalEpisodes)} EPISODES`,
             tone: "ok",
             dot: true,
+            announcement: "Library is up to date",
         };
     }
 
@@ -114,7 +138,14 @@ export default function AppBar(): JSX.Element {
                         aria-hidden="true"
                     />
                 )}
-                <span aria-live="polite">{pill.text}</span>
+                <span aria-hidden="true">{pill.text}</span>
+                {/*
+                    The announced copy: state, not counts. Visually hidden so the
+                    pill above stays the thing sighted users read.
+                */}
+                <span className="visually-hidden" aria-live="polite">
+                    {pill.announcement}
+                </span>
             </button>
         </header>
     );

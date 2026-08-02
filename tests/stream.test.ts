@@ -131,23 +131,64 @@ afterAll(async () => {
 });
 
 describe("urlFor", () => {
+    /** The per-boot key is minted inside the server; tests assert the rest. */
+    const withoutKey = (url: string): string => {
+        const parsed = new URL(url);
+        parsed.searchParams.delete("k");
+        return parsed.toString().replace(/\?$/, "");
+    };
+
     it("is the one URL shape the <video> element sees", () => {
-        expect(server.urlFor(directId)).toBe(
+        expect(withoutKey(server.urlFor(directId))).toBe(
             `http://127.0.0.1:${server.port}/stream/${directId}`,
         );
     });
 
     it("carries a seek as ?t= and a channel slot as ?ch=", () => {
-        expect(server.urlFor(7, 90)).toBe(
+        expect(withoutKey(server.urlFor(7, 90))).toBe(
             `http://127.0.0.1:${server.port}/stream/7?t=90`,
         );
-        expect(server.urlFor(7, 0)).toBe(
+        expect(withoutKey(server.urlFor(7, 0))).toBe(
             `http://127.0.0.1:${server.port}/stream/7`,
         );
-        expect(server.urlFor(7, 12.5, 3)).toBe(
+        expect(withoutKey(server.urlFor(7, 12.5, 3))).toBe(
             `http://127.0.0.1:${server.port}/stream/7?t=12.5&ch=3`,
         );
     });
+
+    it("carries the per-boot key on every stream URL", () => {
+        const key = new URL(server.urlFor(directId)).searchParams.get("k");
+        expect(key).toMatch(/^[\w-]{20,}$/);
+        // Same key for every episode this boot — it identifies the app, not a stream.
+        expect(new URL(server.urlFor(7, 90, 3)).searchParams.get("k")).toBe(
+            key,
+        );
+    });
+});
+
+/**
+ * Loopback binding keeps the LAN out; the key is what keeps the *machine* out.
+ * Without it any local process — or a browser page, whose Host is legitimately
+ * loopback — could walk the episode ids and read the bytes.
+ */
+describe("stream key", () => {
+    it("refuses a request with no key", async () => {
+        const res = await fetch(
+            `http://127.0.0.1:${server.port}/stream/${directId}`,
+        );
+        expect(res.status).toBe(403);
+    });
+
+    it("refuses a wrong key without revealing whether the episode exists", async () => {
+        const bad = `http://127.0.0.1:${server.port}/stream`;
+        const missing = await fetch(`${bad}/999999?k=nope`);
+        const real = await fetch(`${bad}/${directId}?k=nope`);
+        expect(missing.status).toBe(403);
+        expect(real.status).toBe(403);
+    });
+
+    // `/health` stays open on purpose — it carries nothing worth guarding, and
+    // startup verification runs before anyone holds a key. See the `health` suite.
 });
 
 describe("health", () => {
@@ -663,20 +704,6 @@ describe("FfmpegSupervisor", () => {
 
         sup.killAll();
         await new Promise<void>((r) => elsewhere.once("exit", () => r()));
-    });
-
-    it("killByPrefixExcept spares the job being promoted", async () => {
-        const sup = new FfmpegSupervisor();
-        const outgoing = spawnSleeper(sup, "channel:3:41");
-        const promoted = spawnSleeper(sup, "channel:3:42");
-
-        sup.killByPrefixExcept("channel:3:", "channel:3:42");
-        await new Promise<void>((r) => outgoing.once("exit", () => r()));
-        expect(sup.activeKeys()).toEqual(["channel:3:42"]);
-        expect(promoted.exitCode).toBeNull();
-
-        sup.killAll();
-        await new Promise<void>((r) => promoted.once("exit", () => r()));
     });
 
     /**

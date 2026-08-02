@@ -244,7 +244,7 @@
 
 .osd-btn.primary {
     background: var(--amber);
-    color: #201302;
+    color: var(--amber-ink);
     width: 46px;
     height: 46px;
 }

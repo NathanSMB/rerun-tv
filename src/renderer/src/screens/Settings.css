@@ -153,6 +153,8 @@
     overflow-wrap: anywhere;
 }
 
+/* Recolours the status line in place — it inherits the row's size, so this is a
+   modifier rather than another copy of `.form-error`. */
 .set-status-error {
     color: var(--danger);
 }
@@ -227,6 +229,8 @@
 
 /* Narrow windows drop the sticky rail to a row of stops above the content —
    still the dial, just laid flat. */
+/* 900, not the 860 the Guide and Library use: this screen's rail plus content
+   runs out of room sooner than a list of rows does. */
 @media (max-width: 900px) {
     .set-body {
         grid-template-columns: minmax(0, 1fr);

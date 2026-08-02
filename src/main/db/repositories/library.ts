@@ -1,5 +1,10 @@
 /**
- * Every SQL statement that touches the library tables (plan §4).
+ * Every *write* to the library tables, and the shared row mapping (plan §4).
+ *
+ * Read-model queries — the ones that exist to shape one view — deliberately
+ * live beside the view model they feed, in `services/` and `scheduler/`, rather
+ * than being funnelled through here as one-caller functions. What this module
+ * owns is anything that mutates, plus the row shapes everything above reuses.
  *
  * This is the camel-case boundary: rows come out of SQLite in snake_case and
  * leave this module shaped exactly like the interfaces in `shared/types.ts`, so

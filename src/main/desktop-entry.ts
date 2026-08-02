@@ -36,12 +36,41 @@ export function applicationsDir(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * Quote one argument for an `Exec=` line, per the Desktop Entry spec.
+ *
+ * Two separate escapes stack in that field and both bite real paths. `%` is a
+ * field code introducer, so a literal one has to be doubled or the launcher
+ * eats it and the character after it. Everything else is shell-ish quoting:
+ * inside double quotes the spec reserves `"`, `$`, backtick and backslash, and
+ * a path with a space in it is simply broken without the quotes at all.
+ *
+ * This matters because the value is a *path the user chose* — where they put
+ * the AppImage, or where the repo lives.
+ */
+export function quoteExecArg(arg: string): string {
+    const escaped = arg
+        .replaceAll("\\", "\\\\")
+        .replaceAll('"', '\\"')
+        .replaceAll("$", "\\$")
+        .replaceAll("`", "\\`")
+        .replaceAll("%", "%%");
+    return `"${escaped}"`;
+}
+
+/**
  * The entry itself, pure so the shape is testable.
  *
  * `StartupWMClass` covers the XWayland case, where matching is by `WM_CLASS`
- * rather than `app_id` — same value either way. `exec` is whatever launched us
- * this boot (the AppImage, or the dev Electron plus the repo), so the entry is
- * honest enough to launch from, but its real job is icon resolution.
+ * rather than `app_id` — same value either way. `exec` is the already-quoted
+ * command line that launched us this boot (the AppImage, or the dev Electron
+ * plus the repo), so the entry is honest enough to launch from, but its real
+ * job is icon resolution.
+ *
+ * `iconPath` is deliberately *not* quoted. `Icon` is an "iconstring" in the
+ * spec, not an exec string: only `Exec` (and `TryExec`) take shell quoting and
+ * field codes, and a value there runs to the end of the line, so a path with a
+ * space in it needs nothing. Quoting it would make the quotes part of the path
+ * and the icon would silently fail to resolve.
  */
 export function renderDesktopEntry(exec: string, iconPath: string): string {
     return [
@@ -63,7 +92,9 @@ export function renderDesktopEntry(exec: string, iconPath: string): string {
  *
  * @param iconSource where the bundled PNG lives this boot
  * @param iconDest   the stable copy the entry references, in our data dir
- * @param exec       the command line that reproduces this launch
+ * @param exec       the command line that reproduces this launch, already
+ *                   quoted with `quoteExecArg` by the caller (it may be several
+ *                   arguments, which is why this function cannot quote it)
  */
 export function ensureDesktopEntry(
     iconSource: string,

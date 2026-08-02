@@ -18,6 +18,7 @@ import { EVENTS, IPC } from "../../shared/ipc.js";
 import type {
     AppSettings,
     AssignUnmatchedInput,
+    ChannelDetail,
     CreateArcInput,
     CreateChannelInput,
     EpisodeView,
@@ -157,6 +158,9 @@ export function registerHandlers(ctx: HandlerContext): void {
 
     handle(IPC.library.removeRoot, (rootId: number) => {
         libraryRepo.removeScanRoot(db, rootId);
+        // Reconcile the watcher too, or the removed root keeps producing events
+        // for a library that no longer claims it.
+        ctx.scanner.startWatching();
         broadcast(EVENTS.libraryChanged);
         return libraryRepo.listScanRoots(db);
     });
@@ -211,6 +215,22 @@ export function registerHandlers(ctx: HandlerContext): void {
         return value;
     };
 
+    /**
+     * An edit to a channel's lineup, plus the reply every lineup mutation sends.
+     *
+     * The `discardReserved` is the load-bearing part. A prewarm reservation holds
+     * a cursor/bag computed under the *old* rules; if the user changes a mode
+     * mid-prewarm the repository clears the bag, and promoting the stale
+     * reservation would write the old-rules bag straight back over it. The
+     * episode-id guard in `promoteReserved` doesn't catch this, because the
+     * pick itself is usually unchanged — only the state behind it is. Dropping
+     * the reservation costs one replan at handoff and keeps the edit authoritative.
+     */
+    const lineupEdited = (channelId: number): ChannelDetail | null => {
+        discardReserved(db, channelId);
+        return channelsChanged(getChannelDetail(db, channelId));
+    };
+
     handle(IPC.channels.list, () => listChannelSummaries(db));
     handle(IPC.channels.get, (channelId: number) =>
         getChannelDetail(db, channelId),
@@ -237,17 +257,17 @@ export function registerHandlers(ctx: HandlerContext): void {
 
     handle(IPC.channels.addShow, (channelId: number, showId: number) => {
         channelRepo.addChannelShow(db, channelId, showId);
-        return channelsChanged(getChannelDetail(db, channelId));
+        return lineupEdited(channelId);
     });
     handle(IPC.channels.removeShow, (channelId: number, showId: number) => {
         channelRepo.removeChannelShow(db, channelId, showId);
-        return channelsChanged(getChannelDetail(db, channelId));
+        return lineupEdited(channelId);
     });
     handle(
         IPC.channels.setMode,
         (channelId: number, showId: number, mode: PlayMode) => {
             channelRepo.setChannelShowMode(db, channelId, showId, mode);
-            return channelsChanged(getChannelDetail(db, channelId));
+            return lineupEdited(channelId);
         },
     );
     handle(
@@ -265,19 +285,19 @@ export function registerHandlers(ctx: HandlerContext): void {
                 season,
                 mode,
             );
-            return channelsChanged(getChannelDetail(db, channelId));
+            return lineupEdited(channelId);
         },
     );
     handle(
         IPC.channels.setWeight,
         (channelId: number, showId: number, weight: number) => {
             channelRepo.setChannelShowWeight(db, channelId, showId, weight);
-            return channelsChanged(getChannelDetail(db, channelId));
+            return lineupEdited(channelId);
         },
     );
     handle(IPC.channels.resetProgress, (channelId: number, showId: number) => {
         resetProgress(db, channelId, showId);
-        return channelsChanged(getChannelDetail(db, channelId));
+        return lineupEdited(channelId);
     });
 
     // ---- player -------------------------------------------------------------
@@ -491,7 +511,14 @@ export function registerHandlers(ctx: HandlerContext): void {
     });
 }
 
-function countRows(db: Db, table: string): number {
+/**
+ * The tables `countRows` will interpolate. A union rather than a `string`, so a
+ * future caller physically cannot reach this with a value off the wire — the
+ * table name is the one part of these statements that cannot be a parameter.
+ */
+type CountableTable = "shows" | "episodes" | "channels";
+
+function countRows(db: Db, table: CountableTable): number {
     const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
         n: number;
     };

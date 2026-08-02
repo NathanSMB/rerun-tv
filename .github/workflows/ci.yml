@@ -1,9 +1,14 @@
 name: CI
 
-# PRs only: main is meant to change exclusively through PRs, so a push run on
-# main would re-test a commit whose PR run already passed.
+# PRs, plus main after a merge. A PR run tests the branch head rather than its
+# merge with main (see the checkout step), so two individually-green PRs can
+# still merge into a broken main — the push run is what catches that. It costs
+# one extra run per merge and is the only thing watching the branch everyone
+# builds on.
 on:
     pull_request:
+    push:
+        branches: [main]
 
 # A second push to the same branch makes the first run pointless; cancel it.
 concurrency:
@@ -27,6 +32,8 @@ jobs:
             # merge commit, so the badge step below has a branch to commit onto.
             # The tradeoff is that PR runs test the head commit, not its merge
             # with main.
+            # On a push run both of these are empty, which checks out the
+            # pushed commit — exactly what we want.
             - uses: actions/checkout@v4
               with:
                   ref: ${{ github.event.pull_request.head.ref }}
@@ -39,6 +46,9 @@ jobs:
 
             # The stream, loudness, MSE and integration suites mux their fixtures
             # with a real ffmpeg (`lavfi`) and assert against the bytes it emits.
+            # ~20s per run, uncached. A caching action would shave most of it off,
+            # but every third-party action is supply-chain surface on a repo that
+            # holds a `contents: write` token — not a trade worth making here.
             - name: Install ffmpeg
               run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
@@ -57,6 +67,13 @@ jobs:
             # Coverage thresholds live in vitest.config.ts: below 70% this step
             # goes red, which is what blocks the merge.
             - run: npm run test:coverage
+
+            # Typecheck is not a build: it never runs Rollup, so it cannot catch a
+            # renderer import that Vitest's esbuild resolves and the real bundler
+            # does not, or a React Compiler plugin incompatibility. This is the
+            # class of breakage an outside PR causes, and nothing else here saw it.
+            # (`npm run build` re-runs typecheck; the duplicate is a few seconds.)
+            - run: npm run build
 
             # Surface the numbers on the PR itself (checks tab → job summary).
             - name: Report coverage in the job summary
@@ -82,4 +99,8 @@ jobs:
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
                   git add README.md
                   git commit -q -m "Update coverage badge [skip ci]"
-                  git push -q origin "HEAD:${{ github.event.pull_request.head.ref }}"
+                  # A non-fast-forward here means the contributor pushed while we
+                  # were running; their push will produce a run that writes the
+                  # badge again. Not worth failing an otherwise green job over.
+                  git push -q origin "HEAD:${{ github.event.pull_request.head.ref }}" ||
+                      echo "Branch moved on; the badge will update on the next run"

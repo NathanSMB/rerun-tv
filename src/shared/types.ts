@@ -270,6 +270,16 @@ export interface ScanStatus {
     probed: number;
     /** Root currently being walked, for the "Scanning ~/TV" label. */
     currentRoot: string | null;
+    /**
+     * The most recent problem this pass hit, or null.
+     *
+     * Deliberately one slot, and deliberately last-error-wins: an unreadable
+     * directory, a watcher failure and a rejected arc detection all land here,
+     * so a pass with three problems reports the third. None of them stops the
+     * scan — they are all "this one file/folder didn't work out" — and a list
+     * would put a scrolling error log on a screen whose job is a progress bar.
+     * Individual failures are logged in full to the console.
+     */
     error: string | null;
 }
 

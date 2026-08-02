@@ -11,14 +11,15 @@
  *
  * The route takes an **episode id**, never a path. The renderer cannot ask this
  * server for an arbitrary file; it can only name a row the scanner already put
- * in the database. Combined with binding to 127.0.0.1 and a Host check, that is
- * the whole threat model.
+ * in the database. That, binding to 127.0.0.1, a Host check, and a per-boot key
+ * on every URL (`mintStreamKey`) are the whole threat model.
  *
  * Nothing here probes: the playback decision was made at scan time and lives on
  * the episode row (`playback_path`), which is what makes tune-in instant.
  */
 
 import type { ChildProcess } from "node:child_process";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
@@ -175,12 +176,12 @@ function contentTypeFor(container: string, filePath: string): string {
  * header the pump gets an opaque failure and every episode falls back to the
  * plain-`src` path the phase exists to retire.
  *
- * The threat model is unchanged and is not carried by CORS: the listener is
- * bound to 127.0.0.1, `isLoopbackHost` rejects a forged `Host` (DNS rebinding),
- * and the route takes an episode id the scanner wrote — never a path. A page on
- * the open web that guessed the port could already *play* these streams through
- * a `<video>` tag; being able to read the bytes of a file the user already owns
- * adds nothing to that.
+ * The threat model is not carried by CORS: the listener is bound to 127.0.0.1,
+ * `isLoopbackHost` rejects a forged `Host` (DNS rebinding), the route takes an
+ * episode id the scanner wrote — never a path — and every URL carries the
+ * per-boot key. Opening reads to any origin *that already has the key* is the
+ * point; without it the header grants nothing, which is why the key rather than
+ * this header is what keeps other local processes and browser pages out.
  */
 const CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -191,6 +192,30 @@ const CORS_HEADERS = {
     "Access-Control-Expose-Headers":
         "Content-Length, Content-Range, Accept-Ranges",
 } as const;
+
+/**
+ * A per-boot key every stream URL must carry.
+ *
+ * Loopback binding and the Host check keep the open web out, but they say
+ * nothing about the machine itself: without a key, any other local process —
+ * or any page in the user's browser, whose `Host` is legitimately loopback —
+ * can walk the small integer episode ids and *read* the bytes (the CORS header
+ * above is what makes them readable rather than merely playable). The key is
+ * minted at boot, never persisted, and only ever handed to our own renderer, so
+ * guessing it is the only way in.
+ */
+function mintStreamKey(): string {
+    return randomBytes(24).toString("base64url");
+}
+
+/** Constant-time compare so a wrong key can't be found a character at a time. */
+function keyMatches(expected: string, given: string | null): boolean {
+    if (given === null) return false;
+    const a = Buffer.from(expected);
+    const b = Buffer.from(given);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+}
 
 /** A parsed single byte range, or the two failure modes we must answer differently. */
 type ParsedRange =
@@ -288,6 +313,7 @@ export async function startStreamServer(
     opts: StreamServerOptions,
 ): Promise<StreamServer> {
     const { db, getSettings } = opts;
+    const streamKey = mintStreamKey();
     const getHwAccel =
         opts.getHwAccel ?? ((): HwAccelReport => PENDING_HW_ACCEL);
     const supervisor = new FfmpegSupervisor();
@@ -315,6 +341,12 @@ export async function startStreamServer(
         // routine here, and an unhandled one would take the main process down.
         res.on("error", () => {
             /* ignore — `req.on('close')` is where teardown actually happens. */
+        });
+        // Node routes socket resets to the response for body-less GETs, so this
+        // is belt and braces — but an unhandled 'error' on a request would take
+        // the main process down, and "which stream" is not worth guessing at.
+        req.on("error", () => {
+            /* ignore — same reason as above. */
         });
 
         if (!isLoopbackHost(req.headers.host)) {
@@ -345,6 +377,13 @@ export async function startStreamServer(
         if (req.method !== "GET" && req.method !== "HEAD") {
             res.writeHead(405, { ...CORS_HEADERS, Allow: "GET, HEAD" });
             res.end();
+            return;
+        }
+
+        // The per-boot key (see `mintStreamKey`). Checked before the episode is
+        // looked up so a caller without it can't even learn which ids exist.
+        if (!keyMatches(streamKey, url.searchParams.get("k"))) {
+            sendText(res, 403, "forbidden");
             return;
         }
 
@@ -563,10 +602,16 @@ export async function startStreamServer(
                         // The hardware failure the probe could not rule out: a driver that
                         // refuses this particular profile, an exhausted encoder session, a GPU
                         // that went away since launch. Nothing is on the wire yet, so retry.
+                        //
+                        // Unless the client left in the meantime: the replacement child
+                        // registers its teardown on `req.on("close")`, which has already
+                        // fired, so a software encoder spawned now would never be killed.
                         if (
                             usingAccel !== "software" &&
                             !headersSent &&
-                            !fellBack
+                            !fellBack &&
+                            !req.destroyed &&
+                            !res.writableEnded
                         ) {
                             fellBack = true;
                             console.error(
@@ -647,6 +692,7 @@ export async function startStreamServer(
         port,
         urlFor(episodeId: number, seekS?: number, channelId?: number): string {
             const url = new URL(`http://127.0.0.1:${port}/stream/${episodeId}`);
+            url.searchParams.set("k", streamKey);
             if (seekS !== undefined && seekS > 0)
                 url.searchParams.set("t", String(seekS));
             if (channelId !== undefined)

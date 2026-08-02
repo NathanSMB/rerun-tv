@@ -15,9 +15,11 @@
  *    component still re-reads through the store (`refreshChannelDetail` +
  *    `refreshChannels`) so the row above — whose on-deck line comes from the same
  *    scheduler state — never falls out of sync with the fold.
- *  - Deleting is a two-step *inside* the fold rather than a `window.confirm`:
- *    Electron does not implement `confirm()`, and an inline confirm keeps the
- *    destructive action attached to the channel it destroys.
+ *  - Deleting is a two-step *inside* the fold rather than a `window.confirm`.
+ *    A native modal would work (unlike `window.prompt`, which Electron really
+ *    does refuse — see `Guide.tsx`), but it takes the window, looks nothing like
+ *    the rest of this UI, and detaches the destructive action from the channel
+ *    it destroys. The inline confirm keeps the two together.
  */
 
 import type { LineupEntry, PlayMode } from "@shared/types.js";
@@ -30,19 +32,14 @@ import {
     useState,
 } from "react";
 import { useStore } from "../store.js";
+import { plural, useBusyAction } from "../utils.js";
+import AddShowPanel from "./AddShowPanel.js";
+import SeasonModeSeg from "./SeasonModeSeg.js";
 import "./ChannelFold.css";
 
 /** A weight is a lottery multiplier; past 10 the difference stops being legible. */
 const MIN_WEIGHT = 1;
 const MAX_WEIGHT = 10;
-
-function errorText(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
-}
-
-function plural(n: number, word: string): string {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
 
 interface Props {
     channelId: number;
@@ -70,8 +67,11 @@ export default function ChannelFold({
     const refreshChannels = useStore((s) => s.refreshChannels);
     const navigate = useStore((s) => s.navigate);
 
-    /** Name of the in-flight mutation, or null. Any value locks every control. */
-    const [busy, setBusy] = useState<string | null>(null);
+    /**
+     * The busy lock and last error, shared with every other mutating screen.
+     * Any `busy` value locks every control in the fold.
+     */
+    const { busy, error, run: runAction, setError } = useBusyAction();
 
     /**
      * The rename and renumber fields replace their pill the moment the draft opens,
@@ -82,8 +82,6 @@ export default function ChannelFold({
     const focusOnMount = useCallback((el: HTMLInputElement | null) => {
         el?.focus();
     }, []);
-    const [error, setError] = useState<string | null>(null);
-    const [query, setQuery] = useState("");
     /** Non-null while the identity field is being edited inline. */
     const [nameDraft, setNameDraft] = useState<string | null>(null);
     const [numberDraft, setNumberDraft] = useState<string | null>(null);
@@ -101,21 +99,16 @@ export default function ChannelFold({
     }, [confirmingDelete]);
 
     /**
-     * Run one mutation, then re-read the channel through the store. Every caller
-     * gets a disabled UI for the duration and a visible message on failure.
+     * Run one mutation, then re-read the channel through the store — the re-read
+     * is what keeps the row above (whose on-deck line comes from the same
+     * scheduler state) in step with the fold. See the file header.
      */
     async function run(key: string, fn: () => Promise<unknown>): Promise<void> {
-        setBusy(key);
-        setError(null);
-        try {
+        await runAction(key, async () => {
             await fn();
             await refreshChannelDetail();
             await refreshChannels();
-        } catch (err) {
-            setError(errorText(err));
-        } finally {
-            setBusy(null);
-        }
+        });
     }
 
     const episodeCounts = useMemo(() => {
@@ -129,15 +122,6 @@ export default function ChannelFold({
         () => new Set((detail?.lineup ?? []).map((entry) => entry.showId)),
         [detail],
     );
-
-    const candidates = useMemo(() => {
-        const q = query.trim().toLowerCase();
-        return shows.filter(
-            (show) =>
-                !lineupIds.has(show.id) &&
-                (q === "" || show.title.toLowerCase().includes(q)),
-        );
-    }, [shows, lineupIds, query]);
 
     // ---- identity -----------------------------------------------------------
 
@@ -169,20 +153,20 @@ export default function ChannelFold({
 
     async function deleteChannel(): Promise<void> {
         if (detail == null) return;
-        setBusy("delete");
-        setError(null);
-        try {
-            await window.rerun.channels.remove(detail.channel.id);
+        // Not `run`: this one must not re-read the detail afterwards — the channel
+        // it would read is the one just deleted.
+        await runAction("delete", async () => {
+            try {
+                await window.rerun.channels.remove(detail.channel.id);
+            } catch (err) {
+                setConfirmingDelete(false);
+                throw err;
+            }
             // Close before refreshing: the fold is about to have no channel to show,
             // and `refreshChannels` would clear the editor out from under it anyway.
             onClose();
             await refreshChannels();
-        } catch (err) {
-            setError(errorText(err));
-            setConfirmingDelete(false);
-        } finally {
-            setBusy(null);
-        }
+        });
     }
 
     // ---- lineup mutations ---------------------------------------------------
@@ -343,7 +327,7 @@ export default function ChannelFold({
             </div>
 
             {error != null && (
-                <p className="fold-error" role="alert">
+                <p className="form-error fold-error" role="alert">
                     {error}
                 </p>
             )}
@@ -593,85 +577,21 @@ export default function ChannelFold({
                                                             )}
                                                         </small>
                                                     </span>
-                                                    <fieldset
-                                                        className="seg season-mode"
-                                                        aria-label={`Play mode for ${entry.title} season ${season.season}`}
-                                                    >
-                                                        <button
-                                                            type="button"
-                                                            className={
-                                                                season.modeOverride ==
-                                                                null
-                                                                    ? "on"
-                                                                    : undefined
-                                                            }
-                                                            aria-pressed={
-                                                                season.modeOverride ==
-                                                                null
-                                                            }
-                                                            disabled={locked}
-                                                            onClick={() =>
-                                                                setSeasonMode(
-                                                                    entry,
-                                                                    season.season,
-                                                                    null,
-                                                                )
-                                                            }
-                                                        >
-                                                            Use show (
-                                                            {entry.mode ===
-                                                            "sequential"
-                                                                ? "In order"
-                                                                : "Shuffle"}
+                                                    <SeasonModeSeg
+                                                        label={`Play mode for ${entry.title} season ${season.season}`}
+                                                        override={
+                                                            season.modeOverride
+                                                        }
+                                                        showMode={entry.mode}
+                                                        disabled={locked}
+                                                        onPick={(mode) =>
+                                                            setSeasonMode(
+                                                                entry,
+                                                                season.season,
+                                                                mode,
                                                             )
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            className={
-                                                                season.modeOverride ===
-                                                                "shuffle"
-                                                                    ? "on"
-                                                                    : undefined
-                                                            }
-                                                            aria-pressed={
-                                                                season.modeOverride ===
-                                                                "shuffle"
-                                                            }
-                                                            disabled={locked}
-                                                            onClick={() =>
-                                                                setSeasonMode(
-                                                                    entry,
-                                                                    season.season,
-                                                                    "shuffle",
-                                                                )
-                                                            }
-                                                        >
-                                                            Shuffle
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            className={
-                                                                season.modeOverride ===
-                                                                "sequential"
-                                                                    ? "on"
-                                                                    : undefined
-                                                            }
-                                                            aria-pressed={
-                                                                season.modeOverride ===
-                                                                "sequential"
-                                                            }
-                                                            disabled={locked}
-                                                            onClick={() =>
-                                                                setSeasonMode(
-                                                                    entry,
-                                                                    season.season,
-                                                                    "sequential",
-                                                                )
-                                                            }
-                                                        >
-                                                            In order
-                                                        </button>
-                                                    </fieldset>
+                                                        }
+                                                    />
                                                 </div>
                                             ))}
                                         </div>
@@ -688,69 +608,14 @@ export default function ChannelFold({
                     </p>
                 </div>
 
-                <div className="fold-right">
-                    <span className="caption">Add a show</span>
-                    {shows.length === 0 ? (
-                        <p className="fold-empty">
-                            <b>The library is empty.</b> Point Rerun TV at a
-                            folder of episodes and scan it — shows appear here
-                            as soon as the scanner has parsed them.
-                            <button
-                                type="button"
-                                className="btn btn-ghost btn-sm fold-empty-action"
-                                onClick={() => navigate("library")}
-                            >
-                                Open the Library
-                            </button>
-                        </p>
-                    ) : (
-                        <>
-                            <input
-                                className="search"
-                                type="search"
-                                placeholder="Search library…"
-                                aria-label="Search the library for a show to add"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                onKeyDown={(e) => {
-                                    // Esc clears the search rather than folding the editor shut —
-                                    // closing on a keystroke aimed at a text field loses work.
-                                    if (e.key === "Escape" && query !== "") {
-                                        e.stopPropagation();
-                                        setQuery("");
-                                    }
-                                }}
-                            />
-                            {candidates.length === 0 ? (
-                                <p className="fold-note">
-                                    {query.trim() === ""
-                                        ? "Every show in the library is already on this channel."
-                                        : `Nothing in the library matches “${query.trim()}”.`}
-                                </p>
-                            ) : (
-                                candidates.map((show) => (
-                                    <div className="pick" key={show.id}>
-                                        <span className="p-name">
-                                            {show.title}
-                                        </span>
-                                        <span className="p-eps">
-                                            {episodeCounts.get(show.id) ?? 0} EP
-                                        </span>
-                                        <button
-                                            type="button"
-                                            className="add"
-                                            aria-label={`Add ${show.title} to this channel`}
-                                            disabled={locked}
-                                            onClick={() => addShow(show.id)}
-                                        >
-                                            +
-                                        </button>
-                                    </div>
-                                ))
-                            )}
-                        </>
-                    )}
-                </div>
+                <AddShowPanel
+                    shows={shows}
+                    lineupShowIds={lineupIds}
+                    episodeCounts={episodeCounts}
+                    disabled={locked}
+                    onAdd={addShow}
+                    onOpenLibrary={() => navigate("library")}
+                />
             </div>
         </div>
     );

@@ -14,38 +14,19 @@
  *    set of episodes the heuristic missed.
  */
 
-import { episodeCode } from "@shared/playback.js";
-import type {
-    ArcView,
-    Episode,
-    LibraryShow,
-    ScanRoot,
-    Show,
-    UnmatchedFile,
-} from "@shared/types.js";
+import type { ArcView, LibraryShow, UnmatchedFile } from "@shared/types.js";
 import {
-    type FormEvent,
     type ReactElement,
     useCallback,
     useEffect,
     useMemo,
     useState,
 } from "react";
+import ArcBuilder from "../components/ArcBuilder.js";
+import AssignPanel from "../components/AssignPanel.js";
 import { useStore } from "../store.js";
+import { errorText, plural } from "../utils.js";
 import "./Library.css";
-
-function errorText(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
-}
-
-function plural(n: number, word: string): string {
-    return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
-/** Season/episode order — the order the scheduler walks a show in. */
-function byAiring(a: Episode, b: Episode): number {
-    return a.season - b.season || a.episode - b.episode;
-}
 
 /**
  * What REMUX actually means for this show. The video is a stream copy either
@@ -72,11 +53,10 @@ export default function Library(): ReactElement {
     const library = useStore((s) => s.library);
     const shows = useStore((s) => s.shows);
     const scan = useStore((s) => s.scan);
+    const roots = useStore((s) => s.roots);
     const refreshLibrary = useStore((s) => s.refreshLibrary);
     const navigate = useStore((s) => s.navigate);
 
-    /** null while the roots are still being read — the empty state must not flash. */
-    const [roots, setRoots] = useState<ScanRoot[] | null>(null);
     const [selectedShowId, setSelectedShowId] = useState<number | null>(null);
     const [arcs, setArcs] = useState<ArcView[]>([]);
     const [arcsBusy, setArcsBusy] = useState(false);
@@ -86,24 +66,6 @@ export default function Library(): ReactElement {
     const [assigningId, setAssigningId] = useState<number | null>(null);
     const [dismissingId, setDismissingId] = useState<number | null>(null);
     const [buildingArc, setBuildingArc] = useState(false);
-
-    useEffect(() => {
-        let alive = true;
-        window.rerun.library
-            .listRoots()
-            .then((next) => {
-                if (alive) setRoots(next);
-            })
-            .catch((err: unknown) => {
-                if (alive) {
-                    setRoots([]);
-                    setActionError(errorText(err));
-                }
-            });
-        return () => {
-            alive = false;
-        };
-    }, []);
 
     // Keep a show selected so the arc panel always has something to show.
     useEffect(() => {
@@ -236,12 +198,12 @@ export default function Library(): ReactElement {
                         last scan · unchanged files skipped
                     </div>
                     {scan.error != null && (
-                        <p className="lib-error" role="alert">
+                        <p className="form-error lib-error" role="alert">
                             {scan.error}
                         </p>
                     )}
                     {actionError != null && (
-                        <p className="lib-error" role="alert">
+                        <p className="form-error lib-error" role="alert">
                             {actionError}
                         </p>
                     )}
@@ -302,7 +264,17 @@ export default function Library(): ReactElement {
                                     type="button"
                                     key={show.id}
                                     className={`show-row${show.id === selectedShowId ? " sel" : ""}`}
-                                    aria-pressed={show.id === selectedShowId}
+                                    // `aria-current`, not `aria-pressed`: exactly
+                                    // one row is selected at a time and selecting
+                                    // another deselects this one, which is
+                                    // "current item", not a toggle. (The episode
+                                    // pickers below *are* toggles and keep
+                                    // `aria-pressed`.)
+                                    aria-current={
+                                        show.id === selectedShowId
+                                            ? "true"
+                                            : undefined
+                                    }
                                     onClick={() => setSelectedShowId(show.id)}
                                 >
                                     <span className="s-block">
@@ -425,7 +397,7 @@ export default function Library(): ReactElement {
                     </div>
 
                     {arcsError != null && (
-                        <p className="lib-error" role="alert">
+                        <p className="form-error lib-error" role="alert">
                             {arcsError}
                         </p>
                     )}
@@ -496,354 +468,5 @@ export default function Library(): ReactElement {
                 </aside>
             </div>
         </>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Unmatched → show/season/episode
-// ---------------------------------------------------------------------------
-
-/**
- * The manual fix-up for a file the parser couldn't read. Inputs are validated
- * here (a show, positive integers, a sane double-episode range) so the obvious
- * mistakes never reach IPC; anything the main process rejects — a duplicate
- * episode, say — is surfaced verbatim rather than swallowed.
- */
-function AssignPanel({
-    file,
-    shows,
-    onAssigned,
-    onCancel,
-}: {
-    file: UnmatchedFile;
-    shows: Show[];
-    onAssigned: () => Promise<void>;
-    onCancel: () => void;
-}): ReactElement {
-    const [showId, setShowId] = useState<string>(
-        shows[0] != null ? String(shows[0].id) : "",
-    );
-    const [season, setSeason] = useState("1");
-    const [episode, setEpisode] = useState("1");
-    const [episodeEnd, setEpisodeEnd] = useState("");
-    const [title, setTitle] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-
-    const id = `assign-${file.id}`;
-
-    function positiveInt(raw: string): number | null {
-        const value = Number(raw);
-        return Number.isInteger(value) && value > 0 ? value : null;
-    }
-
-    async function submit(event: FormEvent): Promise<void> {
-        event.preventDefault();
-        setError(null);
-
-        const show = Number(showId);
-        if (!Number.isInteger(show) || show <= 0)
-            return setError("Pick a show for this file.");
-        const s = positiveInt(season);
-        if (s == null)
-            return setError("Season has to be a whole number, 1 or more.");
-        const e = positiveInt(episode);
-        if (e == null)
-            return setError("Episode has to be a whole number, 1 or more.");
-        let end: number | null = null;
-        if (episodeEnd.trim() !== "") {
-            end = positiveInt(episodeEnd);
-            if (end == null)
-                return setError(
-                    "Episode end has to be a whole number, 1 or more.",
-                );
-            if (end < e)
-                return setError(
-                    "Episode end has to be the same as, or after, the episode.",
-                );
-        }
-
-        setBusy(true);
-        try {
-            await window.rerun.library.assignUnmatched({
-                fileId: file.id,
-                showId: show,
-                season: s,
-                episode: e,
-                episodeEnd: end,
-                title: title.trim() === "" ? null : title.trim(),
-            });
-            await onAssigned();
-        } catch (err) {
-            setError(errorText(err));
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    return (
-        <form className="assign" onSubmit={(event) => void submit(event)}>
-            <p className="assign-why">Parser said: {file.reason}</p>
-            <div className="assign-grid">
-                <label htmlFor={`${id}-show`}>Show</label>
-                <select
-                    id={`${id}-show`}
-                    className="selectbox"
-                    value={showId}
-                    disabled={busy || shows.length === 0}
-                    onChange={(event) => setShowId(event.target.value)}
-                >
-                    {shows.length === 0 && (
-                        <option value="">No shows in the library yet</option>
-                    )}
-                    {shows.map((show) => (
-                        <option key={show.id} value={String(show.id)}>
-                            {show.title}
-                        </option>
-                    ))}
-                </select>
-
-                <label htmlFor={`${id}-season`}>Season</label>
-                <input
-                    id={`${id}-season`}
-                    className="textinput"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={season}
-                    disabled={busy}
-                    onChange={(event) => setSeason(event.target.value)}
-                />
-
-                <label htmlFor={`${id}-episode`}>Episode</label>
-                <input
-                    id={`${id}-episode`}
-                    className="textinput"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={episode}
-                    disabled={busy}
-                    onChange={(event) => setEpisode(event.target.value)}
-                />
-
-                <label htmlFor={`${id}-end`}>Episode end</label>
-                <input
-                    id={`${id}-end`}
-                    className="textinput"
-                    type="number"
-                    min={1}
-                    step={1}
-                    placeholder="only for a double"
-                    value={episodeEnd}
-                    disabled={busy}
-                    onChange={(event) => setEpisodeEnd(event.target.value)}
-                />
-
-                <label htmlFor={`${id}-title`}>Title</label>
-                <input
-                    id={`${id}-title`}
-                    className="textinput"
-                    type="text"
-                    placeholder="optional"
-                    value={title}
-                    disabled={busy}
-                    onChange={(event) => setTitle(event.target.value)}
-                />
-            </div>
-            {error != null && (
-                <p className="lib-error" role="alert">
-                    {error}
-                </p>
-            )}
-            <div className="assign-actions">
-                <button
-                    type="submit"
-                    className="btn btn-tune btn-sm"
-                    disabled={busy}
-                >
-                    {busy ? "Assigning…" : "Assign"}
-                </button>
-                <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={busy}
-                    onClick={onCancel}
-                >
-                    Cancel
-                </button>
-            </div>
-        </form>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// New arc from selection
-// ---------------------------------------------------------------------------
-
-/**
- * Group any two or more episodes into an arc. The main process stores them in
- * the show's airing order, regardless of the order in which they were selected.
- */
-function ArcBuilder({
-    showId,
-    onCreated,
-    onCancel,
-}: {
-    showId: number;
-    onCreated: () => Promise<void>;
-    onCancel: () => void;
-}): ReactElement {
-    const [episodes, setEpisodes] = useState<Episode[] | null>(null);
-    const [selected, setSelected] = useState<number[]>([]);
-    const [title, setTitle] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        let alive = true;
-        setEpisodes(null);
-        setSelected([]);
-        window.rerun.library
-            .listEpisodes(showId)
-            .then((eps) => {
-                if (alive) setEpisodes([...eps].sort(byAiring));
-            })
-            .catch((err: unknown) => {
-                if (alive) {
-                    setEpisodes([]);
-                    setError(errorText(err));
-                }
-            });
-        return () => {
-            alive = false;
-        };
-    }, [showId]);
-
-    const ordered = episodes ?? [];
-    const selectedSet = useMemo(() => new Set(selected), [selected]);
-    const indices = ordered
-        .map((ep, i) => (selectedSet.has(ep.id) ? i : -1))
-        .filter((i) => i >= 0);
-    const canCreate = indices.length >= 2;
-
-    let hint: string;
-    if (indices.length === 0) hint = "Pick the episodes that make up the arc.";
-    else if (indices.length === 1) hint = "An arc needs at least two parts.";
-    else hint = `${indices.length} parts selected · plays in airing order.`;
-
-    function toggle(episodeId: number): void {
-        setSelected((current) =>
-            current.includes(episodeId)
-                ? current.filter((id) => id !== episodeId)
-                : [...current, episodeId],
-        );
-    }
-
-    async function submit(event: FormEvent): Promise<void> {
-        event.preventDefault();
-        setError(null);
-        if (!canCreate) return setError("Select at least two episodes.");
-        if (title.trim() === "") return setError("Give the arc a name.");
-        setBusy(true);
-        try {
-            await window.rerun.library.createArc({
-                showId,
-                episodeIds: indices.map((i) => ordered[i].id),
-                title: title.trim(),
-            });
-            await onCreated();
-        } catch (err) {
-            setError(errorText(err));
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    return (
-        <form className="arc-builder" onSubmit={(event) => void submit(event)}>
-            <label
-                className="caption arc-builder-caption"
-                htmlFor={`arc-title-${showId}`}
-            >
-                New arc
-            </label>
-            <input
-                id={`arc-title-${showId}`}
-                className="textinput"
-                type="text"
-                placeholder="Arc name, e.g. Awakening"
-                value={title}
-                disabled={busy}
-                onChange={(event) => setTitle(event.target.value)}
-            />
-            {episodes == null ? (
-                <p className="lib-note">Loading episodes…</p>
-            ) : ordered.length === 0 ? (
-                <p className="lib-note">This show has no episodes to group.</p>
-            ) : (
-                <fieldset
-                    className="ep-list"
-                    aria-label="Episodes to group into an arc"
-                >
-                    {ordered.map((ep) => {
-                        const inArc = ep.partGroupId != null;
-                        const on = selectedSet.has(ep.id);
-                        return (
-                            <button
-                                type="button"
-                                key={ep.id}
-                                className={`ep-pick${on ? " on" : ""}`}
-                                aria-pressed={on}
-                                disabled={busy || inArc}
-                                title={
-                                    inArc
-                                        ? "Already part of an arc — ungroup it first"
-                                        : undefined
-                                }
-                                onClick={() => toggle(ep.id)}
-                            >
-                                <span className="ep-code">
-                                    {episodeCode(
-                                        ep.season,
-                                        ep.episode,
-                                        ep.episodeEnd,
-                                    )}
-                                </span>
-                                <span className="ep-title">
-                                    {ep.title ?? "—"}
-                                </span>
-                                {inArc && (
-                                    <span className="ep-flag">IN ARC</span>
-                                )}
-                            </button>
-                        );
-                    })}
-                </fieldset>
-            )}
-            <p className="arc-hint">{hint}</p>
-            {error != null && (
-                <p className="lib-error" role="alert">
-                    {error}
-                </p>
-            )}
-            <div className="assign-actions">
-                <button
-                    type="submit"
-                    className="btn btn-tune btn-sm"
-                    disabled={busy || !canCreate}
-                >
-                    {busy ? "Grouping…" : "Create arc"}
-                </button>
-                <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={busy}
-                    onClick={onCancel}
-                >
-                    Cancel
-                </button>
-            </div>
-        </form>
     );
 }
