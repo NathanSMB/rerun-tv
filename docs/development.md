@@ -101,6 +101,36 @@ docs/                this documentation, plus the original plan and mockup
 - **Style is not a matter of opinion.** [Biome](https://biomejs.dev) formats and
   lints everything, and the pre-commit hook enforces it — see below.
 
+## The React Compiler
+
+The renderer is built with the [React Compiler](https://react.dev/learn/react-compiler)
+(`babel-plugin-react-compiler`, wired into `@vitejs/plugin-react` in
+`electron.vite.config.ts`). It memoizes components and hooks automatically at
+build time, so a store update no longer re-renders every screen that happens to
+be mounted — each component re-renders only when the values it actually reads
+change.
+
+Three practical consequences:
+
+- **Don't hand-memoize new code.** New components don't need `useMemo`,
+  `useCallback` or `React.memo` for render performance; the compiler inserts the
+  caching itself. The existing calls in `Library.tsx`, `ChannelFold.tsx` and
+  friends are harmless — the compiler understands and preserves them — they're
+  just no longer load-bearing. (`useCallback` can still be *semantically*
+  required, e.g. a ref callback that must be stable across renders.)
+- **It applies to `npm run dev` and `npm run build` alike**, so what you profile
+  in dev is what ships. It does not run over `main/` or `preload/` — those have
+  no React in them.
+- **Tests run uncompiled.** Vitest transforms `.tsx` with esbuild
+  (`vitest.config.ts`), not Babel, so `tests/renderer/` mounts the unmemoized
+  components. That is fine — those suites assert which store actions effects
+  pick, not render counts — but it means a memoization-dependent behaviour can't
+  be pinned by a test there.
+
+The compiler assumes the [Rules of React](https://react.dev/reference/rules).
+When a component breaks them it is silently skipped rather than miscompiled, so
+a rule violation costs the optimization, not correctness.
+
 ## Formatting and linting
 
 One tool does both: **Biome**, configured in `biome.json`. It replaces what a

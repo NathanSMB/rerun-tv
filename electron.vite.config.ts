@@ -37,7 +37,13 @@ export default defineConfig({
     },
     renderer: {
         root: resolve("src/renderer"),
-        plugins: [react()],
+        plugins: [
+            react({
+                babel: {
+                    plugins: [["babel-plugin-react-compiler", {}]],
+                },
+            }),
+        ],
         resolve: {
             alias: {
                 "@shared": resolve("src/shared"),
