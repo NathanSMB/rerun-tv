@@ -43,6 +43,7 @@
         "electron-builder": "^25.1.8",
         "electron-vite": "^4.0.0",
         "happy-dom": "^20.11.1",
+        "husky": "^9.1.7",
         "react": "^19.1.1",
         "react-dom": "^19.1.1",
         "typescript": "^7.0.2",
