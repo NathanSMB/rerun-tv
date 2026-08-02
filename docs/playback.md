@@ -198,9 +198,10 @@ all measured against Electron 38.8.6 rather than taken from the spec (the spike
 is reproducible from [pip-plan.html](pip-plan.html) §2):
 
 **Document PiP does not work.** `documentPictureInPicture.requestWindow()` throws
-`InvalidStateError: Internal error: no window`. That rules out floating the whole
-stage — our OSD included — and forces the per-element approach everything below
-is shaped around.
+`InvalidStateError: Internal error: no window`. That ruled out floating the whole
+stage — our OSD included — and forced the per-element approach everything below
+is shaped around. (No longer true on Electron 43: the call succeeds behind a
+user gesture. The design stands, but the constraint that produced it is gone.)
 
 **A fresh entry needs user activation; a transfer does not.**
 `video.requestPictureInPicture()` outside a gesture throws `NotAllowedError:

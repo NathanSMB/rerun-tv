@@ -104,7 +104,7 @@ docs/                this documentation, plus the original plan and mockup
 ## The one native-module gotcha
 
 `better-sqlite3` is a native module, and Electron and plain Node use **different
-ABI versions** (`NODE_MODULE_VERSION` 139 vs 137 here). Only one build can exist
+ABI versions** (`NODE_MODULE_VERSION` 148 vs 137 here). Only one build can exist
 on disk at a time, so:
 
 - **Running the app** needs the Electron build. This is the default — `postinstall`

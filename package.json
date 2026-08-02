@@ -32,7 +32,7 @@
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
-    "electron": "^38.1.2",
+    "electron": "^43.2.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^4.0.0",
     "happy-dom": "^20.11.1",
@@ -66,7 +66,7 @@
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
-    "electron@38.8.6": true,
+    "electron@43.2.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.1": true
   }

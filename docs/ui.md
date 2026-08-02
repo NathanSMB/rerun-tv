@@ -192,9 +192,12 @@ picture-in-picture.
 ### Picture-in-picture — the channel follows you
 
 A PiP button in the OSD row, or `P`, floats the picture in an always-on-top
-window (designed in [pip-plan.html](pip-plan.html)). It is *element* PiP —
-Document PiP is not implemented in Electron 38, so there is no way to put our own
-OSD in the floating window; the controls in it are Chromium's.
+window (designed in [pip-plan.html](pip-plan.html)). It is *element* PiP, so
+there is no OSD of ours in the floating window; the controls in it are
+Chromium's. (Document PiP was broken in Electron 38, which forced that choice;
+as of Electron 43 `documentPictureInPicture.requestWindow()` works, so floating
+a surface with our own OSD is now an *option* — the element approach below is
+simply what is built.)
 
 Three consequences are worth knowing before touching any of it:
 

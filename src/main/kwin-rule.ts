@@ -14,9 +14,12 @@
  *
  * So the rule is the mechanism, and the only question is who writes it. Making
  * the viewer add it by hand is a poor answer for a feature that is meant to work
- * out of the box — and a worse one here than usual, because the floating window
- * has no titlebar, so the usual route (right-click → Configure Special Window
- * Settings) does not exist for it. This module writes it instead.
+ * out of the box. This module writes it instead. (The manual route does exist:
+ * as of Electron 43, right-clicking the floating window forwards to KWin's
+ * window menu — `xdg_toplevel.show_window_menu` — so Configure Special Window
+ * Settings is reachable by hand; on Electron 38 that click was swallowed. The
+ * rule still wins on automation, and manual "Keep Above" only buys `AboveLayer`,
+ * not the overlay layer this file is about.)
  *
  * Because the rule is enforced by the compositor rather than requested by the
  * client, it works the same on Wayland and on X11 — which is why this is now the
