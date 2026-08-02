@@ -12,6 +12,7 @@ export default defineConfig({
             },
         },
         build: {
+            outDir: "dist/main",
             rollupOptions: { input: { index: resolve("src/main/index.ts") } },
         },
     },
@@ -21,6 +22,7 @@ export default defineConfig({
             alias: { "@shared": resolve("src/shared") },
         },
         build: {
+            outDir: "dist/preload",
             rollupOptions: {
                 input: { index: resolve("src/preload/index.ts") },
                 // Sandboxed Electron preloads run in a restricted CommonJS context.
@@ -43,6 +45,7 @@ export default defineConfig({
             },
         },
         build: {
+            outDir: resolve("dist/renderer"),
             rollupOptions: {
                 input: { index: resolve("src/renderer/index.html") },
             },

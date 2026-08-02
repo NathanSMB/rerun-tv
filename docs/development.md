@@ -36,7 +36,7 @@ has no hook until someone has installed once.
 | `npm run dev` | electron-vite dev server — renderer HMR, main process restarts on change |
 | `npm run rebuild:electron` | Recompile `better-sqlite3` for Electron's ABI (needed to *run* the app) |
 | `npm run rebuild:node` | Recompile it for plain Node's ABI (needed to run the *tests*) |
-| `npm run build` | Typecheck, then build all three targets into `out/` |
+| `npm run build` | Typecheck, then build all three targets into `dist/` |
 | `npm start` | Preview a production build |
 | `npm run typecheck` | `tsc --noEmit` over the Node target and the web target |
 | `npm run lint` | Biome — formatting, import order and lint rules, no writes |
@@ -317,7 +317,7 @@ accelerated `playbackRate`, and fails on any stall over three seconds, on
 sustained over-budget encoder counts, or on an episode airing twice.
 
 ```
-npm run build && npm run rebuild:electron   # it drives the real app in out/
+npm run build && npm run rebuild:electron   # it drives the real app in dist/
 npm run soak                                # 6 episodes at 8x on channel 1
 node scripts/soak.mjs --episodes 4 --rate 12 --channel 2
 node scripts/soak.mjs --help

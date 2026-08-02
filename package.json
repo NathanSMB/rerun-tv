@@ -4,7 +4,7 @@
     "description": "Turn a local media library into lean-back TV channels",
     "author": "Nathan Burchill",
     "license": "MIT",
-    "main": "./out/main/index.js",
+    "main": "./dist/main/index.js",
     "type": "module",
     "scripts": {
         "dev": "electron-vite dev",
@@ -54,7 +54,7 @@
             "buildResources": "resources"
         },
         "files": [
-            "out/**/*",
+            "dist/**/*",
             "resources/**/*",
             "package.json"
         ],

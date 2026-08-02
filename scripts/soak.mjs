@@ -18,7 +18,7 @@
  *
  * It is deliberately not part of `npm test`: it needs a real library, a display,
  * and minutes rather than milliseconds. Run `npm run build` first — it drives the
- * built app in `out/`, not the dev server — and `npm run rebuild:electron`, since
+ * built app in `dist/`, not the dev server — and `npm run rebuild:electron`, since
  * `npm test` leaves `better-sqlite3` on the Node ABI and the app will not boot on
  * that.
  *
@@ -385,7 +385,7 @@ class Cdp {
 // ---------------------------------------------------------------------------
 
 function launch(options) {
-    // Default: the local Electron on the built `out/` tree, which is what `main` in
+    // Default: the local Electron on the built `dist/` tree, which is what `main` in
     // package.json points at — so `npm run build` first.
     const command = process.env.RERUN_SOAK_BIN ?? "npx";
     const leading = process.env.RERUN_SOAK_BIN
