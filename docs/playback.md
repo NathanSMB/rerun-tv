@@ -22,7 +22,7 @@ instant.
 **The video codec alone decides between remux and transcode**, because it is the
 only stream whose re-encode is expensive. That split is phase 1 of the stall fix:
 before it, an AC3 soundtrack dragged a perfectly playable H.264 stream onto
-libx264, which in the reference library meant 328 of 392 episodes were being
+libx264, which in the reference library meant 328 of 386 episodes were being
 fully re-encoded for no reason — and a full re-encode is what turns a dropped
 connection into a minute of dead air instead of a second.
 
@@ -43,9 +43,14 @@ can see what a file will cost before you ever tune in.
 `src/main/stream/server.ts`. Binds to **127.0.0.1** on an OS-assigned port.
 
 ```
-GET /stream/:episodeId?t=<seek>&ch=<channelId>
+GET /stream/:episodeId?k=<per-boot key>&t=<seek>&ch=<channelId>
 GET /health
 ```
+
+`k` is minted at startup, never persisted, and handed only to our own renderer
+through `urlFor`. Without it the route answers `403` — before it looks the
+episode up, so a caller cannot even learn which ids exist. `/health` is open;
+it carries nothing.
 
 One URL shape for all three paths — the player never has to know which one it's
 getting until it decides how to read it.
@@ -68,10 +73,15 @@ which is what makes piping possible in the first place — and, not by coinciden
 exactly the shape MediaSource wants.
 
 Every response carries `Access-Control-Allow-Origin: *`. A `<video src>` fetches
-media without CORS; the renderer's pump uses `fetch()` from a `file://` origin and
-is gated where the element was not. This does not widen the threat model: the
-listener is loopback-only, the `Host` check stops DNS rebinding, and the route
-takes **episode ids**, never filesystem paths.
+media without CORS; the renderer's pump uses `fetch()` from the renderer's
+`app://bundle` origin and is gated where the element was not.
+
+The threat model is carried by four things, not by that header: the listener is
+loopback-only, the `Host` check stops DNS rebinding, the route takes **episode
+ids** rather than filesystem paths, and every URL carries a **per-boot key**
+(`?k=`) minted at startup and handed only to our own renderer. The key is what
+keeps out the callers loopback cannot exclude — another process on the machine,
+or a page in the user's browser, whose `Host` is legitimately loopback.
 
 ## The supervisor
 
@@ -83,7 +93,6 @@ same episode) replaces its own encoder without any explicit teardown call.
 Keys are grouped by prefix, which carries the per-channel budget:
 
 - `killByPrefix('channel:3:')` retires a whole channel.
-- `killByPrefixExcept` spares the job being promoted in a handoff.
 - `trimGroup(prefix, 2)` caps a channel at **two** live jobs — the episode on air
   plus the one prewarming behind it. Oldest-first, by spawn order rather than by a
   millisecond clock, because two jobs can start inside the same millisecond and a
@@ -113,8 +122,9 @@ So the renderer fetches the pipe itself and feeds a `MediaSource`:
   arbitrary chunk boundaries and skipping the trailing `mfra` ffmpeg writes when
   it closes the file.
 - **Codec strings** — derived from the `stsd` sample descriptions: `avcC` →
-  `avc1.PPCCLL`, and `esds`/`dOps`/`dfLa` → `mp4a.40.N`, `mp4a.6b`, `opus`,
-  `flac`. Anything it cannot name returns null, and that episode falls back to a
+  `avc1.PPCCLL`, `esds` → `mp4a.40.N` / `mp4a.6b`, and the bare sample-entry
+  fourccs `Opus` / `fLaC` → `opus` / `flac` (which are complete codec strings on
+  their own, so the `dOps`/`dfLa` boxes are never parsed). Anything it cannot name returns null, and that episode falls back to a
   plain `<video src>` — worse than the pump, but no worse than before phase 2.
 - **Read policy** — read until 60s are buffered ahead of the playhead, then stop
   reading. TCP backpressure throttles ffmpeg exactly as it did before; the

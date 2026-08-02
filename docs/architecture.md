@@ -90,9 +90,12 @@ store subscribes to all three once, in `init()`.
 - **It's already the seam for casting** to another device on the LAN, post-MVP.
 
 The server binds to `127.0.0.1` on an OS-assigned port, rejects non-loopback
-`Host` headers, and takes episode **ids** — never filesystem paths — from the
-client. Responses carry `Access-Control-Allow-Origin: *`, because the renderer
-reads stream bytes itself now (see below).
+`Host` headers, takes episode **ids** — never filesystem paths — from the
+client, and requires a random per-boot key (`?k=`) on every stream URL.
+Responses carry `Access-Control-Allow-Origin: *`, because the renderer reads
+stream bytes itself now (see below) — which is exactly why the key exists:
+loopback and the `Host` check keep the open web out, but say nothing about
+another process on the machine, or a page in the user's own browser.
 
 ## Why the renderer has its own scheme instead of `file://`
 

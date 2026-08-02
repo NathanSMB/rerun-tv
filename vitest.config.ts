@@ -6,6 +6,11 @@ export default defineConfig({
         alias: {
             "@shared": resolve("src/shared"),
             "@main": resolve("src/main"),
+            "@renderer": resolve("src/renderer/src"),
+            // Electron is a process boundary, not a dependency we can load in
+            // Node — aliasing it to a recording stub is what lets `handlers.ts`
+            // be tested for real. See the stub's header.
+            electron: resolve("tests/helpers/electron.ts"),
         },
     },
     // The renderer tests are `.tsx` and mount real components; everything else in
@@ -31,15 +36,17 @@ export default defineConfig({
             // `json-summary` writes coverage/coverage-summary.json, which
             // scripts/coverage-badge.mjs turns into the README badge in CI.
             reporter: ["text", "html", "json-summary"],
-            // A floor, not a target: coverage sat at ~73% lines / 78% functions /
-            // 82% branches when this was set, so 70% only stops regressions.
-            // Raise it as the backfill lands. Only applies with `--coverage`, so
-            // plain `npm test` still never fails on a number.
+            // A floor, not a target. Raised to 75 once the IPC handler and
+            // Library screen suites landed and took the numbers to ~80% lines /
+            // 77% functions / 82% branches — the floor sits a few points under
+            // the real figure so ordinary churn doesn't trip it, and moves up
+            // again as the backfill continues. Only applies with `--coverage`,
+            // so plain `npm test` still never fails on a number.
             thresholds: {
-                statements: 70,
-                branches: 70,
-                functions: 70,
-                lines: 70,
+                statements: 75,
+                branches: 75,
+                functions: 75,
+                lines: 75,
             },
         },
     },

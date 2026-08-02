@@ -51,16 +51,24 @@
  * the floating window.
  */
 
-import { formatDuration } from "@shared/playback.js";
-import type { NowPlaying } from "@shared/types.js";
+import { formatDuration, withSeek } from "@shared/playback.js";
 import { SLEEP_STEP_MIN } from "@shared/types.js";
 import type { JSX, WheelEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import SleepPanel from "../components/SleepPanel.js";
 import Slider from "../components/Slider.js";
 import { createPipMachine, isFloating, type PipEvent } from "../player/pip.js";
+import {
+    EMPTY_STAGE,
+    mirrorPending,
+    other,
+    reconcile,
+    type SlotId,
+    type StageState,
+    slotFor,
+    writeSlot,
+} from "../player/stage.js";
 import VideoSurface, {
-    type VideoSource,
     type VideoSurfaceHandle,
 } from "../player/VideoSurface.js";
 import { endsPlayableUnit, useStore } from "../store.js";
@@ -72,6 +80,10 @@ import "./Player.css";
  * promise that the next episode is ready, and now it actually is.
  */
 const UP_NEXT_WINDOW_S = 30;
+// Coupled across the process boundary to `MAX_JOBS_PER_CHANNEL` in
+// `main/stream/server.ts`: the channel is allowed two encoders precisely so the
+// episode on air and the one prewarming inside this window can overlap. Widen
+// this much beyond the second encoder's reach and the prewarm is wasted work.
 
 /** How long the channel banner stays up after a tune-in or a handoff. */
 const BANNER_MS = 4000;
@@ -91,94 +103,6 @@ const ACTIVITY_THROTTLE_MS = 150;
 
 const clamp = (value: number, max: number): number =>
     Math.min(max, Math.max(0, value));
-
-// ---------------------------------------------------------------------------
-// The stage
-// ---------------------------------------------------------------------------
-
-/** Which of the two surfaces we mean. */
-type SlotId = "a" | "b";
-
-/** What one surface is playing, plus the display offset a URL-seek left behind. */
-interface Slot {
-    episodeId: number;
-    url: string;
-    /** Seconds the stream was started at; added to `currentTime` for display. */
-    offset: number;
-    source: VideoSource;
-}
-
-interface StageState {
-    active: SlotId;
-    a: Slot | null;
-    b: Slot | null;
-    /** Per-slot reload counter: Retry re-opens one stream without touching the other. */
-    generation: { a: number; b: number };
-}
-
-const other = (slot: SlotId): SlotId => (slot === "a" ? "b" : "a");
-
-function slotFor(playing: NowPlaying, offset = 0, url?: string): Slot {
-    const streamUrl = url ?? playing.streamUrl;
-    return {
-        episodeId: playing.episode.id,
-        url: streamUrl,
-        offset,
-        source: {
-            // Identity of the stream, not of the episode: a seek must open a new one.
-            key: `${playing.episode.id}@${offset}`,
-            url: streamUrl,
-            playbackPath: playing.episode.playbackPath,
-            // What is left of the episode from where this stream starts — the pipe's
-            // own timestamps restart at zero after an `-ss` seek.
-            durationS: Math.max(1, playing.episode.durationS - offset),
-        },
-    };
-}
-
-function writeSlot(
-    stage: StageState,
-    slot: SlotId,
-    value: Slot | null,
-): StageState {
-    return slot === "a" ? { ...stage, a: value } : { ...stage, b: value };
-}
-
-const EMPTY_STAGE: StageState = {
-    active: "a",
-    a: null,
-    b: null,
-    generation: { a: 0, b: 0 },
-};
-
-/**
- * Fold a new `nowPlaying` into the stage.
- *
- * The important branch is the first one: when the standby already holds the
- * episode the store just promoted, the handoff is a *flip* — the element keeps
- * its buffer and its ffmpeg, and playback starts on the next frame. Anything
- * else is an ordinary load into the active surface, which also discards a
- * standby that is now stale (a skip mid-prewarm, say).
- */
-function reconcile(stage: StageState, playing: NowPlaying | null): StageState {
-    if (playing === null)
-        return {
-            ...EMPTY_STAGE,
-            active: stage.active,
-            generation: stage.generation,
-        };
-
-    const standbySlot = other(stage.active);
-    const standby = stage[standbySlot];
-    if (standby !== null && standby.episodeId === playing.episode.id) {
-        return writeSlot({ ...stage, active: standbySlot }, stage.active, null);
-    }
-    return writeSlot(
-        writeSlot(stage, stage.active, slotFor(playing)),
-        standbySlot,
-        null,
-    );
-}
 
 /**
  * The Media Session, when there is one.
@@ -230,6 +154,7 @@ export default function Player({
     const adjustSleep = useStore((s) => s.adjustSleep);
     const sleepNow = useStore((s) => s.sleepNow);
     const setVolume = useStore((s) => s.setVolume);
+    const adjustVolume = useStore((s) => s.adjustVolume);
     const toggleMute = useStore((s) => s.toggleMute);
 
     const stageRef = useRef<HTMLDivElement>(null);
@@ -596,29 +521,7 @@ export default function Player({
 
     /** Mirror the store's pending pick into the standby surface, and drop it when it goes. */
     useEffect(() => {
-        setStage((current) => {
-            const slot = other(current.active);
-            const clear =
-                current[slot] === null
-                    ? current
-                    : writeSlot(current, slot, null);
-            if (pendingNext === null) return clear;
-
-            /**
-             * A channel whose lineup has exactly one playable unit picks the episode it
-             * is already playing. There is nothing to prewarm — and worse, the standby
-             * would request the same stream URL on the same channel, which is the same
-             * encoder slot, and taking that slot would kill the stream on screen. The
-             * handoff for this case is an ordinary reload, which costs tune-in latency
-             * on a channel with one episode in it. Fine.
-             */
-            if (pendingNext.episode.id === current[current.active]?.episodeId)
-                return clear;
-
-            if (current[slot]?.episodeId === pendingNext.episode.id)
-                return current;
-            return writeSlot(current, slot, slotFor(pendingNext));
-        });
+        setStage((current) => mirrorPending(current, pendingNext));
     }, [pendingNext]);
 
     /**
@@ -716,8 +619,6 @@ export default function Player({
                 return;
             }
 
-            const base = nowPlaying.streamUrl;
-            const sep = base.includes("?") ? "&" : "?";
             const at = Math.floor(target);
             wantsPlayRef.current = true;
             setVideoTime(0);
@@ -726,7 +627,7 @@ export default function Player({
                 writeSlot(
                     current,
                     current.active,
-                    slotFor(nowPlaying, at, `${base}${sep}t=${at}`),
+                    slotFor(nowPlaying, at, withSeek(nowPlaying.streamUrl, at)),
                 ),
             );
         },
@@ -928,11 +829,11 @@ export default function Player({
                     break;
                 case "ArrowUp":
                     e.preventDefault();
-                    setVolume(Math.min(1, volume + VOLUME_STEP));
+                    adjustVolume(VOLUME_STEP);
                     break;
                 case "ArrowDown":
                     e.preventDefault();
-                    setVolume(Math.max(0, volume - VOLUME_STEP));
+                    adjustVolume(-VOLUME_STEP);
                     break;
                 case "ArrowRight":
                     e.preventDefault();
@@ -1000,9 +901,8 @@ export default function Player({
         pipFloating,
         navigate,
         sleepOpen,
-        setVolume,
+        adjustVolume,
         leavePlayer,
-        volume,
     ]);
 
     if (!nowPlaying) return null;

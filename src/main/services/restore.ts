@@ -88,7 +88,10 @@ export interface ApplyOptions {
     keep?: number;
 }
 
-function count(db: Db, table: string): number {
+/** See `CountableTable` in `ipc/handlers.ts` — a table name can't be a parameter. */
+type CountableTable = "shows" | "episodes" | "channels";
+
+function count(db: Db, table: CountableTable): number {
     const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
         n: number;
     };
@@ -189,6 +192,11 @@ export function inspectAndStage(
         // VACUUM INTO rather than a file copy: it merges any unmerged WAL, writes a
         // defragmented self-contained file with no sidecars, and fails loudly on a
         // source that integrity_check somehow let through.
+        //
+        // Synchronous, so it blocks the main process for its duration. That is
+        // fine at the tens of megabytes a library.db actually reaches — and the
+        // streams themselves are child processes, so a paused event loop does
+        // not stop the picture. At hundreds of megabytes this wants a worker.
         rmSync(stagedPath, { force: true });
         source.prepare("VACUUM INTO ?").run(stagedPath);
     } finally {

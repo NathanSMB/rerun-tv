@@ -1,10 +1,16 @@
 # Rerun TV
 
 [![CI](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml/badge.svg)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
-[![Test coverage](https://img.shields.io/badge/coverage-73.0%25-yellowgreen)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
+[![Test coverage](https://img.shields.io/badge/coverage-80.3%25-green)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
 
 Turn a local media library into lean-back TV channels — you build the lineup,
 the channel decides what's on. Linux-first (Arch), Electron + ffmpeg.
+
+> **Status: 0.1.0, source-only.** There are no prebuilt downloads yet — you
+> build it yourself with `npm run dist`, which produces a Linux AppImage. It is
+> developed and tested on CachyOS with KDE/Wayland; other distributions and
+> desktops should work but are not exercised. macOS and Windows are not
+> packaged.
 
 Point it at `~/TV`, group some shows into a channel, and tune in. Shows play in
 order or on shuffle — down to individual seasons, so you can run the first eight
@@ -20,12 +26,19 @@ npm approve-scripts better-sqlite3 electron esbuild   # first install only
 npm rebuild
 
 npm run dev        # develop
+npm test           # run the suite
 npm run lint:fix   # format + lint with Biome (a pre-commit hook checks this)
 npm run dist       # build a Linux AppImage into release/
 ```
 
 Requires **ffmpeg** on `PATH` (`pacman -S ffmpeg` on Arch) and a C toolchain for
-`better-sqlite3`. See [docs/development.md](docs/development.md).
+`better-sqlite3`. ffmpeg is used as an external process and is never bundled.
+
+**One gotcha worth knowing before it bites you:** `better-sqlite3` is a native
+module, and Electron and Node use different ABIs. `npm test` rebuilds it for
+Node, so the next `npm run dev` fails with an ABI error until you run
+`npm run rebuild:electron`. Both directions are one command and are explained in
+[docs/development.md](docs/development.md).
 
 Then: **Settings → + Add folder** to point at your library, wait for the scan,
 **Channels** to build a lineup, **Guide** to tune in.
@@ -72,7 +85,9 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
 
 ## Planning documents
 
-The originals this was built from:
+Historical, and kept for the reasoning rather than as current truth — the `.md`
+files above describe how the app works *now*; these describe how it was
+designed. Where they disagree, the `.md` docs (and the code) win.
 
 - **[docs/plan.html](docs/plan.html)** — MVP architecture plan: locked decisions,
   system architecture, data model, the scheduler, playback pipeline, player
@@ -84,14 +99,29 @@ The originals this was built from:
   retired the mockup's standalone Channel Editor screen and folded channel
   editing into the Guide.
 
-Open any of them directly in a browser.
+Open any of them directly in a browser. `docs/` also holds the per-feature
+plans the later work was built from (the stall fix, picture-in-picture, hardware
+acceleration, the sleep timer, loudness equalization, the renderer test
+harness); several are cited by name from the `.md` docs and from source
+comments, which is why they are still here.
 
 ## Not in the MVP
 
 Simulated live schedules (the duration data and play log already support them),
-interstitials/bumpers, external metadata lookups, LAN access, VAAPI hardware
-transcoding, and mid-episode resume.
+interstitials/bumpers, external metadata lookups, LAN access, and mid-episode
+resume.
+
+(Hardware-accelerated transcoding *has* since landed — VAAPI and NVENC, probed
+at startup and off by default. See Settings → Playback.)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — the short version is that `main` is
+protected, everything lands through a PR, and CI runs lint, typecheck, the test
+suite behind a coverage floor, and a production build.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). ffmpeg is invoked as a separate program and no
+binary is redistributed here, so its licence terms are not inherited by this
+project.

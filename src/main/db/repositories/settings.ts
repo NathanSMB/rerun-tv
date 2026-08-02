@@ -31,6 +31,14 @@ export function setSetting<K extends keyof AppSettings>(
     key: K,
     value: AppSettings[K],
 ): AppSettings {
+    // The type is a compile-time promise; this is the runtime one. The key
+    // arrives over IPC, and an unknown key would be written to a table that
+    // `getSettings` spreads over `DEFAULT_SETTINGS` — so a bad write is a row
+    // that rides along in every settings read forever, including one that could
+    // shadow the restore receipt.
+    if (!Object.hasOwn(DEFAULT_SETTINGS, key)) {
+        throw new Error(`Unknown setting: ${String(key)}`);
+    }
     db.prepare(
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(key, JSON.stringify(value));

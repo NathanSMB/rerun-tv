@@ -212,6 +212,38 @@ export default function SleepPanel({
             return;
         }
 
+        /**
+         * Keep Tab inside the panel.
+         *
+         * It is a `role="dialog"` over a player whose chrome is still in the
+         * document, so without this Tab walks out into OSD controls the viewer
+         * cannot see — and there is no visible way back. Wrapping is the whole
+         * containment: the panel is small enough that a focus *sentinel* pair
+         * would be more machinery than the problem deserves.
+         */
+        if (e.key === "Tab") {
+            const focusable = [
+                ...e.currentTarget.querySelectorAll<HTMLElement>(
+                    'button:not(:disabled), [role="slider"], [href], input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+                ),
+            ];
+            if (focusable.length === 0) return;
+            const first = focusable[0] as HTMLElement;
+            const last = focusable[focusable.length - 1] as HTMLElement;
+            const active = document.activeElement;
+            if (
+                e.shiftKey &&
+                (active === first || !e.currentTarget.contains(active))
+            ) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && active === last) {
+                e.preventDefault();
+                first.focus();
+            }
+            return;
+        }
+
         if (/^[0-9]$/.test(e.key)) {
             e.preventDefault();
             e.stopPropagation();
@@ -255,6 +287,7 @@ export default function SleepPanel({
         <div
             className="sleep-panel"
             role="dialog"
+            aria-modal="true"
             aria-label="Sleep timer"
             onKeyDown={handleKeyDown}
             onWheel={(e) =>

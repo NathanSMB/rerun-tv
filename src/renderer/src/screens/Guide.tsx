@@ -70,6 +70,7 @@ function moveId(ids: number[], id: number, toIndex: number): number[] {
  * push the row's height around.
  */
 function showLines(titles: string[]): string[] {
+    /** Two titles per line × the three lines the row has height for. */
     const MAX = 6;
     const shown = titles.slice(0, MAX).map((t) => t.toUpperCase());
     const rest = titles.length - shown.length;
@@ -396,7 +397,7 @@ export default function Guide(): JSX.Element {
 
                 {creating && newChannelForm}
                 {error && (
-                    <p className="guide-error" role="alert">
+                    <p className="form-error guide-error" role="alert">
                         {error}
                     </p>
                 )}
@@ -511,8 +512,12 @@ export default function Guide(): JSX.Element {
                         is the same whether or not the pointer is on it. */}
                                         <div className="ch-shows">
                                             {showLines(showTitles).map(
-                                                (line) => (
-                                                    <div key={line}>{line}</div>
+                                                // Index, not the text: a lineup can
+                                                // hold the same two shows twice, and
+                                                // identical lines would collide.
+                                                (line, i) => (
+                                                    // biome-ignore lint/suspicious/noArrayIndexKey: the list is static per render and lines are not unique
+                                                    <div key={i}>{line}</div>
                                                 ),
                                             )}
                                         </div>

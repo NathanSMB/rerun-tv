@@ -166,7 +166,10 @@ function videos(): HTMLVideoElement[] {
 // ---------------------------------------------------------------------------
 
 /**
- * PiP as Electron 38 was measured performing it (docs/pip-plan.html §2).
+ * PiP as Electron was measured performing it (docs/pip-plan.html §2). The
+ * orderings were first taken on 38 and re-checked on 43, which is what the app
+ * ships against; document-PiP differs between the two but element-PiP — the
+ * only kind this models — did not change.
  *
  * Three facts are baked in, and each one is a rule the Player has to obey rather
  * than a convenience:

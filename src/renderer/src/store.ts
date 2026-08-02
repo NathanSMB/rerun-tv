@@ -1,10 +1,21 @@
 /**
  * The renderer's single Zustand store.
  *
- * Everything that crosses the IPC boundary lands here; components read slices
- * and call actions, and never call the bridge directly (except the Player,
- * which owns the `<video>` elements' own transient state — currentTime, OSD
- * visibility — locally because it changes every frame).
+ * The division of labour, which the whole renderer follows:
+ *
+ * - **State several surfaces share, or that the main process pushes** — channels,
+ *   library, scan status, settings, playback — lives here. A component that
+ *   needs it reads a slice; it never fetches its own copy.
+ * - **A mutation only one screen makes** (rename a channel, add a scan root,
+ *   assign an unmatched file) is called straight on `window.rerun` by that
+ *   screen, which then calls the matching `refresh…` action here. The re-read is
+ *   the load-bearing half: it is what keeps the guide rows and the app-bar pill
+ *   from drifting away from what the edit actually did.
+ *
+ * So `window.rerun` calls in `Guide`, `Library`, `Settings` and `ChannelFold`
+ * are the convention, not a violation of it. The Player is the one screen that
+ * also keeps state locally — the `<video>` elements' currentTime and OSD
+ * visibility change every frame and belong nowhere near a store.
  *
  * Main-process push events (`scanProgress`, `libraryChanged`, `channelsChanged`)
  * are wired up once in `init()`.
@@ -24,6 +35,7 @@ import type {
     EpisodeView,
     LibraryOverview,
     NowPlaying,
+    ScanRoot,
     ScanStatus,
     Show,
     SystemInfo,
@@ -115,14 +127,36 @@ const EMPTY_SCAN: ScanStatus = {
  */
 let queue: Promise<unknown> = Promise.resolve();
 
+/**
+ * Where a failed action reports itself.
+ *
+ * A module-level hook rather than a parameter because `serialize` is called from
+ * a dozen actions and the store's `set` is not in scope here. Assigned once when
+ * the store is created; the default no-op keeps this module importable (and
+ * DOM-free) on its own, which is what the Node tests rely on.
+ */
+let reportError: (message: string) => void = () => {};
+
+export function errorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
+/** Record a failure on its way past, then let it keep travelling. */
+function rethrowReported(err: unknown): never {
+    reportError(errorMessage(err));
+    throw err;
+}
+
 function serialize<T>(action: () => Promise<T>): Promise<T> {
     const run = queue.then(action, action);
     // Swallowed here only so one failed transition doesn't poison the chain; the
-    // caller still sees the rejection through `run`.
+    // caller still sees the rejection through `run`. Recorded on the way past,
+    // because most callers are fire-and-forget and would drop it silently.
     queue = run.then(
         () => undefined,
         () => undefined,
     );
+    run.catch((err: unknown) => reportError(errorMessage(err)));
     return run;
 }
 
@@ -147,10 +181,31 @@ interface AppState {
     channelDetail: ChannelDetail | null;
     library: LibraryOverview | null;
     shows: Show[];
+    /**
+     * The scan roots, or null while they are still being read (the empty state
+     * must not flash before the answer arrives).
+     *
+     * Here rather than in a screen because two screens need them: Settings owns
+     * adding and removing, Library only asks whether there are any. Two local
+     * copies meant a root added in Settings left Library still showing its
+     * "no roots yet" prompt until something else refreshed it.
+     */
+    roots: ScanRoot[] | null;
     scan: ScanStatus;
     system: SystemInfo | null;
     settings: AppSettings;
     ready: boolean;
+    /**
+     * The last store action that failed, or null.
+     *
+     * Screens report their own mutation failures inline, next to the control the
+     * viewer just used. Store actions have nowhere like that to report: most are
+     * called fire-and-forget (`void tune(id)`, the push-event refreshes), so a
+     * failed tune-in or auto-advance would otherwise be a guide that quietly
+     * stops responding. Set by `serialize()` and the refreshes; the shell paints
+     * it and `dismissError` clears it.
+     */
+    lastError: string | null;
 
     // ---- playback ----
     nowPlaying: NowPlaying | null;
@@ -208,7 +263,11 @@ interface AppState {
 
     refreshChannels(): Promise<void>;
     refreshLibrary(): Promise<void>;
+    refreshRoots(): Promise<void>;
     refreshChannelDetail(channelId?: number): Promise<void>;
+
+    /** Clear `lastError` — the viewer has seen it. */
+    dismissError(): void;
 
     /** Tune in: commit the scheduler's pick and switch to the player. */
     tune(channelId: number): Promise<void>;
@@ -238,6 +297,14 @@ interface AppState {
     sleepNow(): Promise<void>;
 
     setVolume(volume: number): void;
+    /**
+     * Nudge the volume by `delta`, clamped.
+     *
+     * Exists so the Player's key map doesn't need the current volume in scope:
+     * depending on `volume` there rebinds the window listener on every arrow
+     * press, which is a lot of churn for a value the store already holds.
+     */
+    adjustVolume(delta: number): void;
     toggleMute(): void;
     /** Mirror the Player's PiP session into the store. See `pipActive`. */
     setPipActive(active: boolean): void;
@@ -315,10 +382,12 @@ export const useStore = create<AppState>((set, get) => ({
     channelDetail: null,
     library: null,
     shows: [],
+    roots: null,
     scan: EMPTY_SCAN,
     system: null,
     settings: DEFAULT_SETTINGS,
     ready: false,
+    lastError: null,
 
     nowPlaying: null,
     upNext: null,
@@ -332,11 +401,13 @@ export const useStore = create<AppState>((set, get) => ({
 
     async init() {
         const api = bridge();
+        reportError = (message) => set({ lastError: message });
 
         api.events.onScanProgress((scan) => set({ scan }));
         api.events.onLibraryChanged(() => {
             void get().refreshLibrary();
             void get().refreshChannels();
+            void get().refreshRoots();
         });
         api.events.onChannelsChanged(() => {
             void get().refreshChannels();
@@ -359,12 +430,20 @@ export const useStore = create<AppState>((set, get) => ({
             screen: startScreenOf(settings),
         });
 
-        await Promise.all([get().refreshChannels(), get().refreshLibrary()]);
+        await Promise.all([
+            get().refreshChannels(),
+            get().refreshLibrary(),
+            get().refreshRoots(),
+        ]);
         set({ ready: true });
     },
 
     navigate(screen) {
         set({ screen });
+    },
+
+    dismissError() {
+        set({ lastError: null });
     },
 
     selectChannel(channelId) {
@@ -389,8 +468,13 @@ export const useStore = create<AppState>((set, get) => ({
         set({ editingChannelId: null, channelDetail: null });
     },
 
+    /**
+     * The refreshes report failures too. They are called `void`-style from the
+     * push-event handlers and after screen-local mutations, so a rejection here
+     * has no caller to surface it.
+     */
     async refreshChannels() {
-        const channels = await bridge().channels.list();
+        const channels = await bridge().channels.list().catch(rethrowReported);
         const { selectedChannelId, editingChannelId } = get();
         const stillThere = channels.some(
             (c) => c.channel.id === selectedChannelId,
@@ -416,14 +500,21 @@ export const useStore = create<AppState>((set, get) => ({
         const [library, shows] = await Promise.all([
             bridge().library.getOverview(),
             bridge().library.listShows(),
-        ]);
+        ]).catch(rethrowReported);
         set({ library, shows });
+    },
+
+    async refreshRoots() {
+        const roots = await bridge().library.listRoots().catch(rethrowReported);
+        set({ roots });
     },
 
     async refreshChannelDetail(channelId) {
         const id = channelId ?? get().editingChannelId;
         if (id == null) return set({ channelDetail: null });
-        const channelDetail = await bridge().channels.get(id);
+        const channelDetail = await bridge()
+            .channels.get(id)
+            .catch(rethrowReported);
         set({ channelDetail });
     },
 
@@ -648,6 +739,10 @@ export const useStore = create<AppState>((set, get) => ({
         set({ volume: clamped, muted: clamped === 0 ? get().muted : false });
         if (get().settings.rememberVolume)
             void bridge().settings.set("volume", clamped);
+    },
+
+    adjustVolume(delta) {
+        get().setVolume(get().volume + delta);
     },
 
     toggleMute() {

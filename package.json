@@ -4,6 +4,9 @@
     "description": "Turn a local media library into lean-back TV channels",
     "author": "Nathan Burchill",
     "license": "MIT",
+    "engines": {
+        "node": ">=20"
+    },
     "main": "./dist/main/index.js",
     "type": "module",
     "scripts": {

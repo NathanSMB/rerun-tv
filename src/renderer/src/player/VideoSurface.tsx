@@ -15,14 +15,16 @@
  *   so the app owns read pace and the connection is never abandoned.
  * - **fallen back** — a pipe whose bytes defeated `parseInitSegment` (an exotic
  *   remuxed codec). Reverts to plain `src` for that episode only. Behaviour is
- *   then exactly what it was before phase 2: worse, but not broken.
+ *   then exactly what it was before phase 2: worse, but not broken. Note the
+ *   cost when this happens *mid-episode*: the plain-`src` reload restarts the
+ *   stream at whatever `?t=` its URL carries, so the viewer loses their
+ *   position. Rare enough to accept, and better than a dead picture.
  *
  * Two elements of this are stacked by `Player.tsx` for the gapless handoff, which
  * is why the standby's read policy is a prop and `promote()` is on the handle
  * rather than being decided in here.
  */
 
-import type { PlaybackPath } from "@shared/types.js";
 import type { JSX, SyntheticEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -32,18 +34,14 @@ import {
     startPump,
 } from "./mse.js";
 
-/** What to play. `key` changes exactly when a fresh stream must be opened. */
-export interface VideoSource {
-    /** Identity of this stream: `<episodeId>@<offset>`, bumped by a seek. */
-    key: string;
-    url: string;
-    playbackPath: PlaybackPath;
-    /**
-     * The MSE timeline's length: episode runtime *minus the seek offset*, because
-     * an `-ss` seek restarts the pipe's timestamps at zero.
-     */
-    durationS: number;
-}
+// `VideoSource` is a plain description of a stream with no DOM in it, so it
+// lives in the DOM-free `stage.ts` next door — that module builds every one of
+// them, and could not import it from here without dragging this file (and the
+// DOM) into the Node-target project. Re-exported so callers still find it
+// alongside the component that consumes it.
+import type { VideoSource } from "./stage.js";
+
+export type { VideoSource };
 
 export interface VideoSurfaceHandle {
     /** The live element, for play/pause/volume/currentTime. Null before mount. */

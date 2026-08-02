@@ -29,6 +29,8 @@ const api: RerunApi = {
         addRoot: (path) => ipcRenderer.invoke(IPC.library.addRoot, path),
         removeRoot: (rootId) =>
             ipcRenderer.invoke(IPC.library.removeRoot, rootId),
+        // The handler defaults this too; the argument is named here so the
+        // channel's payload is always the same shape on the wire.
         rescan: (full) => ipcRenderer.invoke(IPC.library.rescan, full ?? false),
         pauseScan: () => ipcRenderer.invoke(IPC.library.pauseScan),
         resumeScan: () => ipcRenderer.invoke(IPC.library.resumeScan),

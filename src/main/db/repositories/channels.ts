@@ -1,6 +1,10 @@
 /**
- * All SQL for the channel side of the database: `channels`, `channel_shows`,
- * `channel_show_state` and `play_log` (plan §4).
+ * Every write to the channel side of the database — `channels`, `channel_shows`,
+ * `channel_show_state`, `play_log` — plus the shared row mapping (plan §4).
+ *
+ * As in the library repository, a query written to shape one view lives with
+ * that view (`services/channels.ts`) rather than here; this module owns the
+ * mutations and the row shapes.
  *
  * The split the schema insists on is honoured here: `channel_shows` is
  * *configuration* (the lineup you built — mode, weight, order) while
@@ -125,25 +129,52 @@ function nextFreeNumber(db: Db): number {
  * Create a channel, appending it to the end of the guide. `number` is the dial
  * number and is unique; when omitted the next free one is assigned.
  */
+/**
+ * Turn SQLite's constraint message into one a viewer can act on.
+ *
+ * The dial number is UNIQUE, and "UNIQUE constraint failed: channels.number" is
+ * what the renderer would otherwise put on screen. Only this one constraint is
+ * reachable by ordinary use, so only this one is translated; anything else is
+ * rethrown untouched rather than swallowed behind a friendly guess.
+ */
+function withDialNumberCheck<T>(number: number | undefined, fn: () => T): T {
+    try {
+        return fn();
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("UNIQUE constraint failed: channels.number")) {
+            throw new Error(
+                number === undefined
+                    ? "That channel number is already taken."
+                    : `Channel ${number} is already taken.`,
+            );
+        }
+        throw err;
+    }
+}
+
 export function createChannel(db: Db, name: string, number?: number): Channel {
-    return db.transaction(() => {
-        const dial = number ?? nextFreeNumber(db);
-        const { max } = db
-            .prepare(
-                `SELECT COALESCE(MAX(sort_order), -1) AS max FROM channels`,
-            )
-            .get() as {
-            max: number;
-        };
-        const info = db
-            .prepare(
-                `INSERT INTO channels (name, number, sort_order) VALUES (?, ?, ?)`,
-            )
-            .run(name, dial, max + 1);
-        const created = getChannel(db, Number(info.lastInsertRowid));
-        if (!created) throw new Error("Channel insert did not produce a row");
-        return created;
-    })();
+    return withDialNumberCheck(number, () =>
+        db.transaction(() => {
+            const dial = number ?? nextFreeNumber(db);
+            const { max } = db
+                .prepare(
+                    `SELECT COALESCE(MAX(sort_order), -1) AS max FROM channels`,
+                )
+                .get() as {
+                max: number;
+            };
+            const info = db
+                .prepare(
+                    `INSERT INTO channels (name, number, sort_order) VALUES (?, ?, ?)`,
+                )
+                .run(name, dial, max + 1);
+            const created = getChannel(db, Number(info.lastInsertRowid));
+            if (!created)
+                throw new Error("Channel insert did not produce a row");
+            return created;
+        })(),
+    );
 }
 
 /** Patch name/number/accent. Absent keys are left alone; `accent: null` clears it. */
@@ -168,8 +199,10 @@ export function updateChannel(
     }
     if (sets.length > 0) {
         values.push(channelId);
-        db.prepare(`UPDATE channels SET ${sets.join(", ")} WHERE id = ?`).run(
-            ...values,
+        withDialNumberCheck(patch.number, () =>
+            db
+                .prepare(`UPDATE channels SET ${sets.join(", ")} WHERE id = ?`)
+                .run(...values),
         );
     }
     const updated = getChannel(db, channelId);
@@ -369,6 +402,12 @@ export function setChannelShowWeight(
     showId: number,
     weight: number,
 ): void {
+    // The lottery filters on `weight > 0`, so a NaN or negative weight degrades
+    // to "never picked" rather than breaking — but it would sit in the row
+    // looking like a setting, and the guide would render it. Refuse it here.
+    if (!Number.isFinite(weight) || weight < 0) {
+        throw new Error(`A weight must be a positive number, not ${weight}.`);
+    }
     db.prepare(
         `UPDATE channel_shows SET weight = ? WHERE channel_id = ? AND show_id = ?`,
     ).run(weight, channelId, showId);

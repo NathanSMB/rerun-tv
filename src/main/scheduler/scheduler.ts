@@ -198,9 +198,17 @@ function loadArcUnit(db: Db, groupId: number): PlayableUnit | null {
     return buildUnits(db, row.showId).find((u) => u.key === key) ?? null;
 }
 
-/** `arc:12` → 12. Only ever called on keys this module produced. */
+/**
+ * `arc:12` → 12.
+ *
+ * Normally called on keys this module produced, but bags are persisted JSON in
+ * a file the user can edit, and `parseBag` accepts any string array — so a
+ * hand-mangled bag reaching here would otherwise produce `NaN` and a silently
+ * no-op `setActiveArc`.
+ */
 function groupIdFromKey(key: string): number {
-    return Number(key.slice("arc:".length));
+    const id = Number(key.slice("arc:".length));
+    return Number.isInteger(id) ? id : -1;
 }
 
 /** Which unit contains a given episode — used to translate `lastAired` into a bag key. */
@@ -359,7 +367,16 @@ function planNext(
             );
         }
         const key = bag.shift() as string;
-        unit = units.find((u) => u.key === key) ?? units[0];
+        // The bag was dealt from `units` moments ago, so this always hits. Belt
+        // and braces rather than a `!`: if the invariant ever broke, silently
+        // airing unit 0 forever would be a far more confusing bug than a throw.
+        const drawn = units.find((u) => u.key === key);
+        if (!drawn) {
+            throw new Error(
+                `shuffle bag held ${key}, which is not a unit of this show`,
+            );
+        }
+        unit = drawn;
         nextState = { ...state, shuffleBag: bag };
     }
 

@@ -172,6 +172,30 @@ export function PlayerSlot(): JSX.Element | null {
     );
 }
 
+/**
+ * The one place a failed store action can speak.
+ *
+ * Screens report their own mutation failures beside the control that caused
+ * them; this covers what the store does on its own — a tune-in that never
+ * arrives, an auto-advance that fails, a push-triggered refresh that throws —
+ * none of which have a control to sit next to. Deliberately a dismissible strip
+ * rather than a modal: playback problems already have the Player's failure card,
+ * and nothing here should take the window.
+ */
+function ErrorBanner(): JSX.Element | null {
+    const lastError = useStore((s) => s.lastError);
+    const dismissError = useStore((s) => s.dismissError);
+    if (!lastError) return null;
+    return (
+        <div className="app-error" role="alert">
+            <span>{lastError}</span>
+            <button type="button" className="linkbtn" onClick={dismissError}>
+                Dismiss
+            </button>
+        </div>
+    );
+}
+
 export default function App(): JSX.Element {
     const ready = useStore((s) => s.ready);
     const screen = useStore((s) => s.screen);
@@ -244,6 +268,7 @@ export default function App(): JSX.Element {
             {!watching && (
                 <div className="app-shell">
                     <AppBar />
+                    <ErrorBanner />
                     <main className="app-scroll">
                         <ScreenErrorBoundary key={screen}>
                             {screenFor(screen)}

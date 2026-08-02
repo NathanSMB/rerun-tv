@@ -28,7 +28,7 @@ import {
 } from "../shared/types.js";
 import { closeDb, type Db, openDatabase, setDb } from "./db/index.js";
 import { getSettings } from "./db/repositories/settings.js";
-import { ensureDesktopEntry } from "./desktop-entry.js";
+import { ensureDesktopEntry, quoteExecArg } from "./desktop-entry.js";
 import { broadcast, registerHandlers } from "./ipc/handlers.js";
 import { ensureKwinPipRule } from "./kwin-rule.js";
 import { LoudnessScanner } from "./library/loudness.js";
@@ -155,8 +155,20 @@ function createWindow(): void {
 
     // The renderer is a local UI, never a browser: external links open in the
     // user's actual browser and in-window navigation is refused outright.
+    //
+    // Only http(s) is handed to the OS. `openExternal` will happily launch
+    // `file://` or a registered scheme (`steam:`, `vscode:`…), which turns any
+    // injected content into an "ask the desktop to run something" primitive —
+    // nothing in this UI ever needs to open anything but a web link.
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-        void shell.openExternal(url);
+        let protocol: string;
+        try {
+            protocol = new URL(url).protocol;
+        } catch {
+            return { action: "deny" };
+        }
+        if (protocol === "http:" || protocol === "https:")
+            void shell.openExternal(url);
         return { action: "deny" };
     });
     mainWindow.webContents.on("will-navigate", (event) =>
@@ -200,6 +212,8 @@ async function restart(): Promise<void> {
  * to tidy them off disk. Never throws: leftovers are inert, and a failed cleanup
  * must not cost anyone their television.
  */
+// TODO(remove after 0.3.0): one-upgrade-cycle cleanup. Once no one is plausibly
+// upgrading from a build that still wrote `pipKeepOnTop`, this and its call go.
 function removeXwaylandLeftovers(db: Db): void {
     try {
         db.prepare("DELETE FROM settings WHERE key = 'pipKeepOnTop'").run();
@@ -244,7 +258,11 @@ async function bootstrap(): Promise<void> {
     ensureDesktopEntry(
         appIcon,
         join(dataDir(), "icon.png"),
-        process.env.APPIMAGE ?? `"${process.execPath}" "${app.getAppPath()}"`,
+        // Both halves are user-chosen paths, so both go through the spec's
+        // quoting rather than a pair of bare double quotes.
+        process.env.APPIMAGE
+            ? quoteExecArg(process.env.APPIMAGE)
+            : `${quoteExecArg(process.execPath)} ${quoteExecArg(app.getAppPath())}`,
     );
     const ffmpeg = resolveFfmpeg();
 

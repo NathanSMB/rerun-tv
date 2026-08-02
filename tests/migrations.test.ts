@@ -335,6 +335,43 @@ describe("migration 5 — the hardware acceleration setting", () => {
         db.close();
     });
 
+    /**
+     * Migration 6 exists for the delete path, not the read path: `play_log`'s
+     * `episode_id` carries an ON DELETE CASCADE, and without an index SQLite
+     * scans the whole log once per deleted episode — which the scanner's prune
+     * does hundreds of times after an unmounted root.
+     */
+    it("indexes play_log.episode_id when upgrading an existing library", () => {
+        const db = openAtVersion(5);
+
+        migrate(db);
+
+        const indexes = (
+            db.prepare("PRAGMA index_list(play_log)").all() as {
+                name: string;
+            }[]
+        ).map((i) => i.name);
+        expect(indexes).toContain("idx_playlog_episode");
+        expect(db.pragma("user_version", { simple: true })).toBe(
+            MIGRATIONS.length,
+        );
+        db.close();
+    });
+
+    /**
+     * The downgrade case: a library written by a newer build, or a `.db` copied
+     * in by hand past the version check in `services/restore.ts`. Migrating is a
+     * no-op there, which would leave this build reading a schema it doesn't know
+     * and failing somewhere arbitrary later.
+     */
+    it("refuses to open a database from a newer version", () => {
+        const db = openAtVersion(MIGRATIONS.length);
+        db.pragma(`user_version = ${MIGRATIONS.length + 1}`);
+
+        expect(() => migrate(db)).toThrow(/newer version of Rerun TV/);
+        db.close();
+    });
+
     it("preserves a hardwareAccel a newer version already stored", () => {
         const db = openAtVersion(4);
         const insert = db.prepare(

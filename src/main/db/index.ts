@@ -19,6 +19,17 @@ let instance: Db | null = null;
 /** Apply any migrations the file hasn't seen yet. Idempotent. */
 export function migrate(db: Db): void {
     const current = db.pragma("user_version", { simple: true }) as number;
+    // A file from a newer build: downgraded app, or a `.db` copied in by hand
+    // past the version check in `services/restore.ts`. The loop below would do
+    // nothing and leave this build reading a schema it doesn't know, failing
+    // later somewhere arbitrary — say so here instead.
+    if (current > MIGRATIONS.length) {
+        throw new Error(
+            `This library was created by a newer version of Rerun TV ` +
+                `(database version ${current}, this build understands ${MIGRATIONS.length}). ` +
+                `Update Rerun TV to open it.`,
+        );
+    }
     for (let version = current; version < MIGRATIONS.length; version++) {
         const sql = MIGRATIONS[version];
         db.transaction(() => {

@@ -784,7 +784,14 @@ export function startPump(options: PumpOptions): Pump {
             await sleep(policy.pollMs);
     }
 
-    /** Evict everything more than `keepS` behind the playhead. */
+    /**
+     * Evict everything more than `keepS` behind the playhead.
+     *
+     * Reads `buffered.start(0)` alone because on this path the buffer is always
+     * one contiguous range: a seek is a *URL reload* (see `Player.tsx`), never a
+     * jump within the stream, so nothing ever appends across a gap. If that ever
+     * changes, this has to walk every range instead.
+     */
     async function trim(keepS: number): Promise<void> {
         const sb = sourceBuffer;
         if (!sb || sb.buffered.length === 0) return;
@@ -982,9 +989,11 @@ export function startPump(options: PumpOptions): Pump {
         stats,
         done,
         promote(): void {
-            policy.highWaterS = promoted.highWaterS;
-            policy.lowWaterS = promoted.lowWaterS;
-            policy.backBufferS = promoted.backBufferS;
+            // Every field, not the three that happened to differ: leaving
+            // `tightBackBufferS`/`pollMs` behind meant a promoted policy could
+            // silently only half-apply, which is invisible until someone sets
+            // them to something other than the standby's values.
+            Object.assign(policy, promoted);
         },
         stop(): void {
             stopped = true;

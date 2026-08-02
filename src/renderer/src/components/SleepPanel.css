@@ -149,7 +149,7 @@
 }
 
 .sleep-panel .sp-chip.is-active {
-    color: #201302;
+    color: var(--amber-ink);
     background: var(--amber);
     border-color: var(--amber);
 }

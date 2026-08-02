@@ -38,8 +38,6 @@
 
 .guide-error {
     margin: 0 22px 12px;
-    font-size: 12.5px;
-    color: var(--danger);
 }
 
 .guide-list .empty {
@@ -192,7 +190,7 @@
 }
 
 .iconbtn.play {
-    color: #201302;
+    color: var(--amber-ink);
     background: var(--amber);
     border-color: transparent;
 }

@@ -190,6 +190,7 @@ function bridge(): RerunApi {
             totalEpisodes: 0,
         }),
         listShows: async () => [],
+        listRoots: async () => [],
         getScanStatus: async () => ({
             state: "idle",
             total: 0,
