@@ -1,0 +1,78 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+# A second push to the same branch makes the first run pointless; cancel it.
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        # `contents: write` exists solely for the badge push below. PRs — including
+        # ones from forks — still get a read-only token because the push step is
+        # gated to `push` events on main.
+        permissions:
+            contents: write
+        env:
+            # Several suites gate themselves on a real ffmpeg and skip silently
+            # without one. This makes that skip a hard failure here, so a broken
+            # ffmpeg install can never quietly turn the suite green.
+            RERUN_REQUIRE_FFMPEG: "1"
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+                  cache: npm
+
+            # The stream, loudness, MSE and integration suites mux their fixtures
+            # with a real ffmpeg (`lavfi`) and assert against the bytes it emits.
+            - name: Install ffmpeg
+              run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+            # `postinstall` runs `electron-builder install-app-deps`, which only
+            # rebuilds native deps against Electron's ABI — no Electron process is
+            # launched, so this needs no display.
+            - run: npm ci
+
+            - run: npm run lint
+
+            - run: npm run typecheck
+
+            # `test:coverage` first runs `npm rebuild better-sqlite3`, putting the
+            # native binding back on the Node ABI that `install-app-deps` moved to
+            # Electron's. Vitest runs in Node, so that rebuild is required.
+            # Coverage is reporting-only (no thresholds): it feeds the badge and
+            # the PR summary, and can never turn this step red on its own.
+            - run: npm run test:coverage
+
+            # Surface the numbers on the PR itself (checks tab → job summary).
+            - name: Report coverage in the job summary
+              run: node scripts/coverage-badge.mjs --summary >> "$GITHUB_STEP_SUMMARY"
+
+            # Keep the README's coverage badge current. The badge payload lives on
+            # an orphan `badges` branch (data, not source — history is noise, hence
+            # the force-push), and shields.io renders it from raw.githubusercontent.
+            # Runs only on merges/pushes to main, so the badge always shows main.
+            - name: Publish coverage badge
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              run: |
+                  dir="$(mktemp -d)"
+                  cp coverage/badge.json "$dir/coverage.json"
+                  cd "$dir"
+                  git init -q -b badges
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git add coverage.json
+                  git commit -q -m "Update coverage badge"
+                  git push -q --force \
+                      "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+                      badges
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

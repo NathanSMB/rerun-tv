@@ -36,6 +36,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppBar from "../../src/renderer/src/components/AppBar.js";
 import Guide from "../../src/renderer/src/screens/Guide.js";
 import { useStore } from "../../src/renderer/src/store.js";
+import { inertEvents, makeBridge, systemInfo } from "./bridge.js";
 
 declare global {
     var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -107,92 +108,105 @@ function detail(id: number, number: number, name: string): ChannelDetail {
     };
 }
 
+/**
+ * The current detail for a channel the fake still holds — the shape every lineup
+ * mutation answers with, per the contract. The fold discards these (it refreshes
+ * from `get` instead), but returning the wrong type would hide a real drift.
+ */
+function detailFor(id: number): ChannelDetail {
+    const found = channels.find((c) => c.channel.id === id);
+    if (!found) throw new Error(`no channel ${id}`);
+    return detail(id, found.channel.number, found.channel.name);
+}
+
 function bridge(): RerunApi {
-    return {
-        channels: {
-            list: async () => channels,
-            get: async (id: number) => {
-                const found = channels.find((c) => c.channel.id === id);
-                if (!found) throw new Error(`no channel ${id}`);
-                return detail(id, found.channel.number, found.channel.name);
-            },
-            create: async ({ name }: { name: string }) => {
-                created.push(name);
-                const fresh = summary(99, 12, name);
-                channels = [...channels, fresh];
-                return fresh.channel;
-            },
-            remove: async (id: number) => {
-                removed.push(id);
-                channels = channels.filter((c) => c.channel.id !== id);
-            },
-            reorder: async (ids: number[]) => {
-                calls.push({ call: "reorder", ids });
-                channels = ids.flatMap((id) =>
-                    channels.filter((c) => c.channel.id === id),
-                );
-            },
-            update: async (id: number, patch: Record<string, unknown>) => {
-                calls.push({ call: "update", id, patch });
-                channels = channels.map((c) =>
-                    c.channel.id === id
-                        ? { ...c, channel: { ...c.channel, ...patch } }
-                        : c,
-                );
-                return detail(
-                    id,
-                    channels[0].channel.number,
-                    channels[0].channel.name,
-                );
-            },
-            setMode: async (
-                channelId: number,
-                showId: number,
-                mode: string,
-            ) => {
-                calls.push({ call: "setMode", channelId, showId, mode });
-            },
-            setWeight: async (
-                channelId: number,
-                showId: number,
-                weight: number,
-            ) => {
-                calls.push({ call: "setWeight", channelId, showId, weight });
-            },
-            removeShow: async (channelId: number, showId: number) => {
-                calls.push({ call: "removeShow", channelId, showId });
-            },
-            addShow: async (channelId: number, showId: number) => {
-                calls.push({ call: "addShow", channelId, showId });
-            },
-            resetProgress: async (channelId: number, showId: number) => {
-                calls.push({ call: "resetProgress", channelId, showId });
-            },
+    const channelsApi: Partial<RerunApi["channels"]> = {
+        list: async () => channels,
+        get: async (id) => detailFor(id),
+        create: async ({ name }) => {
+            created.push(name);
+            const fresh = summary(99, 12, name);
+            channels = [...channels, fresh];
+            return fresh.channel;
         },
-        library: {
-            getOverview: async () => ({
-                shows: [],
-                unmatched: [],
-                totalEpisodes: 0,
-            }),
-            listShows: async () => [],
-            getScanStatus: async () => ({
-                state: "idle",
-                total: 0,
-                done: 0,
-                probed: 0,
-                currentRoot: null,
-                error: null,
-            }),
+        remove: async (id) => {
+            removed.push(id);
+            channels = channels.filter((c) => c.channel.id !== id);
         },
+        reorder: async (ids) => {
+            calls.push({ call: "reorder", ids });
+            channels = ids.flatMap((id) =>
+                channels.filter((c) => c.channel.id === id),
+            );
+        },
+        update: async (id, patch) => {
+            calls.push({ call: "update", id, patch });
+            channels = channels.map((c) =>
+                c.channel.id === id
+                    ? { ...c, channel: { ...c.channel, ...patch } }
+                    : c,
+            );
+            return detailFor(id).channel;
+        },
+        setMode: async (channelId, showId, mode) => {
+            calls.push({ call: "setMode", channelId, showId, mode });
+            return detailFor(channelId);
+        },
+        // Never exercised by these tests, but the season override is part of the
+        // fold's surface: without a stub, a screen that grew a call to it would
+        // fail here for the wrong reason.
+        setSeasonMode: async (channelId, showId, season, mode) => {
+            calls.push({
+                call: "setSeasonMode",
+                channelId,
+                showId,
+                season,
+                mode,
+            });
+            return detailFor(channelId);
+        },
+        setWeight: async (channelId, showId, weight) => {
+            calls.push({ call: "setWeight", channelId, showId, weight });
+            return detailFor(channelId);
+        },
+        removeShow: async (channelId, showId) => {
+            calls.push({ call: "removeShow", channelId, showId });
+            return detailFor(channelId);
+        },
+        addShow: async (channelId, showId) => {
+            calls.push({ call: "addShow", channelId, showId });
+            return detailFor(channelId);
+        },
+        resetProgress: async (channelId, showId) => {
+            calls.push({ call: "resetProgress", channelId, showId });
+            return detailFor(channelId);
+        },
+    };
+
+    const library: Partial<RerunApi["library"]> = {
+        getOverview: async () => ({
+            shows: [],
+            unmatched: [],
+            totalEpisodes: 0,
+        }),
+        listShows: async () => [],
+        getScanStatus: async () => ({
+            state: "idle",
+            total: 0,
+            done: 0,
+            probed: 0,
+            currentRoot: null,
+            error: null,
+        }),
+    };
+
+    return makeBridge({
+        channels: channelsApi,
+        library,
         settings: { getAll: async () => settings, set: async () => settings },
-        system: { getInfo: async () => ({}) },
-        events: {
-            onScanProgress: () => undefined,
-            onLibraryChanged: () => undefined,
-            onChannelsChanged: () => undefined,
-        },
-    } as unknown as RerunApi;
+        system: { getInfo: async () => systemInfo() },
+        events: inertEvents,
+    });
 }
 
 // ---- DOM helpers ----------------------------------------------------------

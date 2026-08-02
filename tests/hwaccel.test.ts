@@ -27,9 +27,13 @@ import {
     type HwAccelReport,
 } from "@shared/types.js";
 import { describe, expect, it } from "vitest";
+import { ffmpegMissing } from "./ffmpeg-guard.js";
 
 const ffmpeg = resolveFfmpeg();
-const noFfmpeg = ffmpeg.ffmpegPath === null;
+const noFfmpeg = ffmpegMissing(
+    ffmpeg.ffmpegPath !== null,
+    "hardware accel probe",
+);
 
 const ALL_OK: HwAccelReport = {
     vaapi: "ok",

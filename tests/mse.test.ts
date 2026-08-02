@@ -16,7 +16,6 @@
  * it is the whole reason the stall class goes away.
  */
 
-import { execFileSync } from "node:child_process";
 import { resolveFfmpeg } from "@main/stream/ffmpeg.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
@@ -33,9 +32,11 @@ import {
     startPump,
     type TimeRangesLike,
 } from "../src/renderer/src/player/mse.js";
+import { ffmpegMissing } from "./ffmpeg-guard.js";
+import { makeClip } from "./helpers/media.js";
 
 const ffmpeg = resolveFfmpeg();
-const noFfmpeg = ffmpeg.ffmpegPath === null;
+const noFfmpeg = ffmpegMissing(ffmpeg.ffmpegPath !== null, "MSE pump");
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,40 +47,21 @@ const noFfmpeg = ffmpeg.ffmpegPath === null;
  * uses. `-g 10` forces a keyframe every second so `frag_keyframe` cuts several
  * fragments — one fragment would not exercise the scanner at all.
  */
-function makeFragmentedMp4(audioArgs: string[], seconds = 4): Buffer {
-    return execFileSync(
-        ffmpeg.ffmpegPath as string,
-        [
-            "-hide_banner",
-            "-nostdin",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            `testsrc=size=160x120:rate=10:duration=${seconds}`,
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=r=48000:cl=stereo",
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-g",
-            "10",
-            ...audioArgs,
+function makeFragmentedMp4(acodec: string, seconds = 4): Buffer {
+    return makeClip({
+        ffmpegPath: ffmpeg.ffmpegPath as string,
+        out: "pipe:1",
+        seconds,
+        acodec,
+        videoArgs: ["-g", "10"],
+        outputArgs: [
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof",
             "-f",
             "mp4",
-            "pipe:1",
         ],
-        { maxBuffer: 64 * 1024 * 1024 },
-    );
+        maxBuffer: 64 * 1024 * 1024,
+    });
 }
 
 let aacStream: Uint8Array;
@@ -88,9 +70,9 @@ let mp3Stream: Uint8Array | null = null;
 
 beforeAll(() => {
     if (noFfmpeg) return;
-    aacStream = new Uint8Array(makeFragmentedMp4(["-c:a", "aac"]));
+    aacStream = new Uint8Array(makeFragmentedMp4("aac"));
     try {
-        mp3Stream = new Uint8Array(makeFragmentedMp4(["-c:a", "libmp3lame"]));
+        mp3Stream = new Uint8Array(makeFragmentedMp4("libmp3lame"));
     } catch {
         // A distro build without libmp3lame is not a test failure.
     }
@@ -333,6 +315,25 @@ describe("Mp4SegmentScanner error handling", () => {
         expect(() => scanner.drain()).toThrow(/no mdat/);
     });
 
+    it("rejects an mdat with no moof in front of it", () => {
+        // The mirror of the case above, and the one that actually happens: a moof
+        // lost to a short read or a resumed connection leaves samples with no
+        // track-fragment header describing them. Appending them alone would put
+        // Chromium's demuxer into a state it never recovers from, so the scanner
+        // has to notice here — after the moov, where the "before the moov box"
+        // guard no longer covers us.
+        const scanner = new Mp4SegmentScanner();
+        scanner.push(box("ftyp", zeros(8)));
+        scanner.push(moov(trak("vide", stsd(avcEntry(0x64, 0x00, 0x28)))));
+        scanner.push(box("moof", zeros(8)));
+        scanner.push(box("mdat", zeros(64)));
+        expect(scanner.drain().map((s) => s.kind)).toEqual(["init", "media"]);
+
+        // The pair is consumed, so a second mdat has nothing left to pair with.
+        scanner.push(box("mdat", zeros(64)));
+        expect(() => scanner.drain()).toThrow(/no moof/);
+    });
+
     it("skips the trailing boxes ffmpeg writes when it closes the file", () => {
         const scanner = new Mp4SegmentScanner();
         scanner.push(box("ftyp", zeros(8)));
@@ -494,6 +495,12 @@ class FakeSourceBuffer implements SourceBufferLike {
     secondsPerAppend = 2;
     /** Reject this many appends with a QuotaExceededError before succeeding. */
     quotaFailures = 0;
+    /**
+     * From this append onwards (1-based), fire `error` instead of `updateend` —
+     * how Chromium reports data its MSE demuxer refuses. Nothing is thrown: the
+     * call returns normally and the rejection arrives as an event.
+     */
+    errorFromAppend: number | null = null;
     appends = 0;
     removals: Array<[number, number]> = [];
     private readonly listeners = new Map<string, Set<() => void>>();
@@ -517,8 +524,13 @@ class FakeSourceBuffer implements SourceBufferLike {
         }
         this.updating = true;
         this.appends += 1;
+        const nth = this.appends;
         queueMicrotask(() => {
             this.updating = false;
+            if (this.errorFromAppend !== null && nth >= this.errorFromAppend) {
+                this.emit("error");
+                return;
+            }
             this.bufferedEnd += this.secondsPerAppend;
             this.emit("updateend");
         });
@@ -641,7 +653,7 @@ function slice(stream: Uint8Array, size: number): Uint8Array[] {
 
 const noSleep = (): Promise<void> => Promise.resolve();
 
-describe.skipIf(noFfmpeg)("startPump", () => {
+describe.skipIf(noFfmpeg)("startPump against real ffmpeg output", () => {
     it("appends the init segment, then every fragment, then ends the stream", async () => {
         const mediaSource = new FakeMediaSource();
         const reader = scriptedReader(slice(aacStream, 8192));
@@ -789,6 +801,179 @@ describe.skipIf(noFfmpeg)("startPump", () => {
         expect(pump.stats.segments).toBeGreaterThan(0);
     });
 
+    it("falls back when the source buffer rejects an append outright", async () => {
+        // The real-world failure this exists for: Chromium's MSE demuxer is
+        // stricter than its progressive one, so a stream `<video src>` plays fine
+        // can still make `appendBuffer` fire `error` — mid-episode, with no
+        // exception thrown and nothing on the console. Every other fallback in this
+        // suite is decided *before* a byte is appended; this one is decided after,
+        // which is the branch in `operate()`'s error listener.
+        const mediaSource = new FakeMediaSource((sb) => {
+            // Init and the first fragment land, then the buffer turns on us.
+            sb.errorFromAppend = 3;
+        });
+        let reason: string | null = null;
+        const pump = startPump({
+            openReader: () =>
+                Promise.resolve(scriptedReader(slice(aacStream, 8192))),
+            mediaSource,
+            clock: { currentTime: 0 },
+            sleep: noSleep,
+            policy: { highWaterS: 1e9, backBufferS: 1e9, pollMs: 0 },
+            onFallback: (why) => {
+                reason = why;
+            },
+            onError: () => {
+                throw new Error(
+                    "a rejected append is a fallback, not a failure card",
+                );
+            },
+        });
+
+        await pump.done;
+
+        expect(pump.stats.fellBack).toBe(true);
+        expect(reason).toMatch(/rejected the data/);
+        // It gave up where the rejection happened rather than pushing on …
+        expect(mediaSource.buffers[0].appends).toBe(3);
+        // … and never told the element the episode was complete, which would have
+        // stranded the viewer on a half-buffered stream instead of reloading it.
+        expect(mediaSource.ended).toBe(false);
+        expect(pump.stats.endedStream).toBe(false);
+    });
+
+    it("falls back when the browser refuses the codecs we derived", async () => {
+        const mediaSource = new FakeMediaSource();
+        mediaSource.addSourceBuffer = (): never => {
+            const err = new Error("unsupported");
+            err.name = "NotSupportedError";
+            throw err;
+        };
+        let reason: string | null = null;
+        const pump = startPump({
+            openReader: () =>
+                Promise.resolve(scriptedReader(slice(aacStream, 8192))),
+            mediaSource,
+            clock: { currentTime: 0 },
+            sleep: noSleep,
+            onFallback: (why) => {
+                reason = why;
+            },
+            onError: () => {
+                throw new Error(
+                    "an unsupported codec is a fallback, not an error",
+                );
+            },
+        });
+
+        await pump.done;
+        expect(pump.stats.fellBack).toBe(true);
+        expect(reason).toMatch(/refused codecs video\/mp4/);
+    });
+
+    it("stays silent when the pump is stopped mid-stream, and frees the reader", async () => {
+        const mediaSource = new FakeMediaSource();
+        const chunks = slice(aacStream, 512);
+        const reader = gatedReader(chunks, 3);
+        const pump = startPump({
+            openReader: () => Promise.resolve(reader),
+            mediaSource,
+            clock: { currentTime: 0 },
+            sleep: noSleep,
+            policy: { highWaterS: 1e9 },
+            onError: () => {
+                throw new Error("teardown is not an error");
+            },
+        });
+
+        // Wait until the reader is parked mid-episode, then tear the pump down the
+        // way a seek, a skip or leaving the player does.
+        while (reader.reads <= 3)
+            await new Promise((resolve) => setTimeout(resolve, 1));
+        pump.stop();
+        await pump.done;
+
+        expect(reader.cancelled).toBe(true);
+        // Only what it had already read — the point is that it stopped early.
+        expect(pump.stats.bytes).toBe(
+            chunks.slice(0, 3).reduce((n, c) => n + c.length, 0),
+        );
+        expect(pump.stats.bytes).toBeLessThan(aacStream.length);
+        // Cancelling a stream mid-episode must not tell the element it is complete.
+        expect(mediaSource.ended).toBe(false);
+        expect(pump.stats.endedStream).toBe(false);
+    });
+
+    /** Phase 3: a hidden standby buffers a few seconds, then behaves normally. */
+    it("promote() raises a standby pump to the full read targets", async () => {
+        const clock = { currentTime: 0 };
+        const mediaSource = new FakeMediaSource((sb) => {
+            sb.secondsPerAppend = 8;
+        });
+        /** Buffered-ahead at each read, and whether promotion had happened by then. */
+        const observations: Array<{ ahead: number; promoted: boolean }> = [];
+        let promoted = false;
+
+        const reader = scriptedReader(slice(aacStream, 2048), () => {
+            const sb = mediaSource.buffers[0];
+            if (sb)
+                observations.push({
+                    ahead: sb.bufferedEnd - clock.currentTime,
+                    promoted,
+                });
+        });
+
+        const pump = startPump({
+            openReader: () => Promise.resolve(reader),
+            mediaSource,
+            clock,
+            policy: { ...STANDBY_BUFFER_POLICY, pollMs: 0 },
+            promotedPolicy: { ...DEFAULT_BUFFER_POLICY, pollMs: 0 },
+            sleep: () => {
+                // Parked. The first time that happens the standby has reached its cap,
+                // which is exactly when the handoff would promote it.
+                if (!promoted) {
+                    promoted = true;
+                    pump.promote();
+                }
+                // Now it is the picture on screen, so the playhead advances and drains.
+                clock.currentTime += 1;
+                return Promise.resolve();
+            },
+        });
+
+        await pump.done;
+
+        expect(promoted).toBe(true);
+        // While hidden it never buffered past the standby ceiling …
+        const whileStandby = observations
+            .filter((o) => !o.promoted)
+            .map((o) => o.ahead);
+        expect(whileStandby.length).toBeGreaterThan(1);
+        expect(Math.max(...whileStandby)).toBeLessThan(
+            STANDBY_BUFFER_POLICY.highWaterS,
+        );
+        // … and once promoted it read on well past it, which only the full policy allows.
+        const afterPromotion = observations
+            .filter((o) => o.promoted)
+            .map((o) => o.ahead);
+        expect(Math.max(...afterPromotion)).toBeGreaterThan(
+            STANDBY_BUFFER_POLICY.highWaterS,
+        );
+        expect(mediaSource.ended).toBe(true);
+    });
+});
+
+/**
+ * The pump's failure paths, none of which need a byte ffmpeg produced.
+ *
+ * These used to sit inside the ffmpeg-gated `startPump` block, which meant a
+ * machine without ffmpeg silently tested none of the pump's error handling —
+ * the branches most likely to rot, because nothing in normal playback exercises
+ * them. They are deliberately ungated: the inputs are hand-built boxes, a
+ * rejected request, or no bytes at all.
+ */
+describe("startPump failure paths", () => {
     it("falls back rather than failing when the stream defeats the parser", async () => {
         const mediaSource = new FakeMediaSource();
         let reason: string | null = null;
@@ -855,35 +1040,6 @@ describe.skipIf(noFfmpeg)("startPump", () => {
         expect(mediaSource.buffers).toHaveLength(0);
     });
 
-    it("falls back when the browser refuses the codecs we derived", async () => {
-        const mediaSource = new FakeMediaSource();
-        mediaSource.addSourceBuffer = (): never => {
-            const err = new Error("unsupported");
-            err.name = "NotSupportedError";
-            throw err;
-        };
-        let reason: string | null = null;
-        const pump = startPump({
-            openReader: () =>
-                Promise.resolve(scriptedReader(slice(aacStream, 8192))),
-            mediaSource,
-            clock: { currentTime: 0 },
-            sleep: noSleep,
-            onFallback: (why) => {
-                reason = why;
-            },
-            onError: () => {
-                throw new Error(
-                    "an unsupported codec is a fallback, not an error",
-                );
-            },
-        });
-
-        await pump.done;
-        expect(pump.stats.fellBack).toBe(true);
-        expect(reason).toMatch(/refused codecs video\/mp4/);
-    });
-
     it("reports a failed request as an error, not a fallback", async () => {
         const mediaSource = new FakeMediaSource();
         const errors: Error[] = [];
@@ -900,42 +1056,15 @@ describe.skipIf(noFfmpeg)("startPump", () => {
         expect(pump.stats.fellBack).toBe(false);
     });
 
-    it("stays silent when the pump is stopped mid-stream, and frees the reader", async () => {
-        const mediaSource = new FakeMediaSource();
-        const chunks = slice(aacStream, 512);
-        const reader = gatedReader(chunks, 3);
-        const pump = startPump({
-            openReader: () => Promise.resolve(reader),
-            mediaSource,
-            clock: { currentTime: 0 },
-            sleep: noSleep,
-            policy: { highWaterS: 1e9 },
-            onError: () => {
-                throw new Error("teardown is not an error");
-            },
-        });
-
-        // Wait until the reader is parked mid-episode, then tear the pump down the
-        // way a seek, a skip or leaving the player does.
-        while (reader.reads <= 3)
-            await new Promise((resolve) => setTimeout(resolve, 1));
-        pump.stop();
-        await pump.done;
-
-        expect(reader.cancelled).toBe(true);
-        // Only what it had already read — the point is that it stopped early.
-        expect(pump.stats.bytes).toBe(
-            chunks.slice(0, 3).reduce((n, c) => n + c.length, 0),
-        );
-        expect(pump.stats.bytes).toBeLessThan(aacStream.length);
-        // Cancelling a stream mid-episode must not tell the element it is complete.
-        expect(mediaSource.ended).toBe(false);
-        expect(pump.stats.endedStream).toBe(false);
-    });
-
     it("honours an external abort signal without reading anything", async () => {
         const mediaSource = new FakeMediaSource();
-        const reader = scriptedReader(slice(aacStream, 512));
+        // A perfectly good init segment: the point is that an already-aborted
+        // signal short-circuits before the reader is ever touched, not that the
+        // stream was unusable.
+        const reader = scriptedReader([
+            box("ftyp", zeros(8)),
+            moov(trak("vide", stsd(avcEntry(0x64, 0x00, 0x1f)))),
+        ]);
         const pump = startPump({
             openReader: () => Promise.resolve(reader),
             mediaSource,
@@ -947,64 +1076,5 @@ describe.skipIf(noFfmpeg)("startPump", () => {
         await pump.done;
         expect(reader.reads).toBe(0);
         expect(mediaSource.ended).toBe(false);
-    });
-
-    /** Phase 3: a hidden standby buffers a few seconds, then behaves normally. */
-    it("promote() raises a standby pump to the full read targets", async () => {
-        const clock = { currentTime: 0 };
-        const mediaSource = new FakeMediaSource((sb) => {
-            sb.secondsPerAppend = 8;
-        });
-        /** Buffered-ahead at each read, and whether promotion had happened by then. */
-        const observations: Array<{ ahead: number; promoted: boolean }> = [];
-        let promoted = false;
-
-        const reader = scriptedReader(slice(aacStream, 2048), () => {
-            const sb = mediaSource.buffers[0];
-            if (sb)
-                observations.push({
-                    ahead: sb.bufferedEnd - clock.currentTime,
-                    promoted,
-                });
-        });
-
-        const pump = startPump({
-            openReader: () => Promise.resolve(reader),
-            mediaSource,
-            clock,
-            policy: { ...STANDBY_BUFFER_POLICY, pollMs: 0 },
-            promotedPolicy: { ...DEFAULT_BUFFER_POLICY, pollMs: 0 },
-            sleep: () => {
-                // Parked. The first time that happens the standby has reached its cap,
-                // which is exactly when the handoff would promote it.
-                if (!promoted) {
-                    promoted = true;
-                    pump.promote();
-                }
-                // Now it is the picture on screen, so the playhead advances and drains.
-                clock.currentTime += 1;
-                return Promise.resolve();
-            },
-        });
-
-        await pump.done;
-
-        expect(promoted).toBe(true);
-        // While hidden it never buffered past the standby ceiling …
-        const whileStandby = observations
-            .filter((o) => !o.promoted)
-            .map((o) => o.ahead);
-        expect(whileStandby.length).toBeGreaterThan(1);
-        expect(Math.max(...whileStandby)).toBeLessThan(
-            STANDBY_BUFFER_POLICY.highWaterS,
-        );
-        // … and once promoted it read on well past it, which only the full policy allows.
-        const afterPromotion = observations
-            .filter((o) => o.promoted)
-            .map((o) => o.ahead);
-        expect(Math.max(...afterPromotion)).toBeGreaterThan(
-            STANDBY_BUFFER_POLICY.highWaterS,
-        );
-        expect(mediaSource.ended).toBe(true);
     });
 });

@@ -13,6 +13,7 @@
 import type { RerunApi } from "@shared/ipc.js";
 import type { EpisodeView, NowPlaying } from "@shared/types.js";
 import { useStore } from "../../src/renderer/src/store.js";
+import { makeBridge } from "./bridge.js";
 
 export const CHANNEL_ID = 7;
 export const CHANNEL_NUMBER = 3;
@@ -150,14 +151,14 @@ export function scriptedBridge(deck: NowPlaying[]): ScriptedBridge {
         },
     };
 
-    // Only what the playback path touches, as a partial object cast: anything else
-    // the store reaches for fails loudly as a TypeError, which is what we want
-    // from a test that has drifted out of date.
-    const api = {
+    // Only what the playback path touches. Everything else `makeBridge` fills
+    // with a thrower, so a store that has drifted into reaching further fails
+    // loudly here instead of passing against a fake that quietly grew a method.
+    const api = makeBridge({
         player,
         channels: { list: async () => [] },
         settings: { set: async () => useStore.getState().settings },
-    } as unknown as RerunApi;
+    });
 
     return { api, calls };
 }

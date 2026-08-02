@@ -187,8 +187,12 @@ export function applyPipRule(existing: string, enabled: boolean): string {
  * Ask KWin to re-read its configuration. Fire-and-forget on purpose: the rule is
  * on disk either way and will be picked up at the next login, so a compositor
  * that does not answer is a delay, not a failure.
+ *
+ * Exported so the tests can pass a recording stand-in instead: a suite that used
+ * the real one would reach out of the sandbox and reconfigure the compositor of
+ * whoever ran `npm test`.
  */
-function reconfigureKwin(): void {
+export function reconfigureKwin(): void {
     execFile(
         "dbus-send",
         [
@@ -217,11 +221,15 @@ function reconfigureKwin(): void {
  *
  * `ensureKwinPipRule()` is the caller boot uses; `enabled: false` is kept for
  * the tests and for whoever eventually wants an uninstall path.
+ *
+ * `notify` is the one side effect that leaves this machine's disk, so it is a
+ * seam: the default is the real `dbus-send`, and the tests hand in a recorder.
  */
 export function syncKwinPipRule(
     enabled: boolean,
     path = kwinRulesPath(),
     env: NodeJS.ProcessEnv = process.env,
+    notify: () => void = reconfigureKwin,
 ): boolean {
     if (!isKwinSession(env)) return false;
 
@@ -263,7 +271,7 @@ export function syncKwinPipRule(
             ? "[kwin] installed the picture-in-picture window rule (overlay layer)"
             : "[kwin] removed the picture-in-picture window rule",
     );
-    reconfigureKwin();
+    notify();
     return true;
 }
 
@@ -278,6 +286,7 @@ export function syncKwinPipRule(
 export function ensureKwinPipRule(
     path = kwinRulesPath(),
     env: NodeJS.ProcessEnv = process.env,
+    notify: () => void = reconfigureKwin,
 ): boolean {
-    return syncKwinPipRule(true, path, env);
+    return syncKwinPipRule(true, path, env, notify);
 }

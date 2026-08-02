@@ -40,10 +40,14 @@ import {
     startStreamServer,
 } from "../src/main/stream/server.js";
 import { DEFAULT_SETTINGS } from "../src/shared/types.js";
+import { ffmpegMissing } from "./ffmpeg-guard.js";
 
 const execFileAsync = promisify(execFile);
 const ff = resolveFfmpeg();
-const haveFfmpeg = Boolean(ff.ffmpegPath && ff.ffprobePath);
+const noFfmpeg = ffmpegMissing(
+    Boolean(ff.ffmpegPath && ff.ffprobePath),
+    "scan → schedule → stream integration",
+);
 
 /** One second of H.264 + AAC at postage-stamp size — a few kilobytes on disk. */
 async function makeClip(path: string): Promise<void> {
@@ -74,7 +78,7 @@ async function makeClip(path: string): Promise<void> {
     ]);
 }
 
-describe.skipIf(!haveFfmpeg)("scan → schedule → stream", () => {
+describe.skipIf(noFfmpeg)("scan → schedule → stream", () => {
     let root: string;
     let db: Db;
     let server: StreamServer;

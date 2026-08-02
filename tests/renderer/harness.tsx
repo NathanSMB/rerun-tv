@@ -36,8 +36,8 @@ import { DEFAULT_SETTINGS } from "@shared/types.js";
 import type { JSX } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { PlayerSlot } from "../../src/renderer/src/App.js";
 import Blackout from "../../src/renderer/src/screens/Blackout.js";
-import Player from "../../src/renderer/src/screens/Player.js";
 import { useStore } from "../../src/renderer/src/store.js";
 import { type BridgeCall, CHANNEL_ID, scriptedBridge } from "./fixtures.js";
 
@@ -53,8 +53,25 @@ declare global {
  */
 const REAL = useStore.getState();
 
-/** How many quiet passes `settle` runs before it declares the world at rest. */
-const SETTLE_PASSES = 8;
+/**
+ * How many consecutive passes must do *no* work before `settle` declares the
+ * world at rest.
+ *
+ * More than one because the media model is not the only thing in flight: a store
+ * transition can hop several macrotasks (a bridge round trip, then the effect
+ * that reads its result) without touching a video element at all, so a single
+ * idle pass proves nothing. Three is the longest such chain in the suite — the
+ * `ended` handoff — with a pass to spare.
+ */
+const SETTLE_QUIET_PASSES = 3;
+
+/**
+ * The hard cap. Reaching it means work is being re-armed every pass — a `play()`
+ * the Player reissues forever, a `src` that never sticks, an effect loop — which
+ * is a hang in the app, not a slow test. Throwing says so instead of returning a
+ * half-settled stage and failing somewhere less informative.
+ */
+const SETTLE_MAX_PASSES = 40;
 
 const macrotask = (): Promise<void> =>
     new Promise((resolve) => {
@@ -337,12 +354,16 @@ function withGesture<T>(run: () => T): T {
  * A stream that has opened: fresh timestamps, paused at zero, and the load
  * events that follow. `VideoSurface` forwards only the active surface's, which
  * is how a standby buffers without touching the OSD.
+ *
+ * Reports whether it opened anything, which is half of `settle`'s idea of quiet.
  */
-function openStreams(): void {
+function openStreams(): boolean {
+    let worked = false;
     for (const el of videos()) {
         const state = mediaState(el);
         const src = el.getAttribute("src");
         if (src === null || src === state.loaded) continue;
+        worked = true;
         state.loaded = src;
         state.paused = true;
         state.ended = false;
@@ -353,13 +374,19 @@ function openStreams(): void {
         el.dispatchEvent(new Event("loadedmetadata"));
         el.dispatchEvent(new Event("loadeddata"));
     }
+    return worked;
 }
 
-/** Let outstanding `play()` calls take effect — a task after they were asked for. */
-function letPlaysTake(): void {
+/**
+ * Let outstanding `play()` calls take effect — a task after they were asked for.
+ * Reports whether there were any, the other half of `settle`'s idea of quiet.
+ */
+function letPlaysTake(): boolean {
+    let worked = false;
     for (const el of videos()) {
         const state = mediaState(el);
         if (state.pending.length === 0) continue;
+        worked = true;
         const waiting = state.pending.splice(0);
         if (state.paused) {
             state.paused = false;
@@ -368,6 +395,7 @@ function letPlaysTake(): void {
         }
         for (const resolve of waiting) resolve();
     }
+    return worked;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,14 +416,18 @@ function letPlaysTake(): void {
  * the viewer browses. It is rendered from the same slot either way — remounting
  * it would drop the elements the floating window is playing — and a blackout
  * still outranks it, because the sleep timer wins.
+ *
+ * That last rule is *not* restated here: `<PlayerSlot/>` is the very component
+ * App renders, imported from App.tsx. A copy of it would have made this whole
+ * suite pass while the app itself unmounted the Player out from under a floating
+ * window — the exact bug App's header warns about. The stubbing stops at the
+ * screens the Player is not: the guide, library and settings are not this
+ * layer's business, so App's chrome branch is the one thing left out.
  */
 function Shell(): JSX.Element | null {
     const screen = useStore((s) => s.screen);
-    const pipActive = useStore((s) => s.pipActive);
     if (screen === "blackout") return <Blackout />;
-
-    if (screen === "player") return <Player />;
-    return pipActive ? <Player floating /> : null;
+    return <PlayerSlot />;
 }
 
 type StoreState = ReturnType<typeof useStore.getState>;
@@ -533,15 +565,35 @@ export async function openPlayer(
         root.render(<Shell />);
     });
 
+    /**
+     * Run until a pass finds nothing left to do.
+     *
+     * The old version ran a fixed eight passes and called that "at rest", which is
+     * two different lies depending on the scenario: a cascade one pass longer than
+     * eight was silently left half-run, and every other scenario paid for seven
+     * passes it did not need. Looping to quiescence makes the claim true, and the
+     * cap turns a runaway into a named failure rather than a fixed number of
+     * passes that quietly hides it.
+     */
     const settle = async (): Promise<void> => {
-        for (let pass = 0; pass < SETTLE_PASSES; pass++) {
+        let quiet = 0;
+        for (let pass = 0; quiet < SETTLE_QUIET_PASSES; pass++) {
+            if (pass >= SETTLE_MAX_PASSES) {
+                throw new Error(
+                    `the scenario did not settle after ${SETTLE_MAX_PASSES} passes: ` +
+                        "something re-arms work every pass — a play() reissued " +
+                        "forever, a src that never sticks, or an effect loop",
+                );
+            }
+            let worked = false;
             await act(async () => {
                 // Plays first: a `play()` asked for during this pass must not also be
                 // granted in it, or the transient-pause window would never be open.
-                letPlaysTake();
-                openStreams();
+                worked = letPlaysTake();
+                worked = openStreams() || worked;
                 await macrotask();
             });
+            quiet = worked ? 0 : quiet + 1;
         }
     };
 

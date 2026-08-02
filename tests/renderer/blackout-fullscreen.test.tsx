@@ -18,7 +18,7 @@
  */
 
 import { act } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { standaloneDeck } from "./fixtures.js";
 import { openPlayer, type Scenario } from "./harness.js";
 
@@ -32,6 +32,7 @@ async function open(...args: Parameters<typeof openPlayer>): Promise<Scenario> {
 afterEach(async () => {
     await player?.unmount();
     player = null;
+    vi.useRealTimers();
 });
 
 /** <kbd>F</kbd>, which carries the gesture a fresh fullscreen request needs. */
@@ -141,6 +142,12 @@ describe("leaving the blackout", () => {
 
 describe("the Player still gives fullscreen up when it should", () => {
     it("drops it when the viewer walks out to the guide", async () => {
+        // The guard the second Esc has to clear is a `Date.now()` comparison, so the
+        // clock is the only thing that needs to move — and `shouldAdvanceTime` keeps
+        // the harness's own `setTimeout(…, 0)` macrotasks resolving on their own, so
+        // `settle()` still works underneath. Without it the fake clock would freeze
+        // the harness solid.
+        vi.useFakeTimers({ shouldAdvanceTime: true });
         const sc = await open(standaloneDeck(3));
         await goFullscreen(sc);
 
@@ -148,8 +155,11 @@ describe("the Player still gives fullscreen up when it should", () => {
         await sc.press("Escape");
         // The Player ignores a second Esc within 400ms of leaving fullscreen: the
         // browser's own exit and the keystroke arrive together, and one press must
-        // not do both jobs. A viewer's second press is a beat later, so this is too.
-        await new Promise((resolve) => setTimeout(resolve, 450));
+        // not do both jobs. A viewer's second press is a beat later, so this is too —
+        // 450 fake milliseconds instead of 450 real ones off the suite's runtime.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(450);
+        });
         await sc.press("Escape");
 
         expect(sc.state().screen).toBe("guide");

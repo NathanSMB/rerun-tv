@@ -144,10 +144,37 @@ function screenFor(
     }
 }
 
+/**
+ * The fixed slot the Player is rendered from, and the whole of the keep-alive
+ * rule described in the file header: on screen while `screen === 'player'`,
+ * off-stage (`floating`) while a PiP window is showing the channel, gone
+ * otherwise.
+ *
+ * It is a component rather than four lines inside `App` so that the renderer
+ * harness (`tests/renderer/harness.tsx`) can mount *this* — the harness stubs
+ * the other screens, but a copy of this rule there would mean the PiP suite
+ * passed while the app unmounted the Player and killed the stream.
+ */
+export function PlayerSlot(): JSX.Element | null {
+    const screen = useStore((s) => s.screen);
+    const pipActive = useStore((s) => s.pipActive);
+
+    const watching = screen === "player";
+    // Mounted but off-stage: the channel plays on in a PiP window while the viewer
+    // browses. See the file header for why this slot must not move.
+    const keepPlayerAlive = pipActive && !watching;
+    if (!watching && !keepPlayerAlive) return null;
+
+    return (
+        <ScreenErrorBoundary key="player">
+            <Player floating={!watching} />
+        </ScreenErrorBoundary>
+    );
+}
+
 export default function App(): JSX.Element {
     const ready = useStore((s) => s.ready);
     const screen = useStore((s) => s.screen);
-    const pipActive = useStore((s) => s.pipActive);
     const [bootError, setBootError] = useState<Error | null>(null);
 
     useEffect(() => {
@@ -205,17 +232,10 @@ export default function App(): JSX.Element {
     }
 
     const watching = screen === "player";
-    // Mounted but off-stage: the channel plays on in a PiP window while the viewer
-    // browses. See the file header for why this slot must not move.
-    const keepPlayerAlive = pipActive && !watching;
 
     return (
         <>
-            {(watching || keepPlayerAlive) && (
-                <ScreenErrorBoundary key="player">
-                    <Player floating={!watching} />
-                </ScreenErrorBoundary>
-            )}
+            <PlayerSlot />
             {/*
         The Player owns the entire window when it is the screen: full-bleed
         video, no chrome around it, so fullscreen handoffs never have to escape a

@@ -22,24 +22,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Settings from "../../src/renderer/src/screens/Settings.js";
 import { useStore } from "../../src/renderer/src/store.js";
+import { makeBridge, systemInfo } from "./bridge.js";
 
 declare global {
     var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
 
-const SYSTEM: SystemInfo = {
-    appVersion: "0.1.0",
-    ffmpegPath: "/usr/bin/ffmpeg",
-    ffprobePath: "/usr/bin/ffprobe",
-    ffmpegVersion: "n8.1.2",
-    ffmpegSource: "system",
-    codecCheck: "ok",
-    hwAccel: { vaapi: "ok", nvenc: "ok", vaapiDevice: "/dev/dri/renderD129" },
-    dbPath: "/tmp/library.db",
-    dbSizeBytes: 1024,
-    streamPort: 9,
-    lastRestore: null,
-};
+/** Nothing here is about the machine; the rail only needs a System card to fill. */
+const SYSTEM: SystemInfo = systemInfo();
 
 /** A window's worth of viewport, and four screens' worth of settings under it. */
 const VIEWPORT = 800;
@@ -59,7 +49,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function bridge(): RerunApi {
-    return {
+    return makeBridge({
         settings: {
             getAll: async () => DEFAULT_SETTINGS,
             set: async () => DEFAULT_SETTINGS,
@@ -76,7 +66,7 @@ function bridge(): RerunApi {
             }),
         },
         system: { getInfo: async () => SYSTEM },
-    } as unknown as RerunApi;
+    });
 }
 
 /** Put the scroller at `scrollTop` and move every section's box to match. */

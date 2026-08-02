@@ -12,7 +12,13 @@
  * below is a variation on *leave everything else exactly as it was*.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +26,7 @@ import {
     ensureKwinPipRule,
     isKwinSession,
     PIP_RULE_ID,
+    syncKwinPipRule,
 } from "@main/kwin-rule.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -199,17 +206,29 @@ describe("installing it at boot", () => {
 
     let dir: string;
     let path: string;
+    /**
+     * Every call below hands in this instead of the default notifier, which
+     * shells out to `dbus-send --dest=org.kde.KWin ... reconfigure`. Left to the
+     * default, `npm test` would reconfigure the compositor of whoever ran it —
+     * a test suite reaching out of its sandbox and poking the desktop — or, on a
+     * machine without a session bus, spawn a process per test only to fail.
+     */
+    let reconfigured: number;
+    const notify = () => {
+        reconfigured += 1;
+    };
 
     beforeEach(() => {
         dir = mkdtempSync(join(tmpdir(), "rerun-kwin-"));
         path = join(dir, "kwinrulesrc");
+        reconfigured = 0;
     });
     afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
     it("installs on a Wayland session, where no client could ask for this itself", () => {
-        expect(ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv)).toBe(
-            true,
-        );
+        expect(
+            ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv, notify),
+        ).toBe(true);
 
         const written = readFileSync(path, "utf8");
         expect(read(written, PIP_RULE_ID, "layer")).toBe("overlay");
@@ -220,10 +239,10 @@ describe("installing it at boot", () => {
         const onX11 = join(dir, "x11-session");
         const onWayland = join(dir, "wayland-session");
 
-        expect(ensureKwinPipRule(onX11, KDE_X11 as NodeJS.ProcessEnv)).toBe(
-            true,
-        );
-        ensureKwinPipRule(onWayland, KDE_WAYLAND as NodeJS.ProcessEnv);
+        expect(
+            ensureKwinPipRule(onX11, KDE_X11 as NodeJS.ProcessEnv, notify),
+        ).toBe(true);
+        ensureKwinPipRule(onWayland, KDE_WAYLAND as NodeJS.ProcessEnv, notify);
 
         // The window system never enters into it: the rule is the compositor's.
         expect(readFileSync(onX11, "utf8")).toBe(
@@ -232,18 +251,18 @@ describe("installing it at boot", () => {
     });
 
     it("reports no change on the second boot, so KWin is left alone", () => {
-        expect(ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv)).toBe(
-            true,
-        );
-        expect(ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv)).toBe(
-            false,
-        );
+        expect(
+            ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv, notify),
+        ).toBe(true);
+        expect(
+            ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv, notify),
+        ).toBe(false);
     });
 
     it("keeps the viewer’s rules when it adds ours", () => {
         writeFileSync(path, EXISTING, "utf8");
 
-        ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv);
+        ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv, notify);
 
         const written = readFileSync(path, "utf8");
         expect(written).toContain("Description=Window settings for zen");
@@ -256,7 +275,98 @@ describe("installing it at boot", () => {
             XDG_SESSION_TYPE: "wayland",
         };
 
-        expect(ensureKwinPipRule(path, env as NodeJS.ProcessEnv)).toBe(false);
+        expect(ensureKwinPipRule(path, env as NodeJS.ProcessEnv, notify)).toBe(
+            false,
+        );
         expect(() => readFileSync(path, "utf8")).toThrow();
     });
+
+    /**
+     * Who gets told, and when. A rule on disk that KWin has not re-read does
+     * nothing until the next login, so the poke matters — but it is also the one
+     * thing here that talks to the running desktop, so it must happen exactly on
+     * the boots that changed the file and on no others.
+     */
+    describe("telling KWin to re-read the file", () => {
+        it("pokes KWin once when the rule is actually written", () => {
+            ensureKwinPipRule(path, KDE_WAYLAND as NodeJS.ProcessEnv, notify);
+
+            expect(reconfigured).toBe(1);
+        });
+
+        it("stays quiet on a boot that changed nothing", () => {
+            ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv, notify);
+            expect(reconfigured).toBe(1);
+
+            // Second boot: the file is already exactly right, so there is nothing
+            // for KWin to re-read. Every boot calls this, so a notify here would
+            // mean a needless compositor reconfigure on every single start-up.
+            ensureKwinPipRule(path, KDE_X11 as NodeJS.ProcessEnv, notify);
+            expect(reconfigured).toBe(1);
+        });
+
+        it("stays quiet off KDE, where there is no KWin to talk to", () => {
+            const env = { XDG_CURRENT_DESKTOP: "GNOME" };
+
+            ensureKwinPipRule(path, env as NodeJS.ProcessEnv, notify);
+
+            expect(reconfigured).toBe(0);
+        });
+
+        it("stays quiet when the removal leaves the file unchanged", () => {
+            // Nothing of ours in the file, asked to remove it: no write, so no poke.
+            writeFileSync(path, EXISTING, "utf8");
+
+            expect(
+                syncKwinPipRule(
+                    false,
+                    path,
+                    KDE_X11 as NodeJS.ProcessEnv,
+                    notify,
+                ),
+            ).toBe(false);
+            expect(reconfigured).toBe(0);
+        });
+    });
+
+    /**
+     * The promise in the module's own docstring: "a read-only config directory
+     * must not stop the television from starting". The rule is a nicety layered
+     * on a nicety; an EACCES escaping from here would take the whole boot down
+     * over a window that merely fails to float.
+     */
+    // Root ignores the mode bits, so the write would succeed and prove nothing.
+    it.skipIf(process.getuid?.() === 0)(
+        "survives a config directory it cannot write to",
+        () => {
+            // r-x------: readable, so the "is there a file already" step works,
+            // but neither the temp file nor the rename can be created.
+            chmodSync(dir, 0o500);
+            try {
+                expect(() =>
+                    syncKwinPipRule(
+                        true,
+                        path,
+                        KDE_WAYLAND as NodeJS.ProcessEnv,
+                        notify,
+                    ),
+                ).not.toThrow();
+
+                // Reported as "nothing changed", and KWin is not asked to re-read a
+                // file that was never written.
+                expect(
+                    syncKwinPipRule(
+                        true,
+                        path,
+                        KDE_WAYLAND as NodeJS.ProcessEnv,
+                        notify,
+                    ),
+                ).toBe(false);
+                expect(reconfigured).toBe(0);
+            } finally {
+                // Or `afterEach`'s rmSync cannot unlink the directory's contents.
+                chmodSync(dir, 0o700);
+            }
+        },
+    );
 });
