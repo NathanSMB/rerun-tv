@@ -135,7 +135,7 @@ class. Design for the class, not just these cases.
   bug 1's broken code. If you emulate, encode the *measured* Chromium ordering
   (pause-then-ended, same tick, `ended` already true during the pause
   handler), and cite `docs/playback.md` for it.
-- **Versions:** React 19, TypeScript ~5.9, Vitest 3.2, `type: "module"`,
+- **Versions:** React 19, TypeScript 7, Vitest 3.2, `type: "module"`,
   electron-vite. Path aliases `@shared`/`@main` exist in `vitest.config.ts`;
   there is no `@renderer` alias there yet — `handoff.test.ts` imports the
   store by relative path.

@@ -15,10 +15,9 @@
         "isolatedModules": true,
         "noEmit": true,
         "composite": true,
-        "baseUrl": ".",
         "paths": {
-            "@shared/*": ["src/shared/*"],
-            "@renderer/*": ["src/renderer/src/*"]
+            "@shared/*": ["./src/shared/*"],
+            "@renderer/*": ["./src/renderer/src/*"]
         }
     },
     // The renderer tests are web code — they mount real components against DOM
