@@ -13,9 +13,8 @@ concurrency:
 jobs:
     check:
         runs-on: ubuntu-latest
-        # `contents: write` exists solely for the badge push below. PRs — including
-        # ones from forks — still get a read-only token because the push step is
-        # gated to `push` events on main.
+        # `contents: write` exists solely for the badge commit below. Fork PRs get
+        # a read-only token regardless, which is why that step skips them.
         permissions:
             contents: write
         env:
@@ -24,7 +23,15 @@ jobs:
             # ffmpeg install can never quietly turn the suite green.
             RERUN_REQUIRE_FFMPEG: "1"
         steps:
+            # Check out the PR's head branch rather than the default detached
+            # merge commit, so the badge step below has a branch to commit onto.
+            # The tradeoff is that PR runs test the head commit, not its merge
+            # with main; `push` runs on main cover the merged result.
             - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.pull_request.head.ref || github.ref }}
+                  repository:
+                      ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
             - uses: actions/setup-node@v4
               with:
@@ -56,23 +63,24 @@ jobs:
             - name: Report coverage in the job summary
               run: node scripts/coverage-badge.mjs --summary >> "$GITHUB_STEP_SUMMARY"
 
-            # Keep the README's coverage badge current. The badge payload lives on
-            # an orphan `badges` branch (data, not source — history is noise, hence
-            # the force-push), and shields.io renders it from raw.githubusercontent.
-            # Runs only on merges/pushes to main, so the badge always shows main.
-            - name: Publish coverage badge
-              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+            # Write the new number into the README badge and commit it onto the
+            # PR branch, so the badge lands in the same review as the code that
+            # moved it and main is always correct the moment a PR merges.
+            #
+            # Skipped for fork PRs, whose token cannot push. Pushes made with
+            # GITHUB_TOKEN do not trigger workflows, so this cannot loop.
+            - name: Update coverage badge
+              if: >-
+                  github.event_name == 'pull_request' &&
+                  github.event.pull_request.head.repo.full_name == github.repository
               run: |
-                  dir="$(mktemp -d)"
-                  cp coverage/badge.json "$dir/coverage.json"
-                  cd "$dir"
-                  git init -q -b badges
+                  node scripts/coverage-badge.mjs --write
+                  if git diff --quiet -- README.md; then
+                      echo "Coverage badge already current; nothing to commit."
+                      exit 0
+                  fi
                   git config user.name "github-actions[bot]"
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-                  git add coverage.json
-                  git commit -q -m "Update coverage badge"
-                  git push -q --force \
-                      "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-                      badges
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  git add README.md
+                  git commit -q -m "Update coverage badge [skip ci]"
+                  git push -q origin "HEAD:${{ github.event.pull_request.head.ref }}"
