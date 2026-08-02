@@ -10,7 +10,6 @@
  * when no ffmpeg is installed, so the suite still runs on a bare machine.
  */
 
-import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -33,11 +32,13 @@ import {
     type HwAccelReport,
 } from "@shared/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ffmpegMissing } from "./ffmpeg-guard.js";
+import { makeClip } from "./helpers/media.js";
 
 const DIRECT_BODY = Buffer.from("0123456789".repeat(100)); // 1000 bytes, easy to index
 
 const ffmpeg = resolveFfmpeg();
-const noFfmpeg = ffmpeg.ffmpegPath === null;
+const noFfmpeg = ffmpegMissing(ffmpeg.ffmpegPath !== null, "stream server");
 
 let db: Db;
 let server: StreamServer;
@@ -97,30 +98,7 @@ beforeAll(async () => {
 
     if (!noFfmpeg) {
         const sample = join(dir, "sample.mkv");
-        execFileSync(ffmpeg.ffmpegPath as string, [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=size=160x120:rate=10:duration=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=r=48000:cl=stereo",
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            sample,
-        ]);
+        makeClip({ ffmpegPath: ffmpeg.ffmpegPath as string, out: sample });
         remuxId = insertEpisode(sample, "remux", "matroska,webm", 1, 3);
         // `episodes.path` is UNIQUE, so the transcode fixture gets its own copy of
         // the same clip rather than a second row pointing at one file.
@@ -131,30 +109,11 @@ beforeAll(async () => {
         // The phase-1 case: H.264 Chromium can decode, wrapped around a soundtrack
         // it can't. Video is copied, only the audio is encoded.
         const ac3 = join(dir, "sample-ac3.mkv");
-        execFileSync(ffmpeg.ffmpegPath as string, [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=size=160x120:rate=10:duration=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "anullsrc=r=48000:cl=stereo",
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "ac3",
-            ac3,
-        ]);
+        makeClip({
+            ffmpegPath: ffmpeg.ffmpegPath as string,
+            out: ac3,
+            acodec: "ac3",
+        });
         remuxAc3Id = insertEpisode(ac3, "remux", "matroska,webm", 1, 5, "ac3");
     }
 

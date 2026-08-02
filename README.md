@@ -1,5 +1,8 @@
 # Rerun TV
 
+[![CI](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml/badge.svg)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
+[![Test coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FNathanSMB%2Frerun-tv%2Fbadges%2Fcoverage.json)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
+
 Turn a local media library into lean-back TV channels — you build the lineup,
 the channel decides what's on. Linux-first (Arch), Electron + ffmpeg.
 

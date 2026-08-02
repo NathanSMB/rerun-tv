@@ -5,3 +5,4 @@ release/
 *.tsbuildinfo
 .vite/
 .DS_Store
+coverage/

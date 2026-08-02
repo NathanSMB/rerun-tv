@@ -135,7 +135,7 @@ export async function probeFile(
 }
 
 /** See `EXTENSION_FORMATS`: prefer the extension when the demuxer is ambiguous. */
-function resolveContainer(filePath: string, formatName: string): string {
+export function resolveContainer(filePath: string, formatName: string): string {
     const reported = formatName
         .toLowerCase()
         .split(",")
@@ -149,7 +149,7 @@ function resolveContainer(filePath: string, formatName: string): string {
 }
 
 /** execFile rejects with an errno/stderr-bearing object; surface the useful bit. */
-function describe(err: unknown): string {
+export function describe(err: unknown): string {
     if (err && typeof err === "object") {
         const e = err as { stderr?: string; message?: string; code?: unknown };
         const stderr = typeof e.stderr === "string" ? e.stderr.trim() : "";

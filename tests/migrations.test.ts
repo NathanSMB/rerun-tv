@@ -16,17 +16,8 @@ import { type Db, migrate } from "@main/db/index.js";
 import { getSettings } from "@main/db/repositories/settings.js";
 import { MIGRATIONS } from "@main/db/schema.js";
 import { decidePlaybackPath } from "@shared/playback.js";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-
-/** An in-memory database with the first `version` migrations applied and no more. */
-function openAtVersion(version: number): Db {
-    const db = new Database(":memory:");
-    db.pragma("foreign_keys = ON");
-    for (let i = 0; i < version; i++) db.exec(MIGRATIONS[i]);
-    db.pragma(`user_version = ${version}`);
-    return db;
-}
+import { openAtVersion } from "./helpers/db.js";
 
 interface Fixture {
     container: string;

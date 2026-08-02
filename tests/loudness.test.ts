@@ -15,7 +15,6 @@
  * rest of the suite.
  */
 
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +24,7 @@ import {
     loudnessCoverage,
     saveLoudness,
 } from "@main/db/repositories/library.js";
-import { LoudnessScanner } from "@main/library/loudness.js";
+import { type LoudnessLog, LoudnessScanner } from "@main/library/loudness.js";
 import { resolveFfmpeg } from "@main/stream/ffmpeg.js";
 import {
     LOUDNESS_TARGET_I,
@@ -48,12 +47,27 @@ import {
     type LoudnessMeasurement,
 } from "@shared/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ffmpegMissing } from "./ffmpeg-guard.js";
+import { makeClip } from "./helpers/media.js";
 
 const ffmpeg = resolveFfmpeg();
-const noFfmpeg = ffmpeg.ffmpegPath === null;
+const noFfmpeg = ffmpegMissing(ffmpeg.ffmpegPath !== null, "loudness");
 
 const ON: AppSettings = { ...DEFAULT_SETTINGS, loudnessEq: true };
 const OFF: AppSettings = { ...DEFAULT_SETTINGS, loudnessEq: false };
+
+/**
+ * The job narrates every file it touches, which is right in the app log and
+ * wrong in a test report: a dozen `[loudness]` lines per case, interleaved with
+ * the reporter's, and one of these cases deliberately feeds ffmpeg a broken file
+ * so a scary-looking warning is the *expected* result. Injecting silence keeps
+ * the run readable; production still gets `console`.
+ */
+const SILENT: LoudnessLog = {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+};
 
 /** A plausible quiet disc rip: 6.8 LU below target, peaks with room to spare. */
 const QUIET: LoudnessMeasurement = {
@@ -309,20 +323,16 @@ describe.skipIf(noFfmpeg)("measuring a real file", () => {
 
     function tone(name: string, filter: string | null): string {
         const path = join(dir, name);
-        execFileSync(ffmpeg.ffmpegPath as string, [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=1000:duration=5:sample_rate=48000",
-            ...(filter ? ["-af", filter] : []),
-            "-c:a",
-            "pcm_s16le",
-            path,
-        ]);
+        makeClip({
+            ffmpegPath: ffmpeg.ffmpegPath as string,
+            out: path,
+            video: false,
+            audio: "tone",
+            toneHz: 1000,
+            seconds: 5,
+            audioFilter: filter,
+            acodec: "pcm_s16le",
+        });
         return path;
     }
 
@@ -415,30 +425,12 @@ describe.skipIf(noFfmpeg)("serving an equalized stream", () => {
         episode: number,
     ): number {
         const path = join(dir, name);
-        execFileSync(ffmpeg.ffmpegPath as string, [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=size=160x120:rate=10:duration=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:sample_rate=48000",
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
+        makeClip({
+            ffmpegPath: ffmpeg.ffmpegPath as string,
+            out: path,
+            audio: "tone",
             acodec,
-            path,
-        ]);
+        });
         const info = db
             .prepare(
                 `INSERT INTO episodes (show_id, season, episode, path, duration_s, container, vcodec, acodec, playback_path)
@@ -521,19 +513,14 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
     }
 
     function makeTone(index: number): void {
-        execFileSync(ffmpeg.ffmpegPath as string, [
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:duration=2:sample_rate=48000",
-            "-c:a",
-            "pcm_s16le",
-            join(dir, `job-${index}.wav`),
-        ]);
+        makeClip({
+            ffmpegPath: ffmpeg.ffmpegPath as string,
+            out: join(dir, `job-${index}.wav`),
+            video: false,
+            audio: "tone",
+            seconds: 2,
+            acodec: "pcm_s16le",
+        });
     }
 
     /** Poll until `done`, so a test never waits the full timeout on success. */
@@ -564,6 +551,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => ON,
+            log: SILENT,
             isBusy: () => false,
         });
 
@@ -587,6 +575,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => OFF,
+            log: SILENT,
             isBusy: () => false,
         });
 
@@ -614,6 +603,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => ON,
+            log: SILENT,
             isBusy: () => busy,
         });
 
@@ -641,6 +631,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => ON,
+            log: SILENT,
             isBusy: () => false,
         });
         scanner.start();
@@ -672,6 +663,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => (on ? ON : OFF),
+            log: SILENT,
             isBusy: () => false,
         });
 
@@ -697,6 +689,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => ON,
+            log: SILENT,
             isBusy: () => false,
         });
         scanner.start();

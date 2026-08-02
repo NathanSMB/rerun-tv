@@ -29,7 +29,14 @@ import {
     getChannelDetail,
     listChannelSummaries,
 } from "@main/services/channels.js";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+    insertArc,
+    insertEpisode,
+    insertShow,
+    seedArcShow,
+    seedFlatShow,
+} from "./helpers/db.js";
 
 /** mulberry32 — a tiny, deterministic PRNG so every statistical test is reproducible. */
 function seeded(seed: number): () => number {
@@ -42,87 +49,15 @@ function seeded(seed: number): () => number {
     };
 }
 
-function insertShow(db: Db, title: string): number {
-    return Number(
-        db
-            .prepare(
-                `INSERT INTO shows (title, folder_path, added_at) VALUES (?, ?, 0)`,
-            )
-            .run(title, `/tv/${title}`).lastInsertRowid,
-    );
-}
-
-function insertEpisode(
-    db: Db,
-    showId: number,
-    season: number,
-    episode: number,
-): number {
-    return Number(
-        db
-            .prepare(
-                `INSERT INTO episodes (show_id, season, episode, path, duration_s)
-         VALUES (?, ?, ?, ?, 1200)`,
-            )
-            .run(
-                showId,
-                season,
-                episode,
-                `/tv/${showId}/S${season}E${episode}.mkv`,
-            ).lastInsertRowid,
-    );
-}
-
-function insertArc(
-    db: Db,
-    showId: number,
-    title: string,
-    episodeIds: number[],
-): number {
-    const groupId = Number(
-        db
-            .prepare(
-                `INSERT INTO part_groups (show_id, title, source) VALUES (?, ?, 'manual')`,
-            )
-            .run(showId, title).lastInsertRowid,
-    );
-    const link = db.prepare(
-        `UPDATE episodes SET part_group_id = ?, part_index = ? WHERE id = ?`,
-    );
-    episodeIds.forEach((id, i) => {
-        link.run(groupId, i + 1, id);
-    });
-    return groupId;
-}
-
-/** A show of `count` standalone episodes in season 1. */
-function seedFlatShow(db: Db, title: string, count: number): number {
-    const showId = insertShow(db, title);
-    for (let e = 1; e <= count; e++) insertEpisode(db, showId, 1, e);
-    return showId;
-}
-
-/** The plan's sample show: 8 standalone episodes + one 3-part arc (9 units). */
-function seedArcShow(db: Db): {
-    showId: number;
-    groupId: number;
-    episodeIds: number[];
-} {
-    const showId = insertShow(db, "Gargoyles");
-    const episodeIds: number[] = [];
-    for (let e = 1; e <= 11; e++)
-        episodeIds.push(insertEpisode(db, showId, 1, e));
-    const groupId = insertArc(db, showId, "The Gathering", [
-        episodeIds[4],
-        episodeIds[5],
-        episodeIds[6],
-    ]);
-    return { showId, groupId, episodeIds };
-}
-
 let db: Db;
 beforeEach(() => {
     db = openDatabase(":memory:");
+});
+
+// One handle per test, and this file has a lot of tests: closing them keeps the
+// count flat instead of letting it grow with the suite.
+afterEach(() => {
+    db.close();
 });
 
 describe("arc atomicity", () => {

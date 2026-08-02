@@ -21,7 +21,7 @@ import { type Db, openDatabase } from "@main/db/index.js";
 import { resetFfmpegCache } from "@main/stream/ffmpeg.js";
 import { type StreamServer, startStreamServer } from "@main/stream/server.js";
 import { DEFAULT_SETTINGS } from "@shared/types.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 /**
  * A stand-in for ffmpeg. Writes a plausible `ftyp` box — the stream server holds
@@ -102,6 +102,25 @@ beforeAll(async () => {
     });
 });
 
+/**
+ * Every case gets the job table to itself.
+ *
+ * These used to run as one long story — case 2 asserted on the job case 1 had
+ * left behind — so `.only`, a reorder, or a failure early on turned the rest into
+ * noise about state that was never set up. Hanging up on this case's requests and
+ * waiting for the supervisor to notice is the same teardown a closing window
+ * performs, and it leaves the next case a clean slate.
+ */
+afterEach(async () => {
+    for (const controller of open.splice(0)) controller.abort();
+    if (closed) return;
+    const deadline = Date.now() + 5000;
+    while (server.activeKeys().length > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(server.activeKeys()).toEqual([]);
+});
+
 afterAll(async () => {
     for (const controller of open) controller.abort();
     if (!closed) await server.close();
@@ -118,6 +137,7 @@ describe("job keys", () => {
     });
 
     it("lets a channel hold the episode on air and the one prewarming behind it", async () => {
+        await openStream(e1, 7);
         await openStream(e2, 7);
         expect(server.activeKeys().sort()).toEqual([
             `channel:7:${e1}`,
@@ -126,7 +146,11 @@ describe("job keys", () => {
     });
 
     it("replaces a job in place on a seek — same channel, same episode", async () => {
+        await openStream(e1, 7);
+        await openStream(e2, 7);
+
         await openStream(e1, 7, 120);
+
         // Still two: the seek took over episode 1's own slot rather than opening a third.
         expect(server.activeKeys().sort()).toEqual([
             `channel:7:${e1}`,
@@ -135,23 +159,36 @@ describe("job keys", () => {
     });
 
     it("caps a channel at two, retiring the oldest", async () => {
+        await openStream(e1, 7);
+        await openStream(e2, 7);
+        // The seek refreshes episode 1's slot, which is what makes episode 2 the
+        // oldest — the ordering the cap is about, so it is set up here rather than
+        // inherited from the case above.
+        await openStream(e1, 7, 120);
+
         await openStream(e3, 7);
+
         const keys = server.activeKeys();
         expect(keys).toHaveLength(2);
-        // The newest two survive: episode 3 was just requested, and episode 1's slot
-        // was refreshed by the seek above, making episode 2 the oldest.
         expect(keys.sort()).toEqual([`channel:7:${e1}`, `channel:7:${e3}`]);
     });
 
-    it("releaseEpisode drops one job and leaves the channel’s other one alone", () => {
+    it("releaseEpisode drops one job and leaves the channel’s other one alone", async () => {
+        await openStream(e1, 7);
+        await openStream(e3, 7);
+
         server.releaseEpisode(7, e1);
+
         expect(server.activeKeys()).toEqual([`channel:7:${e3}`]);
     });
 
     it("releaseChannel drops everything the channel owns", async () => {
+        await openStream(e1, 7);
         await openStream(e2, 7);
         expect(server.activeKeys()).toHaveLength(2);
+
         server.releaseChannel(7);
+
         expect(server.activeKeys()).toEqual([]);
     });
 
@@ -166,6 +203,34 @@ describe("job keys", () => {
         server.releaseChannel(11);
         expect(server.activeKeys()).toEqual([`channel:12:${e2}`]);
         server.releaseChannel(12);
+    });
+
+    it("kills the encoder when the client hangs up", async () => {
+        // The one thing standing between a skipped episode and an ffmpeg running
+        // forever is `req.on("close") -> supervisor.killIfCurrent(...)`. Nothing
+        // else in this suite notices if that line goes: every other case tears jobs
+        // down through `releaseChannel`/`releaseEpisode`/`close()`, which are
+        // explicit calls the renderer only makes on the tidy paths. A window
+        // closing, a channel change, a crashed renderer — all of those are just the
+        // socket going away, and this is the test for that.
+        const controller = new AbortController();
+        const response = await fetch(server.urlFor(e1, 0, 31), {
+            signal: controller.signal,
+        });
+        expect(response.status).toBe(200);
+        await response.body!.getReader().read();
+        expect(server.activeKeys()).toContain(`channel:31:${e1}`);
+
+        controller.abort();
+
+        // The close event is asynchronous, so poll rather than assert once — but
+        // bounded, because "eventually" here means milliseconds and a hang is
+        // exactly the failure being tested for.
+        const deadline = Date.now() + 5000;
+        while (server.activeKeys().length > 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(server.activeKeys()).toEqual([]);
     });
 
     it("does not apply the channel cap to a request with no channel slot", async () => {

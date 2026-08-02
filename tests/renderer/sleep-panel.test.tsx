@@ -16,7 +16,8 @@
  */
 
 import { SLEEP_MAX_MIN } from "@shared/types.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { standaloneDeck } from "./fixtures.js";
 import { openPlayer, type Scenario } from "./harness.js";
 
@@ -30,6 +31,7 @@ async function open(...args: Parameters<typeof openPlayer>): Promise<Scenario> {
 afterEach(async () => {
     await player?.unmount();
     player = null;
+    vi.useRealTimers();
 });
 
 /** Minutes left on the armed timer, rounded the way the dial rounds. */
@@ -133,6 +135,38 @@ describe("keys while the panel is open", () => {
         await sc.press("5");
 
         expect(sc.state().sleepMinutes).toBe(135);
+    });
+
+    /**
+     * The other half of the digit buffer, and until now the untested half: a value
+     * that could still grow is *held* for `DIGIT_COMMIT_MS` before it arms. Every
+     * other digit case here takes an eager path — "135" cannot grow, "0" is the off
+     * key — so the timeout that arms a plain two-digit entry, which is how a viewer
+     * actually types a duration, had nothing pinning it. Drop the `setTimeout` in
+     * `pushDigit` and only this case goes red.
+     */
+    it("commits a two-digit entry once the buffer times out", async () => {
+        // Fake timers, so the wait is 900 fake milliseconds rather than 900 real
+        // ones. `shouldAdvanceTime` is what lets the harness's own zero-delay
+        // macrotasks keep resolving underneath `settle()`.
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const sc = await open(standaloneDeck(3), { sleepTimerDefaultMin: 30 });
+        await sc.press("s");
+        expect(sc.state().sleepMinutes).toBe(30);
+
+        // 25 could still become 250, which is inside the 300-minute ceiling, so
+        // neither keystroke is final and the panel arms nothing yet.
+        await sc.press("2");
+        await sc.press("5");
+        expect(sc.state().sleepMinutes).toBe(30);
+
+        // Past SleepPanel's DIGIT_COMMIT_MS (900), the buffer gives up waiting.
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(950);
+        });
+
+        expect(sc.state().sleepMinutes).toBe(25);
+        expect(sc.sleepPanel()).not.toBeNull();
     });
 
     it("switches the timer off on a typed zero", async () => {

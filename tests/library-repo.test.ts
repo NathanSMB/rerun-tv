@@ -7,7 +7,6 @@ import {
     createArc,
     deleteArc,
     deleteEpisodesNotIn,
-    type EpisodeInput,
     findEpisodeByPath,
     getEpisode,
     getEpisodesByIds,
@@ -28,7 +27,8 @@ import {
     upsertShow,
 } from "@main/db/repositories/library.js";
 import { getLibraryOverview } from "@main/services/library.js";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { episodeInput as episode } from "./helpers/db.js";
 
 let db: Db;
 
@@ -36,33 +36,11 @@ beforeEach(() => {
     db = openDatabase(":memory:");
 });
 
-function episode(
-    showId: number,
-    season: number,
-    ep: number,
-    patch: Partial<EpisodeInput> = {},
-): EpisodeInput {
-    return {
-        showId,
-        season,
-        episode: ep,
-        episodeEnd: null,
-        title: `Episode ${ep}`,
-        path: `/tv/Show/S${season}E${ep}.mkv`,
-        durationS: 1320,
-        container: "matroska",
-        vcodec: "h264",
-        acodec: "aac",
-        width: 1920,
-        height: 1080,
-        partGroupId: null,
-        partIndex: null,
-        playbackPath: "remux",
-        mtimeMs: 1000,
-        sizeBytes: 500,
-        ...patch,
-    };
-}
+// An in-memory database is small, but a file handle per test is still a handle:
+// leaving them open is how a suite ends up unable to exit.
+afterEach(() => {
+    db.close();
+});
 
 describe("shows", () => {
     it("upserts by folder path and keeps the id stable across a retitle", () => {
@@ -314,10 +292,17 @@ describe("arcs", () => {
             db,
             episode(other.id, 1, 1, { path: "/tv/Other/S1E1.mkv" }),
         );
+        // Matched rather than bare: a bare `.toThrow()` passes on *any* failure, so
+        // a typo that made `createArc` throw a TypeError on every call — including
+        // the legal ones — would still look green here.
         expect(() =>
             createArc(db, showId, "Nope", [...ids, stray], "manual"),
-        ).toThrow();
-        expect(() => createArc(db, showId, "Nope", [], "manual")).toThrow();
+        ).toThrow(new RegExp(`episode ${stray} belongs to show ${other.id}`));
+        expect(() => createArc(db, showId, "Nope", [], "manual")).toThrow(
+            /no episodes given/,
+        );
+        // And a rejected arc leaves nothing half-created behind.
+        expect(listArcs(db, showId)).toEqual([]);
     });
 
     it("spans a double episode when computing the range", () => {
@@ -333,7 +318,10 @@ describe("arcs", () => {
 
     it("clearAutoArcs removes auto arcs and leaves manual ones alone", () => {
         const { showId, ids } = showWithEpisodes(4);
-        const auto = createArc(db, showId, "Auto", [ids[0], ids[1]], "auto");
+        // Not captured: the arc under test is the one that will be *gone*, and the
+        // assertion this file used to make about it — `expect(auto.source).toBe
+        // ("auto")` after the clear — only restated the argument passed in here.
+        createArc(db, showId, "Auto", [ids[0], ids[1]], "auto");
         const manual = createArc(
             db,
             showId,
@@ -353,7 +341,6 @@ describe("arcs", () => {
             partGroupId: manual.id,
             partIndex: 2,
         });
-        expect(auto.source).toBe("auto");
     });
 
     it("regrouping moves members and drops the group left empty", () => {
@@ -371,6 +358,40 @@ describe("arcs", () => {
         expect(arcs.map((a) => a.id)).toEqual([second.id]);
         expect(arcs[0].partCount).toBe(3);
         expect(first.id).not.toBe(second.id);
+    });
+
+    it("renumbers the survivors when a regroup only takes *some* of a group", () => {
+        // Regression: the move used to delete groups left completely empty but never
+        // touched the part indexes of a group left half-full. Pulling part 1 out of a
+        // two-part arc left the survivor still labelled "part 2" of a one-part arc —
+        // and the scheduler prints `part_index`, so the user saw "Part 2" with no
+        // part 1 anywhere.
+        const { showId, ids } = showWithEpisodes(4);
+        const original = createArc(
+            db,
+            showId,
+            "Trilogy",
+            [ids[0], ids[1], ids[2]],
+            "auto",
+        );
+        expect(getEpisode(db, ids[2])).toMatchObject({ partIndex: 3 });
+
+        // Steal the first part into a new arc; parts 2 and 3 stay behind.
+        createArc(db, showId, "Crossover", [ids[0], ids[3]], "manual");
+
+        // The old group survives with two members, which must be parts 1 and 2 —
+        // in their original airing order, not renumbered arbitrarily.
+        const survivor = listArcs(db, showId).find((a) => a.id === original.id);
+        expect(survivor?.partCount).toBe(2);
+        expect(survivor?.episodeIds).toEqual([ids[1], ids[2]]);
+        expect(getEpisode(db, ids[1])).toMatchObject({
+            partGroupId: original.id,
+            partIndex: 1,
+        });
+        expect(getEpisode(db, ids[2])).toMatchObject({
+            partGroupId: original.id,
+            partIndex: 2,
+        });
     });
 });
 
@@ -402,6 +423,37 @@ describe("scan roots and unmatched files", () => {
         removeUnmatched(db, file.id);
         expect(listUnmatched(db)).toEqual([]);
         expect(getUnmatched(db, file.id)).toBeNull();
+    });
+
+    /**
+     * The contract the doc comment claims, now that the SQL agrees with it: the
+     * bucket is a queue, not an alphabetised directory. It used to be `ORDER BY
+     * path`, which reads identically on the tidy libraries a test usually builds
+     * and differently on every real one — and the difference matters, because a
+     * viewer working down the list must not have it reshuffled by a rescan that
+     * re-records an entry they have already looked at.
+     */
+    it("lists unmatched files oldest first, and a rescan does not reorder them", () => {
+        // Deliberately reverse-alphabetical, so path order and insert order differ.
+        addUnmatched(db, "/tv/zulu.mkv", "unparsed", 1, 1);
+        addUnmatched(db, "/tv/mike.mkv", "unparsed", 1, 1);
+        addUnmatched(db, "/tv/alpha.mkv", "unparsed", 1, 1);
+
+        expect(listUnmatched(db).map((f) => f.path)).toEqual([
+            "/tv/zulu.mkv",
+            "/tv/mike.mkv",
+            "/tv/alpha.mkv",
+        ]);
+
+        // Re-recording the first one refreshes its reason in place; it does not go
+        // to the back of the queue, because it is not a newly discovered problem.
+        addUnmatched(db, "/tv/zulu.mkv", "ffprobe failed", 2, 2);
+        expect(listUnmatched(db).map((f) => f.path)).toEqual([
+            "/tv/zulu.mkv",
+            "/tv/mike.mkv",
+            "/tv/alpha.mkv",
+        ]);
+        expect(listUnmatched(db)[0].reason).toBe("ffprobe failed");
     });
 });
 

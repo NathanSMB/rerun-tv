@@ -9,6 +9,7 @@
 
 import {
     existsSync,
+    mkdirSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
@@ -16,7 +17,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { openDatabase } from "@main/db/index.js";
 import { MIGRATIONS } from "@main/db/schema.js";
 import {
@@ -28,6 +29,7 @@ import {
 } from "@main/services/restore.js";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openAtVersion } from "./helpers/db.js";
 
 let dir: string;
 let dbPath: string;
@@ -140,6 +142,36 @@ describe("inspectAndStage — rejection", () => {
         expect(existsSync(stagedPath)).toBe(false);
         expect(existsSync(metaPath)).toBe(false);
     });
+
+    it("rejects a database that passes the magic-header check but is corrupt inside", () => {
+        // The header check is only the first 16 bytes, so a database truncated or
+        // scribbled on by a dying disk sails straight past it. `integrity_check` is
+        // the thing that actually catches it, and it has to catch it *here* — a
+        // corrupt file that reaches `applyStagedImport` replaces a working library
+        // with rubble.
+        const source = join(dir, "rotten.db");
+        seedDatabase(source, (db) => {
+            // Enough rows that the `shows` b-tree spans several pages, so there is
+            // something past the schema to damage.
+            const insert = db.prepare(
+                "INSERT INTO shows (title, folder_path, added_at) VALUES (?, ?, 0)",
+            );
+            for (let i = 0; i < 2000; i++) insert.run(`Show ${i}`, `/tv/${i}`);
+        });
+
+        const bytes = readFileSync(source);
+        expect(bytes.length).toBeGreaterThan(64 * 1024);
+        // Leave the 16-byte SQLite magic — and the whole first page, so the file
+        // still opens and still looks like ours — then shred a data page behind it.
+        bytes.fill(0x5a, 32 * 1024, 34 * 1024);
+        writeFileSync(source, bytes);
+
+        expect(() => inspectAndStage(source, stagedPath, metaPath)).toThrow(
+            /corrupt/,
+        );
+        expect(existsSync(stagedPath)).toBe(false);
+        expect(existsSync(metaPath)).toBe(false);
+    });
 });
 
 describe("inspectAndStage — acceptance", () => {
@@ -170,10 +202,7 @@ describe("inspectAndStage — acceptance", () => {
     it("migrates an older backup forward while staging it", () => {
         // A database as it looked at schema 1: only the first migration applied.
         const source = join(dir, "old.db");
-        const old = new Database(source);
-        old.exec(MIGRATIONS[0]);
-        old.pragma("user_version = 1");
-        old.close();
+        openAtVersion(1, source).close();
 
         const report = inspectAndStage(source, stagedPath, metaPath);
 
@@ -316,17 +345,137 @@ describe("applyStagedImport", () => {
         expect(existsSync(dbPath)).toBe(true);
     });
 
-    it("prunes older safety copies down to the keep limit", () => {
+    it("keeps the old database when the swap itself fails", () => {
+        // The whole design rests on `rename()` being atomic, but it can still fail
+        // outright — a read-only directory, a cross-device staged file, the case
+        // simulated here. When it does, the rule is: boot on the database we
+        // already have, and keep the staged file around (renamed `.failed`) so the
+        // import can be diagnosed instead of silently evaporating.
+        // Renaming a file over a non-empty directory fails on every platform we
+        // ship to, which makes it the cheapest way to reproduce the branch.
+        mkdirSync(dbPath);
+        writeFileSync(join(dbPath, "occupied"), "the old state");
+
+        const source = join(dir, "backup.db");
+        seedDatabase(source, (db) => {
+            db.prepare("INSERT INTO channels (name, number) VALUES (?, ?)").run(
+                "Imported",
+                42,
+            );
+        });
+        inspectAndStage(source, stagedPath, metaPath);
+
+        const receipt = apply();
+
+        // Null, so bootstrap() records no receipt and simply opens what is there.
+        expect(receipt).toBeNull();
+        // The staged file is set aside for diagnosis rather than deleted …
+        expect(existsSync(stagedPath)).toBe(false);
+        expect(existsSync(`${stagedPath}.failed`)).toBe(true);
+        // … and nothing that was in place got clobbered on the way past.
+        expect(readFileSync(join(dbPath, "occupied"), "utf8")).toBe(
+            "the old state",
+        );
+    });
+
+    it("falls back to a raw file copy when the database is too damaged to VACUUM", () => {
+        // The most likely reason somebody is importing at all is that their library
+        // died. `VACUUM INTO` cannot read a corrupt database, so if that were the
+        // only backup path the damaged file — which may still be partly
+        // recoverable — would be thrown away by the very act of replacing it.
+        writeFileSync(dbPath, " not a database at all, just garbage bytes");
+
+        const source = join(dir, "backup.db");
+        seedDatabase(source, (db) => {
+            db.prepare("INSERT INTO channels (name, number) VALUES (?, ?)").run(
+                "Imported",
+                42,
+            );
+        });
+        inspectAndStage(source, stagedPath, metaPath);
+
+        const receipt = apply();
+
+        // The import went through …
+        expect(receipt).not.toBeNull();
+        const live = new Database(dbPath);
+        expect(
+            (
+                live.prepare("SELECT name FROM channels").get() as {
+                    name: string;
+                }
+            ).name,
+        ).toBe("Imported");
+        live.close();
+
+        // … and the unreadable original was still copied out, byte for byte.
+        expect(receipt?.backupPath).not.toBeNull();
+        expect(existsSync(receipt!.backupPath!)).toBe(true);
+        expect(readFileSync(receipt!.backupPath!).toString()).toBe(
+            " not a database at all, just garbage bytes",
+        );
+    });
+
+    it("imports anyway when the meta sidecar has gone missing", () => {
+        // The sidecar only carries what the *receipt* says. Losing it (a crash
+        // between staging and the next boot, someone tidying the folder) must not
+        // cost the user their import — the staged database is the valuable part.
+        seedDatabase(dbPath);
+        const source = join(dir, "backup.db");
+        seedDatabase(source, (db) => {
+            db.prepare("INSERT INTO channels (name, number) VALUES (?, ?)").run(
+                "Imported",
+                42,
+            );
+        });
+        inspectAndStage(source, stagedPath, metaPath);
+        rmSync(metaPath);
+
+        const receipt = apply();
+
+        expect(receipt).not.toBeNull();
+        // Honest placeholders rather than invented numbers.
+        expect(receipt?.sourcePath).toBe("(unknown)");
+        expect(receipt?.shows).toBe(0);
+        expect(receipt?.episodes).toBe(0);
+        expect(receipt?.channels).toBe(0);
+        // The swap itself still happened.
+        const live = new Database(dbPath);
+        expect(
+            (
+                live.prepare("SELECT name FROM channels").get() as {
+                    name: string;
+                }
+            ).name,
+        ).toBe("Imported");
+        live.close();
+    });
+
+    it("prunes older safety copies down to the keep limit, keeping the newest", () => {
         const source = join(dir, "backup.db");
         seedDatabase(source);
 
+        const made: string[] = [];
         for (let i = 0; i < 5; i++) {
+            // A backup is named for the millisecond it was taken, so two rounds
+            // inside one tick would land on the same filename and this would end up
+            // measuring the clock instead of the pruner. Wait one out.
+            const tick = Date.now();
+            while (Date.now() === tick) {
+                /* spin — a millisecond at most */
+            }
             seedDatabase(dbPath);
             inspectAndStage(source, stagedPath, metaPath);
-            apply(2);
+            made.push(basename(apply(2)!.backupPath!));
         }
 
-        expect(backupFiles().length).toBeLessThanOrEqual(2);
+        // Five distinct copies really were taken, so the pruner had something to do.
+        expect(new Set(made).size).toBe(5);
+        // Exactly the limit, and exactly the *newest* two. The old assertion was
+        // `toBeLessThanOrEqual(2)`, which a pruner that deleted everything, or one
+        // that kept the two oldest copies and threw away the database the user was
+        // actually about to want back, would both have satisfied.
+        expect(backupFiles().sort()).toEqual(made.slice(-2).sort());
     });
 });
 

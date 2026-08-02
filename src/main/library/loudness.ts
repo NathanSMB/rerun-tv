@@ -24,6 +24,27 @@ import {
 } from "../db/repositories/library.js";
 import { measureLoudness } from "../stream/loudness.js";
 
+/**
+ * Where the job's progress lines go.
+ *
+ * Only here so the suite can silence it. The job narrates itself at every step —
+ * that narration is how a slow first launch is explained to whoever is reading
+ * the log — but in a test run it is a wall of `[loudness]` lines interleaved with
+ * the reporter's output, obscuring the failures the run exists to show. The
+ * default is the console, so production says exactly what it always said.
+ */
+export interface LoudnessLog {
+    info(message: string): void;
+    warn(message: string): void;
+    error(message: string, err: unknown): void;
+}
+
+const CONSOLE_LOG: LoudnessLog = {
+    info: (message) => console.log(message),
+    warn: (message) => console.warn(message),
+    error: (message, err) => console.error(message, err),
+};
+
 export interface LoudnessScannerOptions {
     db: Db;
     /** Null when no ffmpeg was found; the job then simply never runs. */
@@ -39,6 +60,8 @@ export interface LoudnessScannerOptions {
     /** Overridable so tests aren't paced by a background job's politeness. */
     busyRecheckMs?: number;
     betweenFilesMs?: number;
+    /** Defaults to the console; tests pass a silent one. */
+    log?: LoudnessLog;
 }
 
 /** How long to wait before re-checking a machine that was busy. */
@@ -54,6 +77,7 @@ export class LoudnessScanner {
     readonly #isBusy: () => boolean;
     readonly #busyRecheckMs: number;
     readonly #betweenFilesMs: number;
+    readonly #log: LoudnessLog;
 
     #running = false;
     #disposed = false;
@@ -84,6 +108,7 @@ export class LoudnessScanner {
         this.#isBusy = opts.isBusy;
         this.#busyRecheckMs = opts.busyRecheckMs ?? BUSY_RECHECK_MS;
         this.#betweenFilesMs = opts.betweenFilesMs ?? BETWEEN_FILES_MS;
+        this.#log = opts.log ?? CONSOLE_LOG;
     }
 
     /**
@@ -127,7 +152,7 @@ export class LoudnessScanner {
         try {
             await this.#pass(controller.signal);
         } catch (err) {
-            console.error("[loudness] pass failed:", err);
+            this.#log.error("[loudness] pass failed:", err);
         } finally {
             this.#running = false;
             if (this.#abort === controller) this.#abort = null;
@@ -152,7 +177,7 @@ export class LoudnessScanner {
         if (pending.length === 0) return;
 
         const coverage = loudnessCoverage(this.#db);
-        console.log(
+        this.#log.info(
             `[loudness] measuring ${pending.length} episode(s) — ` +
                 `${coverage.measured}/${coverage.total} of the library already done`,
         );
@@ -174,7 +199,7 @@ export class LoudnessScanner {
 
             if (result.error !== null) {
                 this.#failed.add(episode.id);
-                console.warn(
+                this.#log.warn(
                     `[loudness] skipped ${episode.path}: ${result.error}`,
                 );
                 continue;
@@ -182,13 +207,15 @@ export class LoudnessScanner {
 
             saveLoudness(this.#db, episode.id, result.measurement, Date.now());
             if (result.measurement === null) {
-                console.log(`[loudness] ${episode.path}: no measurable audio`);
+                this.#log.info(
+                    `[loudness] ${episode.path}: no measurable audio`,
+                );
             }
 
             await sleep(this.#betweenFilesMs, signal);
         }
 
-        console.log("[loudness] pass complete");
+        this.#log.info("[loudness] pass complete");
     }
 
     /** Block while the machine is busy. False means we were told to stop. */

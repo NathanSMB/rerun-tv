@@ -21,32 +21,16 @@ import {
     DEFAULT_SETTINGS,
     type HwAccelReport,
     PENDING_HW_ACCEL,
-    type SystemInfo,
 } from "@shared/types.js";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Settings from "../../src/renderer/src/screens/Settings.js";
 import { useStore } from "../../src/renderer/src/store.js";
+import { makeBridge, systemInfo } from "./bridge.js";
 
 declare global {
     var IS_REACT_ACT_ENVIRONMENT: boolean;
-}
-
-function systemInfo(hwAccel: HwAccelReport): SystemInfo {
-    return {
-        appVersion: "0.1.0",
-        ffmpegPath: "/usr/bin/ffmpeg",
-        ffprobePath: "/usr/bin/ffprobe",
-        ffmpegVersion: "n8.1.2",
-        ffmpegSource: "system",
-        codecCheck: "ok",
-        hwAccel,
-        dbPath: "/tmp/library.db",
-        dbSizeBytes: 1024,
-        streamPort: 9,
-        lastRestore: null,
-    };
 }
 
 /** Settings written across the bridge, in order. */
@@ -56,12 +40,12 @@ let root: Root;
 
 /** The bridge surface this screen actually touches. */
 function bridge(settings: AppSettings): RerunApi {
-    return {
+    return makeBridge({
         settings: {
             getAll: async () => settings,
-            set: async (key: string, value: unknown) => {
+            set: async (key, value) => {
                 written.push({ key, value });
-                return { ...settings, [key]: value } as AppSettings;
+                return { ...settings, [key]: value };
             },
         },
         library: {
@@ -75,8 +59,13 @@ function bridge(settings: AppSettings): RerunApi {
                 totalEpisodes: 0,
             }),
         },
-        system: { getInfo: async () => systemInfo(PENDING_HW_ACCEL) },
-    } as unknown as RerunApi;
+        // The probe the *bridge* reports is deliberately the pending one: the
+        // screen reads its report from the store, and a test that varies the two
+        // together could not tell which one the dropdown is describing.
+        system: {
+            getInfo: async () => systemInfo({ hwAccel: PENDING_HW_ACCEL }),
+        },
+    });
 }
 
 /**
@@ -89,7 +78,7 @@ async function mount(
     hwAccel: HwAccelReport,
 ): Promise<void> {
     (window as unknown as { rerun: RerunApi }).rerun = bridge(settings);
-    useStore.setState({ settings, system: systemInfo(hwAccel) });
+    useStore.setState({ settings, system: systemInfo({ hwAccel }) });
     await act(async () => {
         root.render(<Settings />);
         await new Promise((resolve) => setTimeout(resolve, 0));

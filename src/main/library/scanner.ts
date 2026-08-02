@@ -51,6 +51,14 @@ export interface ScannerOptions {
     onProgress: (status: ScanStatus) => void;
     /** Fired when the library actually changed, so the UI can refetch. */
     onLibraryChanged: () => void;
+    /**
+     * Injectable for tests; defaults to the real `ffprobe` subprocess.
+     *
+     * Everything else in this file — the walk, the stat fast path, the pruner,
+     * the arc refresh — is testable without a media file, and spawning ffprobe is
+     * the only reason it wouldn't be.
+     */
+    probe?: (filePath: string, ffprobePath: string) => Promise<ProbeResult>;
 }
 
 /** Emit at most one progress event per this many files… */
@@ -80,6 +88,10 @@ export class Scanner {
     readonly #ffprobePath: string;
     readonly #onProgress: (status: ScanStatus) => void;
     readonly #onLibraryChanged: () => void;
+    readonly #probe: (
+        filePath: string,
+        ffprobePath: string,
+    ) => Promise<ProbeResult>;
 
     #status: ScanStatus = { ...IDLE_STATUS };
     #scanning = false;
@@ -100,6 +112,7 @@ export class Scanner {
         this.#ffprobePath = opts.ffprobePath;
         this.#onProgress = opts.onProgress;
         this.#onLibraryChanged = opts.onLibraryChanged;
+        this.#probe = opts.probe ?? probeFile;
     }
 
     /** A snapshot — callers must not be able to mutate the scanner's state. */
@@ -361,7 +374,7 @@ export class Scanner {
 
         let probe: ProbeResult;
         try {
-            probe = await probeFile(filePath, this.#ffprobePath);
+            probe = await this.#probe(filePath, this.#ffprobePath);
             this.#status.probed++;
         } catch (err) {
             addUnmatched(

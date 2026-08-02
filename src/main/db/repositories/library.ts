@@ -528,10 +528,19 @@ export function removeScanRoot(db: Db, rootId: number): void {
 // Unmatched files
 // ---------------------------------------------------------------------------
 
-/** The Library screen's fix-up bucket, oldest first. */
+/**
+ * The Library screen's fix-up bucket, oldest first.
+ *
+ * There is no timestamp column, but the id is an `INTEGER PRIMARY KEY
+ * AUTOINCREMENT` — the rowid — and `addUnmatched` updates a known path in place
+ * rather than reinserting it, so first-seen order is exactly id order. That is
+ * what "oldest" means here: the files that have been waiting for attention
+ * longest come first, and re-scanning does not shuffle the list under a viewer
+ * who is working down it. (This used to say oldest first and sort by path.)
+ */
 export function listUnmatched(db: Db): UnmatchedFile[] {
     const rows = db
-        .prepare("SELECT * FROM unmatched_files ORDER BY path")
+        .prepare("SELECT * FROM unmatched_files ORDER BY id")
         .all() as UnmatchedRow[];
     return rows.map(toUnmatched);
 }
@@ -616,7 +625,10 @@ export function getArc(db: Db, groupId: number): ArcView | null {
  *
  * Members that already belonged to another group are moved into this one (that
  * is what "regroup this run" means in the UI), and any group left empty as a
- * result is deleted so the Library screen never shows a zero-part arc.
+ * result is deleted so the Library screen never shows a zero-part arc. A group
+ * left with *some* of its members is renumbered 1..n instead — `part_index` is
+ * what the scheduler prints, so a survivor still labelled "part 2" of a group
+ * that now has one part is a bug the user can see.
  */
 export function createArc(
     db: Db,
@@ -647,6 +659,13 @@ export function createArc(
                 .run(showId, title, source).lastInsertRowid,
         );
 
+        // Where these episodes are coming from, noted before the move erases it.
+        const vacated = new Set(
+            members
+                .map((ep) => ep.partGroupId)
+                .filter((id): id is number => id != null),
+        );
+
         // `members` is already in season/episode order, which is the part order.
         const assign = db.prepare(
             "UPDATE episodes SET part_group_id = ?, part_index = ? WHERE id = ?",
@@ -660,6 +679,20 @@ export function createArc(
         WHERE show_id = ?
           AND NOT EXISTS (SELECT 1 FROM episodes WHERE part_group_id = part_groups.id)`,
         ).run(showId);
+
+        // Close the gaps a partial regroup left behind. Ordering by the existing
+        // `part_index` keeps the parts in the order they were already in; the id is
+        // only a tiebreaker for rows a migration left unindexed.
+        const remaining = db.prepare(
+            "SELECT id FROM episodes WHERE part_group_id = ? ORDER BY part_index, id",
+        );
+        for (const vacatedId of vacated) {
+            if (vacatedId === groupId) continue;
+            const rows = remaining.all(vacatedId) as { id: number }[];
+            rows.forEach((row, i) => {
+                assign.run(vacatedId, i + 1, row.id);
+            });
+        }
 
         return groupId;
     });
