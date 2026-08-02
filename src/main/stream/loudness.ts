@@ -32,9 +32,9 @@
  * out rather than left to the default, and the pre-gain carried by `volume`.)
  */
 
-import { spawn } from 'node:child_process'
-import type { AppSettings, LoudnessMeasurement } from '@shared/types.js'
-import { loudnessEqApplies } from '@shared/playback.js'
+import { spawn } from "node:child_process";
+import { loudnessEqApplies } from "@shared/playback.js";
+import type { AppSettings, LoudnessMeasurement } from "@shared/types.js";
 
 /**
  * The target, in EBU R128 terms.
@@ -47,9 +47,9 @@ import { loudnessEqApplies } from '@shared/playback.js'
  * enough levelling to rescue dialogue, not so much that everything is squashed
  * flat.
  */
-export const LOUDNESS_TARGET_I = -16
-export const LOUDNESS_TARGET_TP = -1.5
-export const LOUDNESS_TARGET_LRA = 11
+export const LOUDNESS_TARGET_I = -16;
+export const LOUDNESS_TARGET_TP = -1.5;
+export const LOUDNESS_TARGET_LRA = 11;
 
 /**
  * The one `loudnorm` spelling, shared by playback and by the measuring pass so
@@ -61,8 +61,8 @@ export const LOUDNESS_TARGET_LRA = 11
  * would be normalised 3 LU too loud.
  */
 const LOUDNORM_BASE =
-  `loudnorm=I=${LOUDNESS_TARGET_I}:TP=${LOUDNESS_TARGET_TP}:LRA=${LOUDNESS_TARGET_LRA}` +
-  ':dual_mono=true:linear=false'
+    `loudnorm=I=${LOUDNESS_TARGET_I}:TP=${LOUDNESS_TARGET_TP}:LRA=${LOUDNESS_TARGET_LRA}` +
+    ":dual_mono=true:linear=false";
 
 /**
  * `loudnorm` resamples internally and emits 192 kHz double-precision audio. Left
@@ -70,10 +70,10 @@ const LOUDNORM_BASE =
  * 48 kHz is the rate AAC and Chromium are happiest with and what the rest of the
  * pipeline already assumes.
  */
-const RESAMPLE_FILTER = 'aresample=48000'
+const RESAMPLE_FILTER = "aresample=48000";
 
 /** A pre-gain smaller than this is inaudible and not worth a filter. */
-const MIN_PREGAIN_DB = 0.1
+const MIN_PREGAIN_DB = 0.1;
 
 /**
  * Never trust a measurement enough to move a soundtrack further than this. Real
@@ -81,7 +81,7 @@ const MIN_PREGAIN_DB = 0.1
  * a broken measurement, and a 40 dB lift on a mismeasured episode is a much
  * worse outcome than an episode that stays quiet.
  */
-const MAX_PREGAIN_DB = 24
+const MAX_PREGAIN_DB = 24;
 
 /**
  * How far this episode is from target, in dB, as a fixed pre-gain.
@@ -99,9 +99,9 @@ const MAX_PREGAIN_DB = 24
  * just a number greater than one.
  */
 export function preGainDb(measurement: LoudnessMeasurement): number {
-  const offset = LOUDNESS_TARGET_I - measurement.i
-  const clamped = Math.max(-MAX_PREGAIN_DB, Math.min(MAX_PREGAIN_DB, offset))
-  return Number(clamped.toFixed(2))
+    const offset = LOUDNESS_TARGET_I - measurement.i;
+    const clamped = Math.max(-MAX_PREGAIN_DB, Math.min(MAX_PREGAIN_DB, offset));
+    return Number(clamped.toFixed(2));
 }
 
 /**
@@ -112,19 +112,20 @@ export function preGainDb(measurement: LoudnessMeasurement): number {
  * `remuxArgs` it may keep its stream copy.
  */
 export function planLoudness(
-  settings: AppSettings,
-  acodec: string,
-  measurement: LoudnessMeasurement | null
+    settings: AppSettings,
+    acodec: string,
+    measurement: LoudnessMeasurement | null,
 ): string[] | null {
-  if (!loudnessEqApplies(acodec, settings.loudnessEq)) return null
+    if (!loudnessEqApplies(acodec, settings.loudnessEq)) return null;
 
-  const filters: string[] = []
-  if (measurement) {
-    const gain = preGainDb(measurement)
-    if (Math.abs(gain) >= MIN_PREGAIN_DB) filters.push(`volume=${gain.toFixed(2)}dB`)
-  }
-  filters.push(LOUDNORM_BASE, RESAMPLE_FILTER)
-  return filters
+    const filters: string[] = [];
+    if (measurement) {
+        const gain = preGainDb(measurement);
+        if (Math.abs(gain) >= MIN_PREGAIN_DB)
+            filters.push(`volume=${gain.toFixed(2)}dB`);
+    }
+    filters.push(LOUDNORM_BASE, RESAMPLE_FILTER);
+    return filters;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,10 +133,10 @@ export function planLoudness(
 // ---------------------------------------------------------------------------
 
 /** A measuring pass decodes audio only, but a long file is still a long file. */
-const MEASURE_TIMEOUT_MS = 15 * 60_000
+const MEASURE_TIMEOUT_MS = 15 * 60_000;
 
 /** Keep only the tail of stderr: the JSON block is the last thing printed. */
-const STDERR_TAIL_CHARS = 64 * 1024
+const STDERR_TAIL_CHARS = 64 * 1024;
 
 /**
  * The measuring pass: decode the soundtrack, print what loudnorm measured, mux
@@ -149,24 +150,24 @@ const STDERR_TAIL_CHARS = 64 * 1024
  * `error`, which would swallow the entire result).
  */
 export function measureArgs(file: string): string[] {
-  return [
-    '-hide_banner',
-    '-nostdin',
-    '-loglevel',
-    'info',
-    '-nostats',
-    '-threads',
-    '1',
-    '-i',
-    file,
-    '-map',
-    '0:a:0',
-    '-af',
-    `${LOUDNORM_BASE}:print_format=json`,
-    '-f',
-    'null',
-    '-'
-  ]
+    return [
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "info",
+        "-nostats",
+        "-threads",
+        "1",
+        "-i",
+        file,
+        "-map",
+        "0:a:0",
+        "-af",
+        `${LOUDNORM_BASE}:print_format=json`,
+        "-f",
+        "null",
+        "-",
+    ];
 }
 
 /**
@@ -178,38 +179,41 @@ export function measureArgs(file: string): string[] {
  * records the attempt so a silent file is never measured twice.
  */
 export function parseLoudnessJson(stderr: string): LoudnessMeasurement | null {
-  const start = stderr.lastIndexOf('{')
-  const end = stderr.lastIndexOf('}')
-  if (start === -1 || end === -1 || end < start) return null
+    const start = stderr.lastIndexOf("{");
+    const end = stderr.lastIndexOf("}");
+    if (start === -1 || end === -1 || end < start) return null;
 
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(stderr.slice(start, end + 1)) as Record<string, unknown>
-  } catch {
-    return null
-  }
+    let parsed: Record<string, unknown>;
+    try {
+        parsed = JSON.parse(stderr.slice(start, end + 1)) as Record<
+            string,
+            unknown
+        >;
+    } catch {
+        return null;
+    }
 
-  const measurement = {
-    i: numberFrom(parsed.input_i),
-    tp: numberFrom(parsed.input_tp),
-    lra: numberFrom(parsed.input_lra),
-    thresh: numberFrom(parsed.input_thresh)
-  }
-  const values = Object.values(measurement)
-  if (values.some((value) => value === null)) return null
-  return measurement as LoudnessMeasurement
+    const measurement = {
+        i: numberFrom(parsed.input_i),
+        tp: numberFrom(parsed.input_tp),
+        lra: numberFrom(parsed.input_lra),
+        thresh: numberFrom(parsed.input_thresh),
+    };
+    const values = Object.values(measurement);
+    if (values.some((value) => value === null)) return null;
+    return measurement as LoudnessMeasurement;
 }
 
 /** loudnorm reports its numbers as strings, and `-inf` for a silent track. */
 function numberFrom(raw: unknown): number | null {
-  const value = Number(raw)
-  return Number.isFinite(value) ? value : null
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
 }
 
 export interface MeasureResult {
-  measurement: LoudnessMeasurement | null
-  /** Set when ffmpeg itself failed, as opposed to reporting an unusable track. */
-  error: string | null
+    measurement: LoudnessMeasurement | null;
+    /** Set when ffmpeg itself failed, as opposed to reporting an unusable track. */
+    error: string | null;
 }
 
 /**
@@ -218,59 +222,71 @@ export interface MeasureResult {
  * timeout fires.
  */
 export function measureLoudness(
-  ffmpegPath: string,
-  file: string,
-  signal?: AbortSignal
+    ffmpegPath: string,
+    file: string,
+    signal?: AbortSignal,
 ): Promise<MeasureResult> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve({ measurement: null, error: 'aborted' })
-      return
-    }
+    return new Promise((resolve) => {
+        if (signal?.aborted) {
+            resolve({ measurement: null, error: "aborted" });
+            return;
+        }
 
-    const child = spawn(ffmpegPath, measureArgs(file), { stdio: ['ignore', 'ignore', 'pipe'] })
+        const child = spawn(ffmpegPath, measureArgs(file), {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
 
-    let stderr = ''
-    let settled = false
-    const finish = (result: MeasureResult): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-      resolve(result)
-    }
+        let stderr = "";
+        let settled = false;
+        const finish = (result: MeasureResult): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", onAbort);
+            if (child.exitCode === null && child.signalCode === null)
+                child.kill("SIGKILL");
+            resolve(result);
+        };
 
-    const onAbort = (): void => finish({ measurement: null, error: 'aborted' })
-    signal?.addEventListener('abort', onAbort, { once: true })
+        const onAbort = (): void =>
+            finish({ measurement: null, error: "aborted" });
+        signal?.addEventListener("abort", onAbort, { once: true });
 
-    const timer = setTimeout(
-      () => finish({ measurement: null, error: `timed out after ${MEASURE_TIMEOUT_MS} ms` }),
-      MEASURE_TIMEOUT_MS
-    )
-    timer.unref()
+        const timer = setTimeout(
+            () =>
+                finish({
+                    measurement: null,
+                    error: `timed out after ${MEASURE_TIMEOUT_MS} ms`,
+                }),
+            MEASURE_TIMEOUT_MS,
+        );
+        timer.unref();
 
-    child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => {
-      stderr += chunk
-      if (stderr.length > STDERR_TAIL_CHARS) stderr = stderr.slice(-STDERR_TAIL_CHARS)
-    })
-    child.stderr?.on('error', () => {
-      /* Losing the log pipe only costs us this one measurement. */
-    })
+        child.stderr?.setEncoding("utf8");
+        child.stderr?.on("data", (chunk: string) => {
+            stderr += chunk;
+            if (stderr.length > STDERR_TAIL_CHARS)
+                stderr = stderr.slice(-STDERR_TAIL_CHARS);
+        });
+        child.stderr?.on("error", () => {
+            /* Losing the log pipe only costs us this one measurement. */
+        });
 
-    child.on('error', (err) => finish({ measurement: null, error: err.message }))
-    child.on('close', (code, killedBy) => {
-      if (killedBy !== null) return finish({ measurement: null, error: 'aborted' })
-      if (code !== 0) {
-        return finish({
-          measurement: null,
-          error: `ffmpeg exited ${code}: ${stderr.split('\n').slice(-3).join(' ').trim()}`
-        })
-      }
-      // A clean exit with no usable JSON means a silent or unmeasurable track,
-      // which is a real answer: nothing to correct.
-      finish({ measurement: parseLoudnessJson(stderr), error: null })
-    })
-  })
+        child.on("error", (err) =>
+            finish({ measurement: null, error: err.message }),
+        );
+        child.on("close", (code, killedBy) => {
+            if (killedBy !== null)
+                return finish({ measurement: null, error: "aborted" });
+            if (code !== 0) {
+                return finish({
+                    measurement: null,
+                    error: `ffmpeg exited ${code}: ${stderr.split("\n").slice(-3).join(" ").trim()}`,
+                });
+            }
+            // A clean exit with no usable JSON means a silent or unmeasurable track,
+            // which is a real answer: nothing to correct.
+            finish({ measurement: parseLoudnessJson(stderr), error: null });
+        });
+    });
 }

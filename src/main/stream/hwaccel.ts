@@ -18,16 +18,20 @@
  * same command line the app shipped with.
  */
 
-import { spawn } from 'node:child_process'
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
-import type { AppSettings, HardwareAccel, HwAccelReport } from '@shared/types.js'
+import { spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import type {
+    AppSettings,
+    HardwareAccel,
+    HwAccelReport,
+} from "@shared/types.js";
 
 /**
  * Where DRM render nodes live. A render node is the non-privileged half of a GPU
  * device — the one an unprivileged process may open for compute and video work.
  */
-const DRI_DIR = '/dev/dri'
+const DRI_DIR = "/dev/dri";
 
 /**
  * How long one probe encode may take before we call the backend unusable.
@@ -36,7 +40,7 @@ const DRI_DIR = '/dev/dri'
  * cost of being wrong is a backend the user paid for going unused. Nothing waits
  * on this — the probe runs behind the window, like `checkCodecs`.
  */
-const PROBE_TIMEOUT_MS = 15_000
+const PROBE_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // Quality mapping
@@ -70,30 +74,32 @@ const PROBE_TIMEOUT_MS = 15_000
  * clips (erring generous, which is the harmless direction) and was clean by eye.
  */
 interface QualityTier {
-  /** NVENC's constant-quality target. */
-  cq: number
-  /** NVENC's speed/quality preset, `p1` (fastest) … `p7` (slowest). */
-  nvencPreset: string
-  /** VAAPI's constant quantizer, calibrated to libx264's bitrate — see above. */
-  qp: number
+    /** NVENC's constant-quality target. */
+    cq: number;
+    /** NVENC's speed/quality preset, `p1` (fastest) … `p7` (slowest). */
+    nvencPreset: string;
+    /** VAAPI's constant quantizer, calibrated to libx264's bitrate — see above. */
+    qp: number;
 }
 
 const QUALITY_TIERS: { crf: number; tier: QualityTier }[] = [
-  { crf: 23, tier: { cq: 23, nvencPreset: 'p2', qp: 22 } },
-  { crf: 21, tier: { cq: 21, nvencPreset: 'p4', qp: 20 } },
-  { crf: 20, tier: { cq: 20, nvencPreset: 'p5', qp: 19 } },
-  { crf: 19, tier: { cq: 19, nvencPreset: 'p6', qp: 18 } }
-]
+    { crf: 23, tier: { cq: 23, nvencPreset: "p2", qp: 22 } },
+    { crf: 21, tier: { cq: 21, nvencPreset: "p4", qp: 20 } },
+    { crf: 20, tier: { cq: 20, nvencPreset: "p5", qp: 19 } },
+    { crf: 19, tier: { cq: 19, nvencPreset: "p6", qp: 18 } },
+];
 
 /** The default tier, for a CRF the Settings screen never offered. */
-const FALLBACK_TIER: QualityTier = { cq: 21, nvencPreset: 'p4', qp: 20 }
+const FALLBACK_TIER: QualityTier = { cq: 21, nvencPreset: "p4", qp: 20 };
 
 /**
  * The tier for a stored CRF. An unknown value (hand-edited, or from a future
  * version) answers the middle of the road rather than refusing to play.
  */
 export function qualityTier(crf: number): QualityTier {
-  return QUALITY_TIERS.find((entry) => entry.crf === crf)?.tier ?? FALLBACK_TIER
+    return (
+        QUALITY_TIERS.find((entry) => entry.crf === crf)?.tier ?? FALLBACK_TIER
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -111,21 +117,24 @@ export function qualityTier(crf: number): QualityTier {
  * still hardware-*encodes*. The copy costs CPU (measured: 3.2 cores of burst
  * against libx264's 17) and buys a backend that never refuses a file.
  */
-export function hwDecodeArgs(accel: HardwareAccel, vaapiDevice: string | null): string[] {
-  if (accel === 'vaapi' && vaapiDevice) {
-    return [
-      '-init_hw_device',
-      `vaapi=va:${vaapiDevice}`,
-      '-hwaccel',
-      'vaapi',
-      '-hwaccel_output_format',
-      'vaapi',
-      '-filter_hw_device',
-      'va'
-    ]
-  }
-  if (accel === 'nvenc') return ['-hwaccel', 'cuda']
-  return []
+export function hwDecodeArgs(
+    accel: HardwareAccel,
+    vaapiDevice: string | null,
+): string[] {
+    if (accel === "vaapi" && vaapiDevice) {
+        return [
+            "-init_hw_device",
+            `vaapi=va:${vaapiDevice}`,
+            "-hwaccel",
+            "vaapi",
+            "-hwaccel_output_format",
+            "vaapi",
+            "-filter_hw_device",
+            "va",
+        ];
+    }
+    if (accel === "nvenc") return ["-hwaccel", "cuda"];
+    return [];
 }
 
 /**
@@ -145,52 +154,55 @@ export function hwDecodeArgs(accel: HardwareAccel, vaapiDevice: string | null): 
  * and must not appear on VAAPI's, where the pixel format is a property of the
  * GPU surface the filter chain already fixed.
  */
-export function hwVideoArgs(accel: HardwareAccel, settings: AppSettings): string[] {
-  const tier = qualityTier(settings.transcodeCrf)
+export function hwVideoArgs(
+    accel: HardwareAccel,
+    settings: AppSettings,
+): string[] {
+    const tier = qualityTier(settings.transcodeCrf);
 
-  if (accel === 'vaapi') {
+    if (accel === "vaapi") {
+        return [
+            "-vf",
+            "format=nv12|vaapi,hwupload,scale_vaapi=format=nv12",
+            "-c:v",
+            "h264_vaapi",
+            "-rc_mode",
+            "CQP",
+            "-qp",
+            String(tier.qp),
+        ];
+    }
+
+    if (accel === "nvenc") {
+        return [
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            tier.nvencPreset,
+            "-rc",
+            "vbr",
+            "-cq",
+            String(tier.cq),
+            // `-b:v 0` is what makes `-cq` a *quality* target rather than a ceiling on
+            // top of a bitrate target; without it NVENC quietly caps at its default.
+            "-b:v",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+        ];
+    }
+
+    // Software: the exact block this module was factored out of.
     return [
-      '-vf',
-      'format=nv12|vaapi,hwupload,scale_vaapi=format=nv12',
-      '-c:v',
-      'h264_vaapi',
-      '-rc_mode',
-      'CQP',
-      '-qp',
-      String(tier.qp)
-    ]
-  }
-
-  if (accel === 'nvenc') {
-    return [
-      '-c:v',
-      'h264_nvenc',
-      '-preset',
-      tier.nvencPreset,
-      '-rc',
-      'vbr',
-      '-cq',
-      String(tier.cq),
-      // `-b:v 0` is what makes `-cq` a *quality* target rather than a ceiling on
-      // top of a bitrate target; without it NVENC quietly caps at its default.
-      '-b:v',
-      '0',
-      '-pix_fmt',
-      'yuv420p'
-    ]
-  }
-
-  // Software: the exact block this module was factored out of.
-  return [
-    '-c:v',
-    'libx264',
-    '-preset',
-    settings.transcodePreset,
-    '-crf',
-    String(settings.transcodeCrf),
-    '-pix_fmt',
-    'yuv420p'
-  ]
+        "-c:v",
+        "libx264",
+        "-preset",
+        settings.transcodePreset,
+        "-crf",
+        String(settings.transcodeCrf),
+        "-pix_fmt",
+        "yuv420p",
+    ];
 }
 
 // ---------------------------------------------------------------------------
@@ -202,19 +214,19 @@ export function hwVideoArgs(accel: HardwareAccel, settings: AppSettings): string
  * render node explicitly and enumeration is skipped entirely. Useful for odd
  * installs, and it is how the fallback test forces a broken device.
  */
-const VAAPI_DEVICE_ENV = 'RERUN_VAAPI_DEVICE'
+const VAAPI_DEVICE_ENV = "RERUN_VAAPI_DEVICE";
 
 /** `renderD128`, `renderD129`, … in a stable order. */
 export function listRenderNodes(dir: string = DRI_DIR): string[] {
-  try {
-    return readdirSync(dir)
-      .filter((name) => name.startsWith('renderD'))
-      .sort()
-      .map((name) => join(dir, name))
-  } catch {
-    // No /dev/dri at all: a machine with no GPU, or a container without one.
-    return []
-  }
+    try {
+        return readdirSync(dir)
+            .filter((name) => name.startsWith("renderD"))
+            .sort()
+            .map((name) => join(dir, name));
+    } catch {
+        // No /dev/dri at all: a machine with no GPU, or a container without one.
+        return [];
+    }
 }
 
 /**
@@ -225,63 +237,69 @@ export function listRenderNodes(dir: string = DRI_DIR): string[] {
  * command shape works — not that some simplified approximation of it does.
  */
 function probeEncode(
-  ffmpegPath: string,
-  accel: HardwareAccel,
-  device: string | null
+    ffmpegPath: string,
+    accel: HardwareAccel,
+    device: string | null,
 ): Promise<boolean> {
-  const settings = { transcodeCrf: 21, transcodePreset: 'veryfast' } as AppSettings
+    const settings = {
+        transcodeCrf: 21,
+        transcodePreset: "veryfast",
+    } as AppSettings;
 
-  const args = [
-    '-hide_banner',
-    '-nostdin',
-    '-loglevel',
-    'error',
-    ...hwDecodeArgs(accel, device),
-    '-f',
-    'lavfi',
-    // 64×64 would be rejected by some VAAPI drivers as below the encoder's
-    // minimum; 320×240 is small enough to be instant and large enough to be real.
-    '-i',
-    'testsrc=size=320x240:rate=25:duration=0.2',
-    ...hwVideoArgs(accel, settings),
-    '-f',
-    'null',
-    '-'
-  ]
+    const args = [
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        ...hwDecodeArgs(accel, device),
+        "-f",
+        "lavfi",
+        // 64×64 would be rejected by some VAAPI drivers as below the encoder's
+        // minimum; 320×240 is small enough to be instant and large enough to be real.
+        "-i",
+        "testsrc=size=320x240:rate=25:duration=0.2",
+        ...hwVideoArgs(accel, settings),
+        "-f",
+        "null",
+        "-",
+    ];
 
-  return new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>
-    try {
-      child = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'ignore'] })
-    } catch {
-      resolve(false)
-      return
-    }
+    return new Promise((resolve) => {
+        let child: ReturnType<typeof spawn>;
+        try {
+            child = spawn(ffmpegPath, args, {
+                stdio: ["ignore", "ignore", "ignore"],
+            });
+        } catch {
+            resolve(false);
+            return;
+        }
 
-    let settled = false
-    const finish = (ok: boolean): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-      resolve(ok)
-    }
+        let settled = false;
+        const finish = (ok: boolean): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (child.exitCode === null && child.signalCode === null)
+                child.kill("SIGKILL");
+            resolve(ok);
+        };
 
-    const timer = setTimeout(() => finish(false), PROBE_TIMEOUT_MS)
-    timer.unref()
+        const timer = setTimeout(() => finish(false), PROBE_TIMEOUT_MS);
+        timer.unref();
 
-    child.on('error', () => finish(false))
-    child.on('close', (code) => finish(code === 0))
-  })
+        child.on("error", () => finish(false));
+        child.on("close", (code) => finish(code === 0));
+    });
 }
 
 export interface ProbeOptions {
-  /** Injectable for tests; defaults to reading `/dev/dri`. */
-  listNodes?: () => string[]
-  /** Injectable for tests; defaults to the real ffmpeg test encode. */
-  encode?: (accel: HardwareAccel, device: string | null) => Promise<boolean>
-  /** Injectable for tests; defaults to `process.env[RERUN_VAAPI_DEVICE]`. */
-  deviceOverride?: string | null
+    /** Injectable for tests; defaults to reading `/dev/dri`. */
+    listNodes?: () => string[];
+    /** Injectable for tests; defaults to the real ffmpeg test encode. */
+    encode?: (accel: HardwareAccel, device: string | null) => Promise<boolean>;
+    /** Injectable for tests; defaults to `process.env[RERUN_VAAPI_DEVICE]`. */
+    deviceOverride?: string | null;
 }
 
 /**
@@ -299,37 +317,42 @@ export interface ProbeOptions {
  * `failed` for both, and the software path — which is the default — is unmoved.
  */
 export async function probeHardwareAccel(
-  ffmpegPath: string | null,
-  opts: ProbeOptions = {}
+    ffmpegPath: string | null,
+    opts: ProbeOptions = {},
 ): Promise<HwAccelReport> {
-  if (!ffmpegPath) return { vaapi: 'failed', nvenc: 'failed', vaapiDevice: null }
+    if (!ffmpegPath)
+        return { vaapi: "failed", nvenc: "failed", vaapiDevice: null };
 
-  const encode = opts.encode ?? ((accel, device) => probeEncode(ffmpegPath, accel, device))
-  const listNodes = opts.listNodes ?? (() => listRenderNodes())
-  const override =
-    opts.deviceOverride !== undefined ? opts.deviceOverride : (process.env[VAAPI_DEVICE_ENV] ?? null)
+    const encode =
+        opts.encode ??
+        ((accel, device) => probeEncode(ffmpegPath, accel, device));
+    const listNodes = opts.listNodes ?? (() => listRenderNodes());
+    const override =
+        opts.deviceOverride !== undefined
+            ? opts.deviceOverride
+            : (process.env[VAAPI_DEVICE_ENV] ?? null);
 
-  const candidates = override ? [override] : listNodes()
+    const candidates = override ? [override] : listNodes();
 
-  // NVENC's probe is independent of VAAPI's, so it runs alongside the whole
-  // device sweep rather than behind it.
-  const nvencProbe = encode('nvenc', null)
+    // NVENC's probe is independent of VAAPI's, so it runs alongside the whole
+    // device sweep rather than behind it.
+    const nvencProbe = encode("nvenc", null);
 
-  let vaapiDevice: string | null = null
-  for (const device of candidates) {
-    if (await encode('vaapi', device)) {
-      vaapiDevice = device
-      break
+    let vaapiDevice: string | null = null;
+    for (const device of candidates) {
+        if (await encode("vaapi", device)) {
+            vaapiDevice = device;
+            break;
+        }
     }
-  }
 
-  const nvenc = await nvencProbe
+    const nvenc = await nvencProbe;
 
-  return {
-    vaapi: vaapiDevice ? 'ok' : 'failed',
-    nvenc: nvenc ? 'ok' : 'failed',
-    vaapiDevice
-  }
+    return {
+        vaapi: vaapiDevice ? "ok" : "failed",
+        nvenc: nvenc ? "ok" : "failed",
+        vaapiDevice,
+    };
 }
 
 /**
@@ -342,10 +365,15 @@ export async function probeHardwareAccel(
  * tuned in during that window must start now on a path that certainly works
  * rather than wait to find out whether a faster one exists.
  */
-export function effectiveAccel(selected: HardwareAccel, report: HwAccelReport): HardwareAccel {
-  if (selected === 'vaapi') return report.vaapi === 'ok' ? 'vaapi' : 'software'
-  if (selected === 'nvenc') return report.nvenc === 'ok' ? 'nvenc' : 'software'
-  // Anything else — including a hand-edited settings row naming a backend this
-  // version has never heard of — is software.
-  return 'software'
+export function effectiveAccel(
+    selected: HardwareAccel,
+    report: HwAccelReport,
+): HardwareAccel {
+    if (selected === "vaapi")
+        return report.vaapi === "ok" ? "vaapi" : "software";
+    if (selected === "nvenc")
+        return report.nvenc === "ok" ? "nvenc" : "software";
+    // Anything else — including a hand-edited settings row naming a backend this
+    // version has never heard of — is software.
+    return "software";
 }

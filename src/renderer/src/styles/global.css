@@ -6,165 +6,165 @@
  * Screen-specific rules live next to their screen in `screens/*.css`.
  */
 
-@import './tokens.css';
+@import "./tokens.css";
 
 * {
-  box-sizing: border-box;
+    box-sizing: border-box;
 }
 
 html,
 body,
 #root {
-  height: 100%;
+    height: 100%;
 }
 
 body {
-  margin: 0;
-  background: var(--tube);
-  color: var(--white);
-  font-family: var(--body);
-  font-size: 15px;
-  line-height: 1.55;
-  overflow: hidden;
-  user-select: none;
-  -webkit-font-smoothing: antialiased;
+    margin: 0;
+    background: var(--tube);
+    color: var(--white);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.55;
+    overflow: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
 }
 
 a {
-  color: var(--amber);
-  cursor: pointer;
+    color: var(--amber);
+    cursor: pointer;
 }
 
 :where(button, a, input, select, [tabindex]):focus-visible {
-  outline: 2px solid var(--amber);
-  outline-offset: 2px;
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
 }
 
 /* ============ app shell ============ */
 
 .app-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 .app-scroll {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
 }
 
 /* ============ app bar ============ */
 
 .appbar {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(20, 26, 46, 0.55);
-  flex: none;
-  -webkit-app-region: drag;
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(20, 26, 46, 0.55);
+    flex: none;
+    -webkit-app-region: drag;
 }
 
 .appbar button,
 .appbar a {
-  -webkit-app-region: no-drag;
+    -webkit-app-region: no-drag;
 }
 
 .wordmark {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--display);
-  font-weight: 800;
-  font-size: 17px;
-  letter-spacing: 0.01em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 17px;
+    letter-spacing: 0.01em;
 }
 
 /* The mark carries its own glow as transparent padding, so it is set larger
    than its optical size and the surplus is pulled back out of the layout —
    otherwise the glow would push the bar taller and space the wordmark oddly. */
 .wordmark-icon {
-  width: 46px;
-  height: 46px;
-  margin: -12px -6px;
+    width: 46px;
+    height: 46px;
+    margin: -12px -6px;
 }
 
 .wordmark span {
-  color: var(--amber);
+    color: var(--amber);
 }
 
 .appnav {
-  display: flex;
-  gap: 4px;
-  margin-left: 8px;
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
 }
 
 .appnav button {
-  font-family: var(--body);
-  font-size: 13.5px;
-  background: none;
-  border: 0;
-  color: var(--steel);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+    font-family: var(--body);
+    font-size: 13.5px;
+    background: none;
+    border: 0;
+    color: var(--steel);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
 }
 
 .appnav button.on {
-  color: var(--white);
-  background: var(--panel-2);
+    color: var(--white);
+    background: var(--panel-2);
 }
 
 .appnav button:hover {
-  color: var(--white);
+    color: var(--white);
 }
 
 .scanpill {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--steel);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  letter-spacing: 0.04em;
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--steel);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    letter-spacing: 0.04em;
 }
 
 .scanpill:hover {
-  color: var(--white);
+    color: var(--white);
 }
 
 .scanpill .live {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--signal);
-  flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--signal);
+    flex: none;
 }
 
 .scanpill .live.warn {
-  background: var(--amber);
+    background: var(--amber);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .scanpill .live,
-  .onair .live {
-    animation: pulse 2.4s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
+    .scanpill .live,
+    .onair .live {
+        animation: pulse 2.4s ease-in-out infinite;
     }
-    50% {
-      opacity: 0.35;
+    @keyframes pulse {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.35;
+        }
     }
-  }
 }
 
 /* ============ dial number ============ */
@@ -176,293 +176,299 @@ a {
  */
 
 .ch-num {
-  font-family: var(--display);
-  font-weight: 800;
-  font-size: 44px;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  color: var(--white);
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 44px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--white);
 }
 
 .ch-num small {
-  display: block;
-  font-family: var(--mono);
-  font-weight: 500;
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  color: var(--steel-dim);
-  margin-bottom: 3px;
+    display: block;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    color: var(--steel-dim);
+    margin-bottom: 3px;
 }
 
 /* ============ channel banner — the signature ============ */
 
 .banner {
-  display: inline-flex;
-  align-items: center;
-  gap: 14px;
-  background: rgba(5, 7, 12, 0.82);
-  border: 1px solid rgba(255, 180, 84, 0.35);
-  border-radius: 10px;
-  padding: 10px 16px;
-  backdrop-filter: blur(6px);
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    background: rgba(5, 7, 12, 0.82);
+    border: 1px solid rgba(255, 180, 84, 0.35);
+    border-radius: 10px;
+    padding: 10px 16px;
+    backdrop-filter: blur(6px);
 }
 
 .banner .b-num {
-  font-family: var(--display);
-  font-weight: 800;
-  font-size: 34px;
-  line-height: 1;
-  color: var(--amber);
-  letter-spacing: -0.02em;
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 34px;
+    line-height: 1;
+    color: var(--amber);
+    letter-spacing: -0.02em;
 }
 
 .banner .b-show {
-  font-weight: 600;
-  font-size: 14.5px;
-  line-height: 1.3;
+    font-weight: 600;
+    font-size: 14.5px;
+    line-height: 1.3;
 }
 
 .banner .b-ep {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--amber);
-  margin-top: 2px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--amber);
+    margin-top: 2px;
 }
 
 /* ============ buttons & controls ============ */
 
 .btn {
-  font-family: var(--body);
-  font-weight: 600;
-  font-size: 14px;
-  border-radius: var(--radius);
-  padding: 11px 18px;
-  border: 1px solid transparent;
-  cursor: pointer;
+    font-family: var(--body);
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: var(--radius);
+    padding: 11px 18px;
+    border: 1px solid transparent;
+    cursor: pointer;
 }
 
 .btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .btn-tune {
-  background: var(--amber);
-  color: #201302;
+    background: var(--amber);
+    color: #201302;
 }
 
 .btn-tune:hover:not(:disabled) {
-  filter: brightness(1.06);
+    filter: brightness(1.06);
 }
 
 .btn-ghost {
-  background: transparent;
-  border-color: var(--line);
-  color: var(--steel);
+    background: transparent;
+    border-color: var(--line);
+    color: var(--steel);
 }
 
 .btn-ghost:hover:not(:disabled) {
-  color: var(--white);
-  border-color: var(--steel-dim);
+    color: var(--white);
+    border-color: var(--steel-dim);
 }
 
 .btn-sm {
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  flex: none;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    flex: none;
 }
 
+/* Segmented control. Where the group needs a name it is a <fieldset>, so the
+   browser's own margin, padding and min-width have to be flattened; the plain
+   <span> ones are unaffected by the extra declarations. */
 .seg {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    min-inline-size: 0;
 }
 
 .seg button {
-  font-family: var(--body);
-  font-size: 12.5px;
-  font-weight: 500;
-  padding: 7px 13px;
-  background: transparent;
-  color: var(--steel);
-  border: 0;
-  cursor: pointer;
+    font-family: var(--body);
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 7px 13px;
+    background: transparent;
+    color: var(--steel);
+    border: 0;
+    cursor: pointer;
 }
 
 .seg button.on {
-  background: var(--indigo);
-  color: var(--white);
+    background: var(--indigo);
+    color: var(--white);
 }
 
 .toggle {
-  width: 38px;
-  height: 22px;
-  border-radius: 11px;
-  background: rgba(141, 151, 184, 0.3);
-  position: relative;
-  border: 0;
-  cursor: pointer;
-  flex: none;
-  padding: 0;
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: rgba(141, 151, 184, 0.3);
+    position: relative;
+    border: 0;
+    cursor: pointer;
+    flex: none;
+    padding: 0;
 }
 
 .toggle::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--white);
-  transition: left 140ms ease;
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--white);
+    transition: left 140ms ease;
 }
 
 .toggle.on {
-  background: var(--amber);
+    background: var(--amber);
 }
 
 .toggle.on::after {
-  left: 19px;
-  background: #201302;
+    left: 19px;
+    background: #201302;
 }
 
 .toggle:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toggle::after {
-    transition: none;
-  }
+    .toggle::after {
+        transition: none;
+    }
 }
 
 .selectbox {
-  font-family: var(--body);
-  font-size: 12.5px;
-  color: var(--white);
-  background: var(--tube);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  flex: none;
+    font-family: var(--body);
+    font-size: 12.5px;
+    color: var(--white);
+    background: var(--tube);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    flex: none;
 }
 
 .search,
 .textinput {
-  width: 100%;
-  font-family: var(--body);
-  font-size: 13.5px;
-  color: var(--white);
-  background: var(--tube);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  user-select: text;
+    width: 100%;
+    font-family: var(--body);
+    font-size: 13.5px;
+    color: var(--white);
+    background: var(--tube);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    user-select: text;
 }
 
 .search::placeholder,
 .textinput::placeholder {
-  color: var(--steel-dim);
+    color: var(--steel-dim);
 }
 
 .remove {
-  font-size: 14px;
-  line-height: 1;
-  color: var(--steel-dim);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  width: 24px;
-  height: 24px;
-  cursor: pointer;
-  flex: none;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--steel-dim);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    flex: none;
 }
 
 .remove:hover {
-  color: var(--white);
-  border-color: var(--steel-dim);
+    color: var(--white);
+    border-color: var(--steel-dim);
 }
 
 kbd {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--steel);
-  border: 1px solid var(--line);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 1px 5px;
-  margin-right: 4px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--steel);
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-right: 4px;
 }
 
 /* ============ shared captions & empties ============ */
 
 .caption {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--steel-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--steel-dim);
 }
 
 .empty {
-  color: var(--steel);
-  font-size: 13.5px;
-  padding: 28px 4px;
-  max-width: 52ch;
+    color: var(--steel);
+    font-size: 13.5px;
+    padding: 28px 4px;
+    max-width: 52ch;
 }
 
 .empty b {
-  color: var(--white);
-  display: block;
-  margin-bottom: 4px;
-  font-weight: 600;
+    color: var(--white);
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
 }
 
 .postmvp {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  color: var(--steel-dim);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 6px;
-  margin-left: 8px;
-  letter-spacing: 0.1em;
-  vertical-align: 2px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--steel-dim);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-left: 8px;
+    letter-spacing: 0.1em;
+    vertical-align: 2px;
 }
 
 .status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--signal);
-  display: inline-block;
-  flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--signal);
+    display: inline-block;
+    flex: none;
 }
 
 .status-dot.bad {
-  background: var(--danger);
+    background: var(--danger);
 }
 
 .status-dot.warn {
-  background: var(--amber);
+    background: var(--amber);
 }
 
 /* ============ progress bar (scan) ============ */
 
 .progress {
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(141, 151, 184, 0.22);
-  overflow: hidden;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(141, 151, 184, 0.22);
+    overflow: hidden;
 }
 
 .progress .fill {
-  height: 100%;
-  background: var(--amber);
-  border-radius: 3px;
-  transition: width 200ms ease;
+    height: 100%;
+    background: var(--amber);
+    border-radius: 3px;
+    transition: width 200ms ease;
 }

@@ -1,8 +1,8 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import App from './App.js'
-import { useStore } from './store.js'
-import './styles/global.css'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.js";
+import { useStore } from "./store.js";
+import "./styles/global.css";
 
 /**
  * The store, on the global, for `scripts/soak.mjs`.
@@ -17,10 +17,10 @@ import './styles/global.css'
  * in it, and a diagnostic that only exists in development is a diagnostic that
  * has never been run against the thing being shipped.
  */
-;(globalThis as { __rerunStore?: typeof useStore }).__rerunStore = useStore
+(globalThis as { __rerunStore?: typeof useStore }).__rerunStore = useStore;
 
-createRoot(document.getElementById('root') as HTMLElement).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-)
+createRoot(document.getElementById("root") as HTMLElement).render(
+    <StrictMode>
+        <App />
+    </StrictMode>,
+);

@@ -1,36 +1,36 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
-    "types": ["vite/client"],
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "composite": true,
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["src/shared/*"],
-      "@renderer/*": ["src/renderer/src/*"]
-    }
-  },
-  // The renderer tests are web code — they mount real components against DOM
-  // globals — so the web project owns them, and `lib: DOM`, `react-jsx` and
-  // `noUnusedLocals` all apply to them. The price is the constraint that keeps
-  // the layer honest: they may not import `@main` or `better-sqlite3`, which is
-  // also the right test-design boundary (see `tests/renderer/fixtures.tsx`).
-  "include": [
-    "src/renderer/src/**/*.ts",
-    "src/renderer/src/**/*.tsx",
-    "src/shared/**/*.ts",
-    "tests/renderer/**/*.ts",
-    "tests/renderer/**/*.tsx"
-  ]
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "lib": ["ES2023", "DOM", "DOM.Iterable"],
+        "jsx": "react-jsx",
+        "types": ["vite/client"],
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "composite": true,
+        "baseUrl": ".",
+        "paths": {
+            "@shared/*": ["src/shared/*"],
+            "@renderer/*": ["src/renderer/src/*"]
+        }
+    },
+    // The renderer tests are web code — they mount real components against DOM
+    // globals — so the web project owns them, and `lib: DOM`, `react-jsx` and
+    // `noUnusedLocals` all apply to them. The price is the constraint that keeps
+    // the layer honest: they may not import `@main` or `better-sqlite3`, which is
+    // also the right test-design boundary (see `tests/renderer/fixtures.tsx`).
+    "include": [
+        "src/renderer/src/**/*.ts",
+        "src/renderer/src/**/*.tsx",
+        "src/shared/**/*.ts",
+        "tests/renderer/**/*.ts",
+        "tests/renderer/**/*.tsx"
+    ]
 }

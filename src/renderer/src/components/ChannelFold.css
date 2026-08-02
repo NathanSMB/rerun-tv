@@ -11,141 +11,141 @@
  */
 
 .fold-panel {
-  margin: 4px 22px 10px 25px;
-  border: 1px solid rgba(255, 180, 84, 0.35);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--panel) 55%, transparent);
-  padding: 14px 18px 16px;
+    margin: 4px 22px 10px 25px;
+    border: 1px solid rgba(255, 180, 84, 0.35);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    padding: 14px 18px 16px;
 }
 
 .fold-loading {
-  color: var(--steel);
-  font-size: 13px;
+    color: var(--steel);
+    font-size: 13px;
 }
 
 .fold-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
 }
 
 .fold-bar .caption {
-  color: var(--amber);
-  min-width: 0;
+    color: var(--amber);
+    min-width: 0;
 }
 
 .fold-error {
-  color: var(--danger);
-  font-size: 12.5px;
-  margin: 0 0 10px;
+    color: var(--danger);
+    font-size: 12.5px;
+    margin: 0 0 10px;
 }
 
 .fold-cols {
-  display: grid;
-  grid-template-columns: 1fr 260px;
-  gap: 4px 22px;
+    display: grid;
+    grid-template-columns: 1fr 260px;
+    gap: 4px 22px;
 }
 
 .fold-left {
-  min-width: 0;
+    min-width: 0;
 }
 
 .fold-right {
-  border-left: 1px solid var(--line-soft);
-  padding-left: 22px;
-  min-width: 0;
+    border-left: 1px solid var(--line-soft);
+    padding-left: 22px;
+    min-width: 0;
 }
 
 .fold-right .caption {
-  display: block;
-  margin-bottom: 9px;
+    display: block;
+    margin-bottom: 9px;
 }
 
 .fold-right .search {
-  margin-bottom: 8px;
+    margin-bottom: 8px;
 }
 
 .fold-caption {
-  margin: 0 0 8px;
+    margin: 0 0 8px;
 }
 
 .fold-facts {
-  font-size: 11.5px;
-  color: var(--steel-dim);
-  margin: 10px 0 0;
+    font-size: 11.5px;
+    color: var(--steel-dim);
+    margin: 10px 0 0;
 }
 
 .fold-empty {
-  font-size: 12.5px;
-  color: var(--steel);
-  margin: 4px 0;
+    font-size: 12.5px;
+    color: var(--steel);
+    margin: 4px 0;
 }
 
 .fold-empty b {
-  color: var(--white);
-  font-weight: 600;
+    color: var(--white);
+    font-weight: 600;
 }
 
 .fold-empty-action {
-  display: block;
-  margin-top: 10px;
+    display: block;
+    margin-top: 10px;
 }
 
 .fold-note {
-  font-size: 12px;
-  color: var(--steel-dim);
-  margin: 6px 0;
+    font-size: 12px;
+    color: var(--steel-dim);
+    margin: 6px 0;
 }
 
 /* ---- identity line: rename · renumber · delete ---- */
 
 .fold-idline {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
 }
 
 /* Click-to-edit, so they read as text with an affordance rather than as fields. */
 .idpill {
-  font-family: var(--body);
-  font-size: 12.5px;
-  color: var(--white);
-  background: none;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-sm);
-  padding: 5px 10px;
-  cursor: pointer;
-  text-align: left;
+    font-family: var(--body);
+    font-size: 12.5px;
+    color: var(--white);
+    background: none;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius-sm);
+    padding: 5px 10px;
+    cursor: pointer;
+    text-align: left;
 }
 
 .idpill:hover:not(:disabled) {
-  border-style: solid;
-  border-color: var(--steel-dim);
+    border-style: solid;
+    border-color: var(--steel-dim);
 }
 
 .idpill:disabled {
-  cursor: default;
-  opacity: 0.6;
+    cursor: default;
+    opacity: 0.6;
 }
 
 .idpill small {
-  color: var(--steel-dim);
-  margin-left: 6px;
-  font-size: 10.5px;
+    color: var(--steel-dim);
+    margin-left: 6px;
+    font-size: 10.5px;
 }
 
 .fold-idline .id-input {
-  width: auto;
-  font-size: 12.5px;
-  padding: 5px 10px;
+    width: auto;
+    font-size: 12.5px;
+    padding: 5px 10px;
 }
 
 .fold-idline .num-input {
-  width: 96px;
+    width: 96px;
 }
 
 /*
@@ -154,289 +154,292 @@
  * never the brightest thing in the fold.
  */
 .btn-del {
-  font-family: var(--body);
-  font-weight: 600;
-  font-size: 11.5px;
-  color: var(--danger);
-  background: none;
-  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
-  border-radius: var(--radius-sm);
-  padding: 5px 11px;
-  cursor: pointer;
-  flex: none;
+    font-family: var(--body);
+    font-weight: 600;
+    font-size: 11.5px;
+    color: var(--danger);
+    background: none;
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 5px 11px;
+    cursor: pointer;
+    flex: none;
 }
 
 .btn-del:hover:not(:disabled) {
-  background: rgba(229, 103, 75, 0.13);
+    background: rgba(229, 103, 75, 0.13);
 }
 
 .btn-del:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 /* Only the armed confirm gets the filled treatment. */
 .btn-del.solid {
-  background: var(--danger);
-  border-color: transparent;
-  color: #2a0d06;
+    background: var(--danger);
+    border-color: transparent;
+    color: #2a0d06;
 }
 
 .btn-del.solid:hover:not(:disabled) {
-  filter: brightness(1.08);
+    filter: brightness(1.08);
 }
 
 .del-confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .del-warn {
-  font-size: 11.5px;
-  color: var(--danger);
+    font-size: 11.5px;
+    color: var(--danger);
 }
 
 /* ---- one show in the lineup ---- */
 
 .strip {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 2px;
-  border-bottom: 1px solid var(--line-soft);
-  flex-wrap: wrap;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 2px;
+    border-bottom: 1px solid var(--line-soft);
+    flex-wrap: wrap;
 }
 
 .strip:last-of-type {
-  border-bottom: 0;
+    border-bottom: 0;
 }
 
 .strip-name {
-  font-weight: 600;
-  font-size: 13px;
-  margin-right: auto;
-  min-width: 0;
+    font-weight: 600;
+    font-size: 13px;
+    margin-right: auto;
+    min-width: 0;
 }
 
 .strip-facts {
-  font-weight: 400;
-  font-size: 11px;
-  color: var(--steel-dim);
-  margin-left: 8px;
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--steel-dim);
+    margin-left: 8px;
 }
 
 .strip .arcbadge {
-  display: inline-block;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--amber);
-  background: var(--amber-dim);
-  border-radius: 4px;
-  padding: 1px 6px;
-  margin-left: 8px;
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--amber);
+    background: var(--amber-dim);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-left: 8px;
 }
 
 /* The scheduler's state for this show, on its own line under the controls. */
 .strip-sub {
-  flex-basis: 100%;
-  font-size: 11.5px;
-  color: var(--steel-dim);
-  margin-top: -2px;
+    flex-basis: 100%;
+    font-size: 11.5px;
+    color: var(--steel-dim);
+    margin-top: -2px;
 }
 
 .strip-sub code {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--amber);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--amber);
 }
 
 /* Reset links read as links but are real buttons — they perform an action. */
 .strip-sub .linkbtn {
-  font-family: var(--body);
-  font-size: 11.5px;
-  color: var(--amber);
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
+    font-family: var(--body);
+    font-size: 11.5px;
+    color: var(--amber);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
 }
 
 .strip-sub .linkbtn:hover:not(:disabled) {
-  text-decoration: underline;
+    text-decoration: underline;
 }
 
 .strip-sub .linkbtn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .strip .weight {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11.5px;
-  color: var(--steel);
-  flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11.5px;
+    color: var(--steel);
+    flex: none;
 }
 
 .strip .weight .w-val {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--white);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 3px 9px;
-  min-width: 30px;
-  text-align: center;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--white);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 3px 9px;
+    min-width: 30px;
+    text-align: center;
 }
 
 .strip .weight .w-step {
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1;
-  color: var(--steel);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  width: 22px;
-  height: 22px;
-  cursor: pointer;
-  flex: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1;
+    color: var(--steel);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    width: 22px;
+    height: 22px;
+    cursor: pointer;
+    flex: none;
 }
 
 .strip .weight .w-step:hover:not(:disabled) {
-  color: var(--white);
-  border-color: var(--steel-dim);
+    color: var(--white);
+    border-color: var(--steel-dim);
 }
 
 .strip .weight .w-step:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .strip .seg button {
-  font-size: 11.5px;
-  padding: 5px 11px;
+    font-size: 11.5px;
+    padding: 5px 11px;
 }
 
 /* ---- season overrides ---- */
 
 .season-overrides {
-  flex-basis: 100%;
-  border-top: 1px solid var(--line-soft);
-  padding-top: 8px;
-  margin-top: 2px;
+    flex-basis: 100%;
+    border-top: 1px solid var(--line-soft);
+    padding-top: 8px;
+    margin-top: 2px;
 }
 
 .season-overrides summary {
-  width: fit-content;
-  color: var(--steel);
-  font-size: 11.5px;
-  cursor: pointer;
-  user-select: none;
+    width: fit-content;
+    color: var(--steel);
+    font-size: 11.5px;
+    cursor: pointer;
+    user-select: none;
 }
 
 .override-count {
-  margin-left: 8px;
-  color: var(--amber);
+    margin-left: 8px;
+    color: var(--amber);
 }
 
 .season-list {
-  margin-top: 8px;
-  display: grid;
-  gap: 6px;
+    margin-top: 8px;
+    display: grid;
+    gap: 6px;
 }
 
 .season-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
 }
 
 .season-label {
-  font-size: 12px;
-  white-space: nowrap;
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .season-label small {
-  margin-left: 8px;
-  color: var(--steel-dim);
+    margin-left: 8px;
+    color: var(--steel-dim);
 }
 
-.season-mode button {
-  font-size: 11px;
+/* Has to out-specify `.strip .seg button` above, which also matches these — as a
+   bare `.season-mode button` this rule lost and the season toggles rendered at
+   the parent strip's 11.5px. */
+.strip .seg.season-mode button {
+    font-size: 11px;
 }
 
 /* ---- library picker ---- */
 
 .pick {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 2px;
-  border-bottom: 1px solid var(--line-soft);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 2px;
+    border-bottom: 1px solid var(--line-soft);
 }
 
 .pick .p-name {
-  font-size: 12.5px;
-  min-width: 0;
-  flex: 1;
+    font-size: 12.5px;
+    min-width: 0;
+    flex: 1;
 }
 
 .pick .p-eps {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--steel-dim);
-  flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--steel-dim);
+    flex: none;
 }
 
 .pick .add {
-  font-size: 15px;
-  line-height: 1;
-  color: var(--amber);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  width: 24px;
-  height: 24px;
-  cursor: pointer;
-  flex: none;
+    font-size: 15px;
+    line-height: 1;
+    color: var(--amber);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    flex: none;
 }
 
 .pick .add:hover:not(:disabled) {
-  border-color: var(--amber);
+    border-color: var(--amber);
 }
 
 .pick .add:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 /* ---- narrow windows ---- */
 
 @media (max-width: 860px) {
-  .fold-panel {
-    margin: 4px 14px 10px 17px;
-    padding: 12px 14px 14px;
-  }
+    .fold-panel {
+        margin: 4px 14px 10px 17px;
+        padding: 12px 14px 14px;
+    }
 
-  .fold-cols {
-    grid-template-columns: 1fr;
-  }
+    .fold-cols {
+        grid-template-columns: 1fr;
+    }
 
-  .fold-right {
-    border-left: 0;
-    padding-left: 0;
-    border-top: 1px solid var(--line-soft);
-    padding-top: 14px;
-    margin-top: 12px;
-  }
+    .fold-right {
+        border-left: 0;
+        padding-left: 0;
+        border-top: 1px solid var(--line-soft);
+        padding-top: 14px;
+        margin-top: 12px;
+    }
 
-  .strip-name {
-    flex-basis: 100%;
-    margin-right: 0;
-  }
+    .strip-name {
+        flex-basis: 100%;
+        margin-right: 0;
+    }
 }

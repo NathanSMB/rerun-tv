@@ -37,26 +37,31 @@
  * same transaction: the arc is complete, so the channel is already free.
  */
 
-import type { ChannelShow, ChannelShowState, PlayMode, PlayableUnit } from '@shared/types.js'
-import type { Db } from '../db/index.js'
+import type {
+    ChannelShow,
+    ChannelShowState,
+    PlayableUnit,
+    PlayMode,
+} from "@shared/types.js";
+import type { Db } from "../db/index.js";
 import {
-  getChannel,
-  getShowState,
-  lastAired,
-  listChannelShows,
-  listChannelShowSeasonModes,
-  logAiring,
-  resetShowState,
-  saveShowState,
-  setActiveArc
-} from '../db/repositories/channels.js'
-import { buildUnits, unitKeyForArc } from './units.js'
+    getChannel,
+    getShowState,
+    lastAired,
+    listChannelShowSeasonModes,
+    listChannelShows,
+    logAiring,
+    resetShowState,
+    saveShowState,
+    setActiveArc,
+} from "../db/repositories/channels.js";
+import { buildUnits, unitKeyForArc } from "./units.js";
 
 /** A pick — committed to the database, or held by a prewarm reservation. */
 export interface Pick {
-  episodeId: number
-  unit: PlayableUnit
-  arc: { title: string; partIndex: number; partCount: number } | null
+    episodeId: number;
+    unit: PlayableUnit;
+    arc: { title: string; partIndex: number; partCount: number } | null;
 }
 
 /**
@@ -65,23 +70,23 @@ export interface Pick {
  * `pickNext` applies them inside one transaction.
  */
 interface PlannedPick {
-  pick: Pick
-  /** The channel's arc lock after this pick. `{ null, null }` releases it. */
-  arc: { groupId: number | null; partIndex: number | null }
-  /** Show state to persist, or null when the pick was an arc continuation. */
-  state: ChannelShowState | null
+    pick: Pick;
+    /** The channel's arc lock after this pick. `{ null, null }` releases it. */
+    arc: { groupId: number | null; partIndex: number | null };
+    /** Show state to persist, or null when the pick was an arc continuation. */
+    state: ChannelShowState | null;
 }
 
 /** Fisher–Yates over `rng`, so a seeded generator makes tests deterministic. */
 function shuffled(keys: string[], rng: () => number): string[] {
-  const out = keys.slice()
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1))
-    const tmp = out[i]
-    out[i] = out[j]
-    out[j] = tmp
-  }
-  return out
+    const out = keys.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        const tmp = out[i];
+        out[i] = out[j];
+        out[j] = tmp;
+    }
+    return out;
 }
 
 /**
@@ -91,17 +96,21 @@ function shuffled(keys: string[], rng: () => number): string[] {
  * distribution is fine. The offender is swapped to a random later slot rather
  * than dropped, so it still airs exactly once this cycle.
  */
-function dealBag(units: PlayableUnit[], rng: () => number, avoidFirst: string | null): string[] {
-  const bag = shuffled(
-    units.map((u) => u.key),
-    rng
-  )
-  if (avoidFirst != null && bag.length > 1 && bag[0] === avoidFirst) {
-    const j = 1 + Math.floor(rng() * (bag.length - 1))
-    bag[0] = bag[j]
-    bag[j] = avoidFirst
-  }
-  return bag
+function dealBag(
+    units: PlayableUnit[],
+    rng: () => number,
+    avoidFirst: string | null,
+): string[] {
+    const bag = shuffled(
+        units.map((u) => u.key),
+        rng,
+    );
+    if (avoidFirst != null && bag.length > 1 && bag[0] === avoidFirst) {
+        const j = 1 + Math.floor(rng() * (bag.length - 1));
+        bag[0] = bag[j];
+        bag[j] = avoidFirst;
+    }
+    return bag;
 }
 
 /**
@@ -112,88 +121,97 @@ function dealBag(units: PlayableUnit[], rng: () => number, avoidFirst: string | 
  * backwards.
  */
 function dealMixedBag(
-  units: PlayableUnit[],
-  modeForSeason: (season: number) => PlayMode,
-  rng: () => number,
-  avoidFirst: string | null
+    units: PlayableUnit[],
+    modeForSeason: (season: number) => PlayMode,
+    rng: () => number,
+    avoidFirst: string | null,
 ): string[] {
-  const bag = shuffled(
-    units.map((unit) => unit.key),
-    rng
-  )
-  const byKey = new Map(units.map((unit) => [unit.key, unit]))
-  const sequentialSeasons = new Set(
-    units
-      .filter((unit) => modeForSeason(unit.season) === 'sequential')
-      .map((unit) => unit.season)
-  )
+    const bag = shuffled(
+        units.map((unit) => unit.key),
+        rng,
+    );
+    const byKey = new Map(units.map((unit) => [unit.key, unit]));
+    const sequentialSeasons = new Set(
+        units
+            .filter((unit) => modeForSeason(unit.season) === "sequential")
+            .map((unit) => unit.season),
+    );
 
-  for (const season of sequentialSeasons) {
-    const positions = bag
-      .map((key, index) => (byKey.get(key)?.season === season ? index : -1))
-      .filter((index) => index >= 0)
-    const ordered = units.filter((unit) => unit.season === season)
-    positions.forEach((position, index) => {
-      bag[position] = ordered[index].key
-    })
-  }
-
-  // Only shuffle units may be swapped freely without violating an ordered
-  // season. This retains the old no-immediate-repeat promise where it applies.
-  if (avoidFirst != null && bag.length > 1 && bag[0] === avoidFirst) {
-    const first = byKey.get(bag[0])
-    if (first && modeForSeason(first.season) === 'shuffle') {
-      const candidates = bag
-        .map((key, index) => ({ key, index, unit: byKey.get(key) }))
-        .filter(
-          (item) =>
-            item.index > 0 &&
-            item.key !== avoidFirst &&
-            item.unit != null &&
-            modeForSeason(item.unit.season) === 'shuffle'
-        )
-      if (candidates.length > 0) {
-        const chosen = candidates[Math.floor(rng() * candidates.length)]
-        bag[0] = chosen.key
-        bag[chosen.index] = avoidFirst
-      }
+    for (const season of sequentialSeasons) {
+        const positions = bag
+            .map((key, index) =>
+                byKey.get(key)?.season === season ? index : -1,
+            )
+            .filter((index) => index >= 0);
+        const ordered = units.filter((unit) => unit.season === season);
+        positions.forEach((position, index) => {
+            bag[position] = ordered[index].key;
+        });
     }
-  }
-  return bag
+
+    // Only shuffle units may be swapped freely without violating an ordered
+    // season. This retains the old no-immediate-repeat promise where it applies.
+    if (avoidFirst != null && bag.length > 1 && bag[0] === avoidFirst) {
+        const first = byKey.get(bag[0]);
+        if (first && modeForSeason(first.season) === "shuffle") {
+            const candidates = bag
+                .map((key, index) => ({ key, index, unit: byKey.get(key) }))
+                .filter(
+                    (item) =>
+                        item.index > 0 &&
+                        item.key !== avoidFirst &&
+                        item.unit != null &&
+                        modeForSeason(item.unit.season) === "shuffle",
+                );
+            if (candidates.length > 0) {
+                const chosen =
+                    candidates[Math.floor(rng() * candidates.length)];
+                bag[0] = chosen.key;
+                bag[chosen.index] = avoidFirst;
+            }
+        }
+    }
+    return bag;
 }
 
 /** Weighted lottery over the lineup. Weights are the per-show sliders in the editor. */
-function weightedPick<T extends { weight: number }>(candidates: T[], rng: () => number): T {
-  const total = candidates.reduce((sum, c) => sum + c.weight, 0)
-  let r = rng() * total
-  for (const candidate of candidates) {
-    r -= candidate.weight
-    if (r < 0) return candidate
-  }
-  return candidates[candidates.length - 1]
+function weightedPick<T extends { weight: number }>(
+    candidates: T[],
+    rng: () => number,
+): T {
+    const total = candidates.reduce((sum, c) => sum + c.weight, 0);
+    let r = rng() * total;
+    for (const candidate of candidates) {
+        r -= candidate.weight;
+        if (r < 0) return candidate;
+    }
+    return candidates[candidates.length - 1];
 }
 
 /** The arc unit for a group id, rebuilt from the library so part order is authoritative. */
 function loadArcUnit(db: Db, groupId: number): PlayableUnit | null {
-  const row = db.prepare(`SELECT show_id AS showId FROM part_groups WHERE id = ?`).get(groupId) as
-    | { showId: number }
-    | undefined
-  if (!row) return null
-  const key = unitKeyForArc(groupId)
-  return buildUnits(db, row.showId).find((u) => u.key === key) ?? null
+    const row = db
+        .prepare(`SELECT show_id AS showId FROM part_groups WHERE id = ?`)
+        .get(groupId) as { showId: number } | undefined;
+    if (!row) return null;
+    const key = unitKeyForArc(groupId);
+    return buildUnits(db, row.showId).find((u) => u.key === key) ?? null;
 }
 
 /** `arc:12` → 12. Only ever called on keys this module produced. */
 function groupIdFromKey(key: string): number {
-  return Number(key.slice('arc:'.length))
+    return Number(key.slice("arc:".length));
 }
 
 /** Which unit contains a given episode — used to translate `lastAired` into a bag key. */
-function unitKeyForEpisodeId(units: PlayableUnit[], episodeId: number): string | null {
-  for (const unit of units) {
-    if (unit.episodeIds.includes(episodeId)) return unit.key
-  }
-  return null
+function unitKeyForEpisodeId(
+    units: PlayableUnit[],
+    episodeId: number,
+): string | null {
+    for (const unit of units) {
+        if (unit.episodeIds.includes(episodeId)) return unit.key;
+    }
+    return null;
 }
 
 /**
@@ -213,34 +231,40 @@ function unitKeyForEpisodeId(units: PlayableUnit[], episodeId: number): string |
  * bags actually hold.
  */
 export interface ShowModePlan {
-  /** Explicit overrides only — absent seasons inherit, and the editor shows that. */
-  overrides: ReadonlyMap<number, PlayMode>
-  /** A season's effective mode: its override, or the show's mode. */
-  modeForSeason: (season: number) => PlayMode
-  /** False walks a sequential cursor; true deals from a shuffle bag. */
-  usesBag: boolean
-  /** True when no unit is ordered, so a dealt bag needs no ordering pass. */
-  allShuffle: boolean
+    /** Explicit overrides only — absent seasons inherit, and the editor shows that. */
+    overrides: ReadonlyMap<number, PlayMode>;
+    /** A season's effective mode: its override, or the show's mode. */
+    modeForSeason: (season: number) => PlayMode;
+    /** False walks a sequential cursor; true deals from a shuffle bag. */
+    usesBag: boolean;
+    /** True when no unit is ordered, so a dealt bag needs no ordering pass. */
+    allShuffle: boolean;
 }
 
 export function planShowModes(
-  db: Db,
-  channelId: number,
-  showId: number,
-  showMode: PlayMode,
-  units: PlayableUnit[]
+    db: Db,
+    channelId: number,
+    showId: number,
+    showMode: PlayMode,
+    units: PlayableUnit[],
 ): ShowModePlan {
-  const overrides = new Map(
-    listChannelShowSeasonModes(db, channelId, showId).map((item) => [item.season, item.mode])
-  )
-  const modeForSeason = (season: number): PlayMode => overrides.get(season) ?? showMode
-  const shuffleUnits = units.filter((unit) => modeForSeason(unit.season) === 'shuffle').length
-  return {
-    overrides,
-    modeForSeason,
-    usesBag: shuffleUnits > 0,
-    allShuffle: shuffleUnits === units.length
-  }
+    const overrides = new Map(
+        listChannelShowSeasonModes(db, channelId, showId).map((item) => [
+            item.season,
+            item.mode,
+        ]),
+    );
+    const modeForSeason = (season: number): PlayMode =>
+        overrides.get(season) ?? showMode;
+    const shuffleUnits = units.filter(
+        (unit) => modeForSeason(unit.season) === "shuffle",
+    ).length;
+    return {
+        overrides,
+        modeForSeason,
+        usesBag: shuffleUnits > 0,
+        allShuffle: shuffleUnits === units.length,
+    };
 }
 
 /**
@@ -248,94 +272,112 @@ export function planShowModes(
  * database, decides, and reports the mutations it would need — but performs
  * none of them.
  */
-function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | null {
-  const channel = getChannel(db, channelId)
-  if (!channel) return null
+function planNext(
+    db: Db,
+    channelId: number,
+    rng: () => number,
+): PlannedPick | null {
+    const channel = getChannel(db, channelId);
+    if (!channel) return null;
 
-  // 1 · An in-progress arc always wins — arcs are never interrupted.
-  if (channel.activeGroupId != null) {
-    const unit = loadArcUnit(db, channel.activeGroupId)
-    const index = channel.activePartIndex ?? 0
-    if (unit && index >= 0 && index < unit.episodeIds.length) {
-      const isFinalPart = index === unit.episodeIds.length - 1
-      return {
+    // 1 · An in-progress arc always wins — arcs are never interrupted.
+    if (channel.activeGroupId != null) {
+        const unit = loadArcUnit(db, channel.activeGroupId);
+        const index = channel.activePartIndex ?? 0;
+        if (unit && index >= 0 && index < unit.episodeIds.length) {
+            const isFinalPart = index === unit.episodeIds.length - 1;
+            return {
+                pick: {
+                    episodeId: unit.episodeIds[index],
+                    unit,
+                    arc: {
+                        title: unit.title,
+                        partIndex: index + 1,
+                        partCount: unit.episodeIds.length,
+                    },
+                },
+                // Handing out the last part releases the channel immediately.
+                arc: isFinalPart
+                    ? { groupId: null, partIndex: null }
+                    : { groupId: channel.activeGroupId, partIndex: index + 1 },
+                state: null,
+            };
+        }
+        // Stale lock (the group was deleted or regrouped out from under us): fall
+        // through to the lottery, which clears it as part of its own mutation.
+    }
+
+    // 2 · Pick a show, weighted. Shows with no units at all are not in the draw —
+    // an empty show must never be able to win and produce nothing.
+    const candidates = listChannelShows(db, channelId)
+        .map((show: ChannelShow) => ({
+            ...show,
+            units: buildUnits(db, show.showId),
+        }))
+        .filter((c) => c.units.length > 0 && c.weight > 0);
+    if (candidates.length === 0) return null;
+
+    const chosen = weightedPick(candidates, rng);
+    const units = chosen.units;
+    const state = getShowState(db, channelId, chosen.showId);
+    const { modeForSeason, usesBag, allShuffle } = planShowModes(
+        db,
+        channelId,
+        chosen.showId,
+        chosen.mode,
+        units,
+    );
+
+    // 3 · Pick a unit inside that show, applying season overrides over its mode.
+    let unit: PlayableUnit;
+    let nextState: ChannelShowState;
+    if (!usesBag) {
+        // The cursor is an index into a *derived* list, so it can be left dangling
+        // by a rescan that removed episodes; treat anything out of range as a wrap.
+        const cursor =
+            state.cursorUnitIndex >= 0 && state.cursorUnitIndex < units.length
+                ? state.cursorUnitIndex
+                : 0;
+        unit = units[cursor];
+        nextState = { ...state, cursorUnitIndex: (cursor + 1) % units.length };
+    } else {
+        // Bags hold unit *keys*, so regrouping episodes into an arc mid-cycle
+        // invalidates keys rather than corrupting positions: drop the dead ones and
+        // carry on with the rest of the cycle.
+        const live = new Set(units.map((u) => u.key));
+        const bag = state.shuffleBag.filter((key) => live.has(key));
+        if (bag.length === 0) {
+            const lastEpisodeId = lastAired(db, channelId, chosen.showId);
+            const avoid =
+                lastEpisodeId == null
+                    ? null
+                    : unitKeyForEpisodeId(units, lastEpisodeId);
+            bag.push(
+                ...(allShuffle
+                    ? dealBag(units, rng, avoid)
+                    : dealMixedBag(units, modeForSeason, rng, avoid)),
+            );
+        }
+        const key = bag.shift() as string;
+        unit = units.find((u) => u.key === key) ?? units[0];
+        nextState = { ...state, shuffleBag: bag };
+    }
+
+    // 4 · An arc enters as one unit and locks the channel until it finishes. A
+    // one-part group is an arc for bookkeeping but has nothing to protect.
+    const partCount = unit.episodeIds.length;
+    const locks = unit.kind === "arc" && partCount > 1;
+    return {
         pick: {
-          episodeId: unit.episodeIds[index],
-          unit,
-          arc: { title: unit.title, partIndex: index + 1, partCount: unit.episodeIds.length }
+            episodeId: unit.episodeIds[0],
+            unit,
+            arc: locks ? { title: unit.title, partIndex: 1, partCount } : null,
         },
-        // Handing out the last part releases the channel immediately.
-        arc: isFinalPart ? { groupId: null, partIndex: null } : { groupId: channel.activeGroupId, partIndex: index + 1 },
-        state: null
-      }
-    }
-    // Stale lock (the group was deleted or regrouped out from under us): fall
-    // through to the lottery, which clears it as part of its own mutation.
-  }
-
-  // 2 · Pick a show, weighted. Shows with no units at all are not in the draw —
-  // an empty show must never be able to win and produce nothing.
-  const candidates = listChannelShows(db, channelId)
-    .map((show: ChannelShow) => ({ ...show, units: buildUnits(db, show.showId) }))
-    .filter((c) => c.units.length > 0 && c.weight > 0)
-  if (candidates.length === 0) return null
-
-  const chosen = weightedPick(candidates, rng)
-  const units = chosen.units
-  const state = getShowState(db, channelId, chosen.showId)
-  const { modeForSeason, usesBag, allShuffle } = planShowModes(
-    db,
-    channelId,
-    chosen.showId,
-    chosen.mode,
-    units
-  )
-
-  // 3 · Pick a unit inside that show, applying season overrides over its mode.
-  let unit: PlayableUnit
-  let nextState: ChannelShowState
-  if (!usesBag) {
-    // The cursor is an index into a *derived* list, so it can be left dangling
-    // by a rescan that removed episodes; treat anything out of range as a wrap.
-    const cursor =
-      state.cursorUnitIndex >= 0 && state.cursorUnitIndex < units.length ? state.cursorUnitIndex : 0
-    unit = units[cursor]
-    nextState = { ...state, cursorUnitIndex: (cursor + 1) % units.length }
-  } else {
-    // Bags hold unit *keys*, so regrouping episodes into an arc mid-cycle
-    // invalidates keys rather than corrupting positions: drop the dead ones and
-    // carry on with the rest of the cycle.
-    const live = new Set(units.map((u) => u.key))
-    const bag = state.shuffleBag.filter((key) => live.has(key))
-    if (bag.length === 0) {
-      const lastEpisodeId = lastAired(db, channelId, chosen.showId)
-      const avoid = lastEpisodeId == null ? null : unitKeyForEpisodeId(units, lastEpisodeId)
-      bag.push(
-        ...(allShuffle
-          ? dealBag(units, rng, avoid)
-          : dealMixedBag(units, modeForSeason, rng, avoid))
-      )
-    }
-    const key = bag.shift() as string
-    unit = units.find((u) => u.key === key) ?? units[0]
-    nextState = { ...state, shuffleBag: bag }
-  }
-
-  // 4 · An arc enters as one unit and locks the channel until it finishes. A
-  // one-part group is an arc for bookkeeping but has nothing to protect.
-  const partCount = unit.episodeIds.length
-  const locks = unit.kind === 'arc' && partCount > 1
-  return {
-    pick: {
-      episodeId: unit.episodeIds[0],
-      unit,
-      arc: locks ? { title: unit.title, partIndex: 1, partCount } : null
-    },
-    arc: locks
-      ? { groupId: groupIdFromKey(unit.key), partIndex: 1 }
-      : { groupId: null, partIndex: null },
-    state: nextState
-  }
+        arc: locks
+            ? { groupId: groupIdFromKey(unit.key), partIndex: 1 }
+            : { groupId: null, partIndex: null },
+        state: nextState,
+    };
 }
 
 /**
@@ -346,19 +388,23 @@ function planNext(db: Db, channelId: number, rng: () => number): PlannedPick | n
  * transaction, so the answer this returns is exactly the state the database is
  * left in. `rng` is injectable purely so tests can be deterministic.
  */
-export function pickNext(db: Db, channelId: number, rng: () => number = Math.random): Pick | null {
-  // A real advance supersedes whatever was reserved for a handoff: the renderer
-  // only reaches `tune`/`next` when it has no standby to promote.
-  discardReserved(db, channelId)
-  return db.transaction((): Pick | null => {
-    const planned = planNext(db, channelId, rng)
-    if (!planned) return null
-    if (planned.state) saveShowState(db, planned.state)
-    setActiveArc(db, channelId, planned.arc.groupId, planned.arc.partIndex)
-    // Logged as incomplete; the player flips it when the episode reaches `ended`.
-    logAiring(db, channelId, planned.pick.episodeId, false)
-    return planned.pick
-  })()
+export function pickNext(
+    db: Db,
+    channelId: number,
+    rng: () => number = Math.random,
+): Pick | null {
+    // A real advance supersedes whatever was reserved for a handoff: the renderer
+    // only reaches `tune`/`next` when it has no standby to promote.
+    discardReserved(db, channelId);
+    return db.transaction((): Pick | null => {
+        const planned = planNext(db, channelId, rng);
+        if (!planned) return null;
+        if (planned.state) saveShowState(db, planned.state);
+        setActiveArc(db, channelId, planned.arc.groupId, planned.arc.partIndex);
+        // Logged as incomplete; the player flips it when the episode reaches `ended`.
+        logAiring(db, channelId, planned.pick.episodeId, false);
+        return planned.pick;
+    })();
 }
 
 /**
@@ -372,10 +418,14 @@ export function pickNext(db: Db, channelId: number, rng: () => number = Math.ran
  * outstanding, when the answer *is* a promise: the standby player is already
  * buffering that exact episode.
  */
-export function peekNext(db: Db, channelId: number, rng: () => number = Math.random): Pick | null {
-  const reserved = reservationsFor(db).get(channelId)
-  if (reserved) return reserved.pick
-  return planNext(db, channelId, rng)?.pick ?? null
+export function peekNext(
+    db: Db,
+    channelId: number,
+    rng: () => number = Math.random,
+): Pick | null {
+    const reserved = reservationsFor(db).get(channelId);
+    if (reserved) return reserved.pick;
+    return planNext(db, channelId, rng)?.pick ?? null;
 }
 
 // ---- prewarm reservations ---------------------------------------------------
@@ -387,15 +437,15 @@ export function peekNext(db: Db, channelId: number, rng: () => number = Math.ran
  * exact recovery `planNext` already promises. Keyed per database so tests
  * running parallel in-memory databases stay isolated.
  */
-const reservations = new WeakMap<Db, Map<number, PlannedPick>>()
+const reservations = new WeakMap<Db, Map<number, PlannedPick>>();
 
 function reservationsFor(db: Db): Map<number, PlannedPick> {
-  let map = reservations.get(db)
-  if (!map) {
-    map = new Map()
-    reservations.set(db, map)
-  }
-  return map
+    let map = reservations.get(db);
+    if (!map) {
+        map = new Map();
+        reservations.set(db, map);
+    }
+    return map;
 }
 
 /**
@@ -409,16 +459,16 @@ function reservationsFor(db: Db): Map<number, PlannedPick> {
  * standby and the reservation disagree.
  */
 export function reserveNext(
-  db: Db,
-  channelId: number,
-  rng: () => number = Math.random
+    db: Db,
+    channelId: number,
+    rng: () => number = Math.random,
 ): Pick | null {
-  const existing = reservationsFor(db).get(channelId)
-  if (existing) return existing.pick
-  const planned = planNext(db, channelId, rng)
-  if (!planned) return null
-  reservationsFor(db).set(channelId, planned)
-  return planned.pick
+    const existing = reservationsFor(db).get(channelId);
+    if (existing) return existing.pick;
+    const planned = planNext(db, channelId, rng);
+    if (!planned) return null;
+    reservationsFor(db).set(channelId, planned);
+    return planned.pick;
 }
 
 /**
@@ -430,17 +480,26 @@ export function reserveNext(
  * the episode is genuinely on screen, and the play log's promise is one entry
  * per episode aired. The schedule step is simply not spent twice.
  */
-export function promoteReserved(db: Db, channelId: number, episodeId: number): void {
-  const planned = reservationsFor(db).get(channelId)
-  const matches = planned != null && planned.pick.episodeId === episodeId
-  if (matches) reservationsFor(db).delete(channelId)
-  db.transaction(() => {
-    if (matches) {
-      if (planned.state) saveShowState(db, planned.state)
-      setActiveArc(db, channelId, planned.arc.groupId, planned.arc.partIndex)
-    }
-    logAiring(db, channelId, episodeId, false)
-  })()
+export function promoteReserved(
+    db: Db,
+    channelId: number,
+    episodeId: number,
+): void {
+    const planned = reservationsFor(db).get(channelId);
+    const matches = planned != null && planned.pick.episodeId === episodeId;
+    if (matches) reservationsFor(db).delete(channelId);
+    db.transaction(() => {
+        if (matches) {
+            if (planned.state) saveShowState(db, planned.state);
+            setActiveArc(
+                db,
+                channelId,
+                planned.arc.groupId,
+                planned.arc.partIndex,
+            );
+        }
+        logAiring(db, channelId, episodeId, false);
+    })();
 }
 
 /**
@@ -449,12 +508,16 @@ export function promoteReserved(db: Db, channelId: number, episodeId: number): v
  * reservation for that exact episode goes, so releasing a finished episode's
  * encoder can never take an unrelated standby with it.
  */
-export function discardReserved(db: Db, channelId: number, episodeId?: number): void {
-  const planned = reservationsFor(db).get(channelId)
-  if (!planned) return
-  if (episodeId == null || planned.pick.episodeId === episodeId) {
-    reservationsFor(db).delete(channelId)
-  }
+export function discardReserved(
+    db: Db,
+    channelId: number,
+    episodeId?: number,
+): void {
+    const planned = reservationsFor(db).get(channelId);
+    if (!planned) return;
+    if (episodeId == null || planned.pick.episodeId === episodeId) {
+        reservationsFor(db).delete(channelId);
+    }
 }
 
 /**
@@ -463,9 +526,9 @@ export function discardReserved(db: Db, channelId: number, episodeId?: number): 
  * weight, position) is configuration and is deliberately untouched.
  */
 export function resetProgress(db: Db, channelId: number, showId: number): void {
-  db.transaction(() => {
-    resetShowState(db, channelId, showId)
-  })()
+    db.transaction(() => {
+        resetShowState(db, channelId, showId);
+    })();
 }
 
 /**
@@ -477,13 +540,13 @@ export function resetProgress(db: Db, channelId: number, showId: number): void {
  * decision it can never finish (plan §10, "scheduler state corruption").
  */
 export function validateActiveArc(db: Db, channelId: number): void {
-  db.transaction(() => {
-    const channel = getChannel(db, channelId)
-    if (!channel || channel.activeGroupId == null) return
-    const unit = loadArcUnit(db, channel.activeGroupId)
-    const index = channel.activePartIndex ?? 0
-    if (!unit || index < 0 || index >= unit.episodeIds.length) {
-      setActiveArc(db, channelId, null, null)
-    }
-  })()
+    db.transaction(() => {
+        const channel = getChannel(db, channelId);
+        if (!channel || channel.activeGroupId == null) return;
+        const unit = loadArcUnit(db, channel.activeGroupId);
+        const index = channel.activePartIndex ?? 0;
+        if (!unit || index < 0 || index >= unit.episodeIds.length) {
+            setActiveArc(db, channelId, null, null);
+        }
+    })();
 }

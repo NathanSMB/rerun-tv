@@ -1,52 +1,52 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2023"],
-    "types": ["node", "electron-vite/node"],
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": false,
-    "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "composite": true,
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["src/shared/*"],
-      "@main/*": ["src/main/*"]
-    }
-  },
-  "include": [
-    "src/main/**/*.ts",
-    "src/preload/**/*.ts",
-    "src/shared/**/*.ts",
-    "tests/**/*.ts",
-    "electron.vite.config.ts",
-    "vitest.config.ts",
-    // The MSE pump is renderer code, but it is deliberately DOM-free so its box
-    // scanner and read-pacing state machine can be unit-tested in Node. Listing
-    // it here is what enforces that: a stray DOM reference fails this project,
-    // whose `lib` has no DOM at all. The DOM-touching half lives in
-    // `player/VideoSurface.tsx`, which is renderer-only.
-    "src/renderer/src/player/mse.ts",
-    // Likewise the store: it reaches the preload bridge through `globalThis`
-    // rather than `window` so its schedule-advance logic — the part that must
-    // never double-spend a pick — can be driven against a fake bridge in Node.
-    "src/renderer/src/store.ts",
-    // And the PiP session controller, for the strongest version of the same
-    // reason: neither happy-dom nor jsdom implements picture-in-picture at all,
-    // so the orderings that matter — a transfer's `leavepictureinpicture`, a
-    // swap landing mid-request — can only be driven as plain events in Node.
-    "src/renderer/src/player/pip.ts"
-  ],
-  // The renderer tests need the DOM this project deliberately does without.
-  // Their `.tsx` extension already keeps them out of the glob above; the
-  // exclude is what makes that intent survive a future `.ts` helper.
-  "exclude": ["tests/renderer"]
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "lib": ["ES2023"],
+        "types": ["node", "electron-vite/node"],
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+        "exactOptionalPropertyTypes": false,
+        "resolveJsonModule": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "isolatedModules": true,
+        "noEmit": true,
+        "composite": true,
+        "baseUrl": ".",
+        "paths": {
+            "@shared/*": ["src/shared/*"],
+            "@main/*": ["src/main/*"]
+        }
+    },
+    "include": [
+        "src/main/**/*.ts",
+        "src/preload/**/*.ts",
+        "src/shared/**/*.ts",
+        "tests/**/*.ts",
+        "electron.vite.config.ts",
+        "vitest.config.ts",
+        // The MSE pump is renderer code, but it is deliberately DOM-free so its box
+        // scanner and read-pacing state machine can be unit-tested in Node. Listing
+        // it here is what enforces that: a stray DOM reference fails this project,
+        // whose `lib` has no DOM at all. The DOM-touching half lives in
+        // `player/VideoSurface.tsx`, which is renderer-only.
+        "src/renderer/src/player/mse.ts",
+        // Likewise the store: it reaches the preload bridge through `globalThis`
+        // rather than `window` so its schedule-advance logic — the part that must
+        // never double-spend a pick — can be driven against a fake bridge in Node.
+        "src/renderer/src/store.ts",
+        // And the PiP session controller, for the strongest version of the same
+        // reason: neither happy-dom nor jsdom implements picture-in-picture at all,
+        // so the orderings that matter — a transfer's `leavepictureinpicture`, a
+        // swap landing mid-request — can only be driven as plain events in Node.
+        "src/renderer/src/player/pip.ts"
+    ],
+    // The renderer tests need the DOM this project deliberately does without.
+    // Their `.tsx` extension already keeps them out of the glob above; the
+    // exclude is what makes that intent survive a future `.ts` helper.
+    "exclude": ["tests/renderer"]
 }

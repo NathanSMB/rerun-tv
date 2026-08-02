@@ -7,34 +7,37 @@
  * over a library of hundreds, so it is three grouped queries, joined in memory.
  */
 
-import { stat } from 'node:fs/promises'
-import type {
-  AssignUnmatchedInput,
-  LibraryOverview,
-  LibraryShow,
-  PlaybackPath
-} from '@shared/types.js'
-import { SUPPORTED_AUDIO_CODECS, decidePlaybackPath } from '@shared/playback.js'
-import type { Db } from '../db/index.js'
+import { stat } from "node:fs/promises";
 import {
-  countArcsByShow,
-  countEpisodes,
-  getUnmatched,
-  listUnmatched,
-  removeUnmatched,
-  upsertEpisode
-} from '../db/repositories/library.js'
-import { probeFile } from '../library/ffprobe.js'
+    decidePlaybackPath,
+    SUPPORTED_AUDIO_CODECS,
+} from "@shared/playback.js";
+import type {
+    AssignUnmatchedInput,
+    LibraryOverview,
+    LibraryShow,
+    PlaybackPath,
+} from "@shared/types.js";
+import type { Db } from "../db/index.js";
+import {
+    countArcsByShow,
+    countEpisodes,
+    getUnmatched,
+    listUnmatched,
+    removeUnmatched,
+    upsertEpisode,
+} from "../db/repositories/library.js";
+import { probeFile } from "../library/ffprobe.js";
 
 interface ShowAggregateRow {
-  id: number
-  title: string
-  episode_count: number
-  season_count: number
-  direct: number
-  remux: number
-  transcode: number
-  remux_audio_encode: number
+    id: number;
+    title: string;
+    episode_count: number;
+    season_count: number;
+    direct: number;
+    remux: number;
+    transcode: number;
+    remux_audio_encode: number;
 }
 
 /**
@@ -43,9 +46,9 @@ interface ShowAggregateRow {
  * out here, so the aggregate and `needsAudioTranscode` can never drift; `none`
  * joins them because a silent file has no audio to encode.
  */
-const AUDIO_COPY_SQL_LIST = [...SUPPORTED_AUDIO_CODECS, 'none']
-  .map((codec) => `'${codec}'`)
-  .join(', ')
+const AUDIO_COPY_SQL_LIST = [...SUPPORTED_AUDIO_CODECS, "none"]
+    .map((codec) => `'${codec}'`)
+    .join(", ");
 
 /**
  * Everything the Library screen renders in one shot: per-show aggregates, the
@@ -56,9 +59,9 @@ const AUDIO_COPY_SQL_LIST = [...SUPPORTED_AUDIO_CODECS, 'none']
  * (a scan in progress, or a folder that just emptied).
  */
 export function getLibraryOverview(db: Db): LibraryOverview {
-  const rows = db
-    .prepare(
-      `SELECT
+    const rows = db
+        .prepare(
+            `SELECT
          s.id,
          s.title,
          COUNT(e.id)                                                   AS episode_count,
@@ -71,31 +74,31 @@ export function getLibraryOverview(db: Db): LibraryOverview {
        FROM shows s
        LEFT JOIN episodes e ON e.show_id = s.id
        GROUP BY s.id
-       ORDER BY s.title COLLATE NOCASE, s.id`
-    )
-    .all() as ShowAggregateRow[]
+       ORDER BY s.title COLLATE NOCASE, s.id`,
+        )
+        .all() as ShowAggregateRow[];
 
-  const arcCounts = countArcsByShow(db)
+    const arcCounts = countArcsByShow(db);
 
-  const shows: LibraryShow[] = rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    episodeCount: r.episode_count,
-    seasonCount: r.season_count,
-    arcCount: arcCounts.get(r.id) ?? 0,
-    paths: {
-      direct: r.direct,
-      remux: r.remux,
-      transcode: r.transcode
-    } satisfies Record<PlaybackPath, number>,
-    remuxAudioEncode: r.remux_audio_encode
-  }))
+    const shows: LibraryShow[] = rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        episodeCount: r.episode_count,
+        seasonCount: r.season_count,
+        arcCount: arcCounts.get(r.id) ?? 0,
+        paths: {
+            direct: r.direct,
+            remux: r.remux,
+            transcode: r.transcode,
+        } satisfies Record<PlaybackPath, number>,
+        remuxAudioEncode: r.remux_audio_encode,
+    }));
 
-  return {
-    shows,
-    unmatched: listUnmatched(db),
-    totalEpisodes: countEpisodes(db)
-  }
+    return {
+        shows,
+        unmatched: listUnmatched(db),
+        totalEpisodes: countEpisodes(db),
+    };
 }
 
 /**
@@ -107,45 +110,50 @@ export function getLibraryOverview(db: Db): LibraryOverview {
  * honest outcome: the file is still unusable and should stay in the bucket.
  */
 export async function assignUnmatched(
-  db: Db,
-  input: AssignUnmatchedInput,
-  ffprobePath: string
+    db: Db,
+    input: AssignUnmatchedInput,
+    ffprobePath: string,
 ): Promise<void> {
-  const file = getUnmatched(db, input.fileId)
-  if (!file) throw new Error(`assignUnmatched: no unmatched file ${input.fileId}`)
+    const file = getUnmatched(db, input.fileId);
+    if (!file)
+        throw new Error(`assignUnmatched: no unmatched file ${input.fileId}`);
 
-  const show = db.prepare('SELECT id FROM shows WHERE id = ?').get(input.showId) as
-    | { id: number }
-    | undefined
-  if (!show) throw new Error(`assignUnmatched: no show ${input.showId}`)
+    const show = db
+        .prepare("SELECT id FROM shows WHERE id = ?")
+        .get(input.showId) as { id: number } | undefined;
+    if (!show) throw new Error(`assignUnmatched: no show ${input.showId}`);
 
-  const probe = await probeFile(file.path, ffprobePath)
-  // Re-stat rather than trusting the numbers recorded when the file was first
-  // seen: the rescan key must describe the file as it is *now*, or the next scan
-  // will pointlessly re-probe it.
-  const info = await stat(file.path)
+    const probe = await probeFile(file.path, ffprobePath);
+    // Re-stat rather than trusting the numbers recorded when the file was first
+    // seen: the rescan key must describe the file as it is *now*, or the next scan
+    // will pointlessly re-probe it.
+    const info = await stat(file.path);
 
-  const end = input.episodeEnd ?? null
+    const end = input.episodeEnd ?? null;
 
-  upsertEpisode(db, {
-    showId: input.showId,
-    season: input.season,
-    episode: input.episode,
-    episodeEnd: end !== null && end > input.episode ? end : null,
-    title: input.title ?? null,
-    path: file.path,
-    durationS: probe.durationS,
-    container: probe.container,
-    vcodec: probe.vcodec,
-    acodec: probe.acodec,
-    width: probe.width,
-    height: probe.height,
-    partGroupId: null,
-    partIndex: null,
-    playbackPath: decidePlaybackPath(probe.container, probe.vcodec, probe.acodec),
-    mtimeMs: Math.round(info.mtimeMs),
-    sizeBytes: info.size
-  })
+    upsertEpisode(db, {
+        showId: input.showId,
+        season: input.season,
+        episode: input.episode,
+        episodeEnd: end !== null && end > input.episode ? end : null,
+        title: input.title ?? null,
+        path: file.path,
+        durationS: probe.durationS,
+        container: probe.container,
+        vcodec: probe.vcodec,
+        acodec: probe.acodec,
+        width: probe.width,
+        height: probe.height,
+        partGroupId: null,
+        partIndex: null,
+        playbackPath: decidePlaybackPath(
+            probe.container,
+            probe.vcodec,
+            probe.acodec,
+        ),
+        mtimeMs: Math.round(info.mtimeMs),
+        sizeBytes: info.size,
+    });
 
-  removeUnmatched(db, input.fileId)
+    removeUnmatched(db, input.fileId);
 }

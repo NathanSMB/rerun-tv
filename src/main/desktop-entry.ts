@@ -23,16 +23,16 @@
  * the AppImage is mounted somewhere new.
  */
 
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** Electron's Wayland `app_id` for this app; the desktop file must carry this name. */
-export const APP_ID = 'rerun-tv'
+export const APP_ID = "rerun-tv";
 
 export function applicationsDir(env: NodeJS.ProcessEnv = process.env): string {
-  const dataHome = env['XDG_DATA_HOME'] || join(homedir(), '.local', 'share')
-  return join(dataHome, 'applications')
+    const dataHome = env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+    return join(dataHome, "applications");
 }
 
 /**
@@ -44,18 +44,18 @@ export function applicationsDir(env: NodeJS.ProcessEnv = process.env): string {
  * honest enough to launch from, but its real job is icon resolution.
  */
 export function renderDesktopEntry(exec: string, iconPath: string): string {
-  return [
-    '[Desktop Entry]',
-    'Type=Application',
-    'Name=Rerun TV',
-    'Comment=Turn a local media library into lean-back TV channels',
-    `Exec=${exec}`,
-    `Icon=${iconPath}`,
-    'Terminal=false',
-    'Categories=AudioVideo;Video;',
-    `StartupWMClass=${APP_ID}`,
-    ''
-  ].join('\n')
+    return [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=Rerun TV",
+        "Comment=Turn a local media library into lean-back TV channels",
+        `Exec=${exec}`,
+        `Icon=${iconPath}`,
+        "Terminal=false",
+        "Categories=AudioVideo;Video;",
+        `StartupWMClass=${APP_ID}`,
+        "",
+    ].join("\n");
 }
 
 /**
@@ -66,34 +66,36 @@ export function renderDesktopEntry(exec: string, iconPath: string): string {
  * @param exec       the command line that reproduces this launch
  */
 export function ensureDesktopEntry(
-  iconSource: string,
-  iconDest: string,
-  exec: string,
-  env: NodeJS.ProcessEnv = process.env
+    iconSource: string,
+    iconDest: string,
+    exec: string,
+    env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (process.platform !== 'linux') return false
+    if (process.platform !== "linux") return false;
 
-  try {
-    copyFileSync(iconSource, iconDest)
-
-    const dir = applicationsDir(env)
-    mkdirSync(dir, { recursive: true })
-    const path = join(dir, `${APP_ID}.desktop`)
-
-    const wanted = renderDesktopEntry(exec, iconDest)
-    let existing = ''
     try {
-      existing = readFileSync(path, 'utf8')
-    } catch {
-      // No entry yet — first boot on this machine.
-    }
-    if (existing === wanted) return false
+        copyFileSync(iconSource, iconDest);
 
-    writeFileSync(path, wanted, 'utf8')
-    console.info('[desktop] installed rerun-tv.desktop (taskbar icon on Wayland)')
-    return true
-  } catch (error) {
-    console.warn('[desktop] could not install the desktop entry:', error)
-    return false
-  }
+        const dir = applicationsDir(env);
+        mkdirSync(dir, { recursive: true });
+        const path = join(dir, `${APP_ID}.desktop`);
+
+        const wanted = renderDesktopEntry(exec, iconDest);
+        let existing = "";
+        try {
+            existing = readFileSync(path, "utf8");
+        } catch {
+            // No entry yet — first boot on this machine.
+        }
+        if (existing === wanted) return false;
+
+        writeFileSync(path, wanted, "utf8");
+        console.info(
+            "[desktop] installed rerun-tv.desktop (taskbar icon on Wayland)",
+        );
+        return true;
+    } catch (error) {
+        console.warn("[desktop] could not install the desktop entry:", error);
+        return false;
+    }
 }

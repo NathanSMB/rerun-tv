@@ -25,6 +25,10 @@ npm rebuild
 (Once approved, the grants are recorded in `package.json` under `allowScripts`
 and subsequent installs are non-interactive.)
 
+`npm install` also runs `prepare`, which is `husky` — that is what points
+`core.hooksPath` at `.husky/` and arms the pre-commit hook below. A fresh clone
+has no hook until someone has installed once.
+
 ## Scripts
 
 | Command | What it does |
@@ -35,6 +39,8 @@ and subsequent installs are non-interactive.)
 | `npm run build` | Typecheck, then build all three targets into `out/` |
 | `npm start` | Preview a production build |
 | `npm run typecheck` | `tsc --noEmit` over the Node target and the web target |
+| `npm run lint` | Biome — formatting, import order and lint rules, no writes |
+| `npm run lint:fix` | The same, applying every safe fix |
 | `npm test` | Vitest, once |
 | `npm run test:watch` | Vitest, watching |
 | `npm run soak` | Drive the built app over CDP and fail on playback stalls — see below |
@@ -68,6 +74,8 @@ src/
     src/screens/     Guide · Player · Library · Settings (+ Blackout)
     src/components/  AppBar · ChannelFold (the guide's editor) · ChannelNumber
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
+.husky/              the pre-commit hook — Biome over the staged files
+biome.json           formatter + linter config, the one source of style truth
 resources/           the application icon — electron-builder's buildResources and the running window's icon
 tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
   renderer/          the DOM suites: the Player's effect decisions, the guide's fold
@@ -90,6 +98,63 @@ docs/                this documentation, plus the original plan and mockup
 - **Schema changes are append-only.** Add an entry to `MIGRATIONS` in
   `db/schema.ts`; never edit an existing one. `PRAGMA user_version` tracks
   what's applied.
+- **Style is not a matter of opinion.** [Biome](https://biomejs.dev) formats and
+  lints everything, and the pre-commit hook enforces it — see below.
+
+## Formatting and linting
+
+One tool does both: **Biome**, configured in `biome.json`. It replaces what a
+Prettier + ESLint pair would do, in one binary with no plugin graph, and it is
+fast enough (~30ms over the whole repo) that the commit hook is unnoticeable.
+
+The configuration is Biome's own defaults with three deliberate departures:
+
+| | |
+| --- | --- |
+| `indentStyle: space`, `indentWidth: 4` | House style |
+| `quoteStyle: double` | House style |
+| `files.includes` excludes `docs/**` | Those are standalone plan and mockup documents, not source. They are hand-written HTML that happens to contain script tags, and formatting them would rewrite artefacts nobody imports. |
+| `overrides` turns off `noNonNullAssertion` under `tests/` | A `!` in a test asserts a fixture invariant. If the invariant breaks the test fails loudly, which is the point — rewriting 55 of them into guards would add noise and hide nothing. It stays on for `src/`. |
+
+Everything else — the `recommended` rule set, including the a11y and
+`useExhaustiveDependencies` groups — is on, and the tree is clean under it.
+
+**Suppressions carry their reason.** Where a rule genuinely fights a decision
+this app has already made, the code says so in a
+`// biome-ignore lint/<rule>: <why>` comment rather than the rule being switched
+off globally. There are only a handful, and each is load-bearing:
+
+- `VideoSurface.tsx` and `Player.tsx` narrow their effect dependency lists on
+  purpose. That effect owns an ffmpeg process; widening it to what
+  `useExhaustiveDependencies` wants restarts the encoder on every render, which
+  is exactly the stall documented in [stall-fix-plan.html](stall-fix-plan.html).
+- The guide's channel row is a `role="button"` div rather than a `<button>`,
+  because a real button synthesises a click from Enter and Space and the list's
+  key handler already spends those on "tune in" — the row would activate twice.
+  Its keys live on the list so `Escape` still reaches it from inside an open
+  fold, which is a sibling of the row rather than a child.
+- The `<video>` has no `<track kind="captions">` because there is nothing to
+  point one at: the stream server publishes one video and one audio track.
+
+### The pre-commit hook
+
+Installed by [husky](https://typicode.github.io/husky/), which `npm install`
+arms via the `prepare` script. `.husky/pre-commit` is one line:
+
+```sh
+npx biome check --staged --no-errors-on-unmatched
+```
+
+Staged files only, and **check-only** — a hook that rewrote files mid-commit
+would leave the staged snapshot and the working tree disagreeing about what you
+just committed. When it fails, run `npm run lint:fix`, read the diff, stage it.
+
+`npm test` is deliberately *not* in the hook: it rebuilds `better-sqlite3` for
+the Node ABI and would leave the app unable to boot until `npm run
+rebuild:electron` (see the native-module gotcha above). That is a fine thing to
+opt into; it is not a fine thing to do to someone making a commit.
+
+To bypass in a genuine emergency: `git commit --no-verify`.
 
 ## Where things live at runtime
 

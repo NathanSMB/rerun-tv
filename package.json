@@ -1,73 +1,76 @@
 {
-  "name": "rerun-tv",
-  "version": "0.1.0",
-  "description": "Turn a local media library into lean-back TV channels",
-  "author": "Nathan Burchill",
-  "license": "MIT",
-  "main": "./out/main/index.js",
-  "type": "module",
-  "scripts": {
-    "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
-    "start": "electron-vite preview",
-    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
-    "test": "npm run rebuild:node --silent && vitest run",
-    "test:watch": "vitest",
-    "soak": "node scripts/soak.mjs",
-    "rebuild:node": "npm rebuild better-sqlite3",
-    "rebuild:electron": "electron-rebuild -f -m . -o better-sqlite3",
-    "dist": "npm run build && electron-builder --linux AppImage",
-    "postinstall": "electron-builder install-app-deps"
-  },
-  "dependencies": {
-    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
-    "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@fontsource/instrument-sans": "^5.3.0",
-    "better-sqlite3": "^12.4.1",
-    "chokidar": "^4.0.3"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^24.7.0",
-    "@types/react": "^19.1.13",
-    "@types/react-dom": "^19.1.9",
-    "@vitejs/plugin-react": "^5.0.2",
-    "electron": "^43.2.0",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^4.0.0",
-    "happy-dom": "^20.11.1",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.5",
-    "vitest": "^3.2.4",
-    "zustand": "^5.0.8"
-  },
-  "build": {
-    "appId": "tv.rerun.app",
-    "productName": "Rerun TV",
-    "directories": {
-      "output": "release",
-      "buildResources": "resources"
+    "name": "rerun-tv",
+    "version": "0.1.0",
+    "description": "Turn a local media library into lean-back TV channels",
+    "author": "Nathan Burchill",
+    "license": "MIT",
+    "main": "./out/main/index.js",
+    "type": "module",
+    "scripts": {
+        "dev": "electron-vite dev",
+        "build": "npm run typecheck && electron-vite build",
+        "start": "electron-vite preview",
+        "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+        "lint": "biome check",
+        "lint:fix": "biome check --write",
+        "test": "npm run rebuild:node --silent && vitest run",
+        "test:watch": "vitest",
+        "soak": "node scripts/soak.mjs",
+        "rebuild:node": "npm rebuild better-sqlite3",
+        "rebuild:electron": "electron-rebuild -f -m . -o better-sqlite3",
+        "dist": "npm run build && electron-builder --linux AppImage",
+        "postinstall": "electron-builder install-app-deps",
+        "prepare": "husky"
     },
-    "files": [
-      "out/**/*",
-      "resources/**/*",
-      "package.json"
-    ],
-    "linux": {
-      "icon": "icon.png",
-      "target": [
-        "AppImage"
-      ],
-      "category": "AudioVideo",
-      "maintainer": "Nathan Burchill"
+    "dependencies": {
+        "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+        "@fontsource/ibm-plex-mono": "^5.3.0",
+        "@fontsource/instrument-sans": "^5.3.0",
+        "better-sqlite3": "^12.4.1",
+        "chokidar": "^4.0.3"
+    },
+    "devDependencies": {
+        "@types/better-sqlite3": "^7.6.13",
+        "@types/node": "^24.7.0",
+        "@types/react": "^19.1.13",
+        "@types/react-dom": "^19.1.9",
+        "@vitejs/plugin-react": "^5.0.2",
+        "electron": "^43.2.0",
+        "electron-builder": "^25.1.8",
+        "electron-vite": "^4.0.0",
+        "happy-dom": "^20.11.1",
+        "react": "^19.1.1",
+        "react-dom": "^19.1.1",
+        "typescript": "^5.9.2",
+        "vite": "^7.1.5",
+        "vitest": "^3.2.4",
+        "zustand": "^5.0.8"
+    },
+    "build": {
+        "appId": "tv.rerun.app",
+        "productName": "Rerun TV",
+        "directories": {
+            "output": "release",
+            "buildResources": "resources"
+        },
+        "files": [
+            "out/**/*",
+            "resources/**/*",
+            "package.json"
+        ],
+        "linux": {
+            "icon": "icon.png",
+            "target": [
+                "AppImage"
+            ],
+            "category": "AudioVideo",
+            "maintainer": "Nathan Burchill"
+        }
+    },
+    "allowScripts": {
+        "better-sqlite3@12.11.1": true,
+        "electron@43.2.0": true,
+        "esbuild@0.25.12": true,
+        "esbuild@0.28.1": true
     }
-  },
-  "allowScripts": {
-    "better-sqlite3@12.11.1": true,
-    "electron@43.2.0": true,
-    "esbuild@0.25.12": true,
-    "esbuild@0.28.1": true
-  }
 }

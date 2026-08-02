@@ -9,23 +9,23 @@
  * Tests open an in-memory database with `openDatabase(':memory:')`.
  */
 
-import Database from 'better-sqlite3'
-import { MIGRATIONS } from './schema.js'
+import Database from "better-sqlite3";
+import { MIGRATIONS } from "./schema.js";
 
-export type Db = Database.Database
+export type Db = Database.Database;
 
-let instance: Db | null = null
+let instance: Db | null = null;
 
 /** Apply any migrations the file hasn't seen yet. Idempotent. */
 export function migrate(db: Db): void {
-  const current = db.pragma('user_version', { simple: true }) as number
-  for (let version = current; version < MIGRATIONS.length; version++) {
-    const sql = MIGRATIONS[version]
-    db.transaction(() => {
-      db.exec(sql)
-      db.pragma(`user_version = ${version + 1}`)
-    })()
-  }
+    const current = db.pragma("user_version", { simple: true }) as number;
+    for (let version = current; version < MIGRATIONS.length; version++) {
+        const sql = MIGRATIONS[version];
+        db.transaction(() => {
+            db.exec(sql);
+            db.pragma(`user_version = ${version + 1}`);
+        })();
+    }
 }
 
 /**
@@ -33,24 +33,25 @@ export function migrate(db: Db): void {
  * is resolved by the caller so this module stays free of Electron imports.
  */
 export function openDatabase(file: string): Db {
-  const db = new Database(file)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-  migrate(db)
-  return db
+    const db = new Database(file);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    migrate(db);
+    return db;
 }
 
 /** The process-wide handle, set once during main-process bootstrap. */
 export function setDb(db: Db): void {
-  instance = db
+    instance = db;
 }
 
 export function getDb(): Db {
-  if (!instance) throw new Error('Database not initialised — call setDb() first')
-  return instance
+    if (!instance)
+        throw new Error("Database not initialised — call setDb() first");
+    return instance;
 }
 
 export function closeDb(): void {
-  instance?.close()
-  instance = null
+    instance?.close();
+    instance = null;
 }

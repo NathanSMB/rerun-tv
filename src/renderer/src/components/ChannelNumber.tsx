@@ -10,19 +10,22 @@
  * that is where the mockup groups them.
  */
 
-import type { JSX } from 'react'
+import type { JSX } from "react";
 
 export interface ChannelNumberProps {
-  /** The dial number. Padded to two digits; wider numbers are left alone. */
-  number: number
-  className?: string
+    /** The dial number. Padded to two digits; wider numbers are left alone. */
+    number: number;
+    className?: string;
 }
 
-export default function ChannelNumber({ number, className }: ChannelNumberProps): JSX.Element {
-  return (
-    <div className={className ? `ch-num ${className}` : 'ch-num'}>
-      <small>CH</small>
-      {String(number).padStart(2, '0')}
-    </div>
-  )
+export default function ChannelNumber({
+    number,
+    className,
+}: ChannelNumberProps): JSX.Element {
+    return (
+        <div className={className ? `ch-num ${className}` : "ch-num"}>
+            <small>CH</small>
+            {String(number).padStart(2, "0")}
+        </div>
+    );
 }

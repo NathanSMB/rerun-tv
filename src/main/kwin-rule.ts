@@ -56,20 +56,20 @@
  * show over a game wants anyway.
  */
 
-import { execFile } from 'node:child_process'
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { execFile } from "node:child_process";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Our group name in `kwinrulesrc`. A fixed UUID because that is the shape KDE's
  * own rules editor writes and expects; it never changes, which is what makes
  * every write idempotent.
  */
-export const PIP_RULE_ID = 'b7c1f0d2-5a3e-4a91-9f2b-rerun-tv-pip00'
+export const PIP_RULE_ID = "b7c1f0d2-5a3e-4a91-9f2b-rerun-tv-pip00";
 
 /** What Chromium titles the floating window. The only thing it can be matched on. */
-export const PIP_WINDOW_TITLE = 'Picture in picture'
+export const PIP_WINDOW_TITLE = "Picture in picture";
 
 /**
  * The rule itself.
@@ -80,26 +80,26 @@ export const PIP_WINDOW_TITLE = 'Picture in picture'
  * the file's way of spelling "window class: unimportant".
  */
 function ruleBody(): string[] {
-  return [
-    'Description=Rerun TV — picture-in-picture above full-screen windows',
-    'layer=overlay',
-    'layerrule=2',
-    `title=${PIP_WINDOW_TITLE}`,
-    'titlematch=1',
-    'types=1'
-  ]
+    return [
+        "Description=Rerun TV — picture-in-picture above full-screen windows",
+        "layer=overlay",
+        "layerrule=2",
+        `title=${PIP_WINDOW_TITLE}`,
+        "titlematch=1",
+        "types=1",
+    ];
 }
 
 export function kwinRulesPath(env: NodeJS.ProcessEnv = process.env): string {
-  const config = env['XDG_CONFIG_HOME'] || join(homedir(), '.config')
-  return join(config, 'kwinrulesrc')
+    const config = env.XDG_CONFIG_HOME || join(homedir(), ".config");
+    return join(config, "kwinrulesrc");
 }
 
 /** KWin is the only compositor with this concept, so this is the whole gate. */
 export function isKwinSession(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (process.platform !== 'linux') return false
-  const desktop = `${env['XDG_CURRENT_DESKTOP'] ?? ''} ${env['XDG_SESSION_DESKTOP'] ?? ''}`
-  return /kde|plasma/i.test(desktop)
+    if (process.platform !== "linux") return false;
+    const desktop = `${env.XDG_CURRENT_DESKTOP ?? ""} ${env.XDG_SESSION_DESKTOP ?? ""}`;
+    return /kde|plasma/i.test(desktop);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,8 +107,8 @@ export function isKwinSession(env: NodeJS.ProcessEnv = process.env): boolean {
 // ---------------------------------------------------------------------------
 
 interface IniGroup {
-  name: string
-  lines: string[]
+    name: string;
+    lines: string[];
 }
 
 /**
@@ -117,28 +117,28 @@ interface IniGroup {
  * reorder and re-case keys we never meant to touch.
  */
 function parseGroups(text: string): IniGroup[] {
-  const groups: IniGroup[] = []
-  let current: IniGroup | null = null
-  for (const line of text.split('\n')) {
-    const header = /^\[(.+)\]\s*$/.exec(line.trim())
-    if (header) {
-      current = { name: header[1], lines: [] }
-      groups.push(current)
-    } else if (current) {
-      current.lines.push(line)
+    const groups: IniGroup[] = [];
+    let current: IniGroup | null = null;
+    for (const line of text.split("\n")) {
+        const header = /^\[(.+)\]\s*$/.exec(line.trim());
+        if (header) {
+            current = { name: header[1], lines: [] };
+            groups.push(current);
+        } else if (current) {
+            current.lines.push(line);
+        }
+        // Anything before the first header is a stray comment; dropping it is the
+        // only lossy case, and KConfig never writes one.
     }
-    // Anything before the first header is a stray comment; dropping it is the
-    // only lossy case, and KConfig never writes one.
-  }
-  return groups
+    return groups;
 }
 
 function render(groups: IniGroup[]): string {
-  const chunks = groups.map((group) => {
-    const body = group.lines.join('\n').replace(/\s+$/, '')
-    return body === '' ? `[${group.name}]\n` : `[${group.name}]\n${body}\n`
-  })
-  return `${chunks.join('\n')}`
+    const chunks = groups.map((group) => {
+        const body = group.lines.join("\n").replace(/\s+$/, "");
+        return body === "" ? `[${group.name}]\n` : `[${group.name}]\n${body}\n`;
+    });
+    return `${chunks.join("\n")}`;
 }
 
 /**
@@ -148,31 +148,35 @@ function render(groups: IniGroup[]): string {
  * testable without a KDE session or a filesystem.
  */
 export function applyPipRule(existing: string, enabled: boolean): string {
-  const groups = parseGroups(existing).filter((group) => group.name !== PIP_RULE_ID)
+    const groups = parseGroups(existing).filter(
+        (group) => group.name !== PIP_RULE_ID,
+    );
 
-  if (enabled) {
-    // Appended after the other rules and before `[General]` is not required by
-    // KConfig, but it keeps the file looking like one KDE wrote.
-    const generalAt = groups.findIndex((group) => group.name === 'General')
-    const rule: IniGroup = { name: PIP_RULE_ID, lines: ruleBody() }
-    if (generalAt === -1) groups.push(rule)
-    else groups.splice(generalAt, 0, rule)
-  }
+    if (enabled) {
+        // Appended after the other rules and before `[General]` is not required by
+        // KConfig, but it keeps the file looking like one KDE wrote.
+        const generalAt = groups.findIndex((group) => group.name === "General");
+        const rule: IniGroup = { name: PIP_RULE_ID, lines: ruleBody() };
+        if (generalAt === -1) groups.push(rule);
+        else groups.splice(generalAt, 0, rule);
+    }
 
-  // `[General]` indexes the rules; a rule KWin cannot find in that list is a
-  // rule it will not apply, however correct the group itself is.
-  const ids = groups.filter((group) => group.name !== 'General').map((group) => group.name)
-  let general = groups.find((group) => group.name === 'General')
-  if (!general) {
-    general = { name: 'General', lines: [] }
-    groups.push(general)
-  }
-  general.lines = [`count=${ids.length}`, `rules=${ids.join(',')}`]
+    // `[General]` indexes the rules; a rule KWin cannot find in that list is a
+    // rule it will not apply, however correct the group itself is.
+    const ids = groups
+        .filter((group) => group.name !== "General")
+        .map((group) => group.name);
+    let general = groups.find((group) => group.name === "General");
+    if (!general) {
+        general = { name: "General", lines: [] };
+        groups.push(general);
+    }
+    general.lines = [`count=${ids.length}`, `rules=${ids.join(",")}`];
 
-  // A file whose only rule was ours, now removed, should be an empty file rather
-  // than an orphaned `[General]` claiming zero rules.
-  if (ids.length === 0) return ''
-  return render(groups)
+    // A file whose only rule was ours, now removed, should be an empty file rather
+    // than an orphaned `[General]` claiming zero rules.
+    if (ids.length === 0) return "";
+    return render(groups);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,19 +189,23 @@ export function applyPipRule(existing: string, enabled: boolean): string {
  * that does not answer is a delay, not a failure.
  */
 function reconfigureKwin(): void {
-  execFile(
-    'dbus-send',
-    [
-      '--session',
-      '--type=method_call',
-      '--dest=org.kde.KWin',
-      '/KWin',
-      'org.kde.KWin.reconfigure'
-    ],
-    (error) => {
-      if (error) console.warn('[kwin] could not ask KWin to reload its rules:', error.message)
-    }
-  )
+    execFile(
+        "dbus-send",
+        [
+            "--session",
+            "--type=method_call",
+            "--dest=org.kde.KWin",
+            "/KWin",
+            "org.kde.KWin.reconfigure",
+        ],
+        (error) => {
+            if (error)
+                console.warn(
+                    "[kwin] could not ask KWin to reload its rules:",
+                    error.message,
+                );
+        },
+    );
 }
 
 /**
@@ -211,46 +219,52 @@ function reconfigureKwin(): void {
  * the tests and for whoever eventually wants an uninstall path.
  */
 export function syncKwinPipRule(
-  enabled: boolean,
-  path = kwinRulesPath(),
-  env: NodeJS.ProcessEnv = process.env
+    enabled: boolean,
+    path = kwinRulesPath(),
+    env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (!isKwinSession(env)) return false
+    if (!isKwinSession(env)) return false;
 
-  let existing = ''
-  try {
-    existing = readFileSync(path, 'utf8')
-  } catch {
-    // No file yet: KDE writes one the first time a rule is made, and so do we.
-  }
+    let existing = "";
+    try {
+        existing = readFileSync(path, "utf8");
+    } catch {
+        // No file yet: KDE writes one the first time a rule is made, and so do we.
+    }
 
-  let updated: string
-  try {
-    updated = applyPipRule(existing, enabled)
-  } catch (error) {
-    console.warn('[kwin] could not merge the picture-in-picture rule:', error)
-    return false
-  }
-  if (updated === existing) return false
+    let updated: string;
+    try {
+        updated = applyPipRule(existing, enabled);
+    } catch (error) {
+        console.warn(
+            "[kwin] could not merge the picture-in-picture rule:",
+            error,
+        );
+        return false;
+    }
+    if (updated === existing) return false;
 
-  try {
-    // Through a temporary file: a half-written `kwinrulesrc` would take the
-    // viewer's own rules with it.
-    const temp = `${path}.rerun-tmp`
-    writeFileSync(temp, updated, 'utf8')
-    renameSync(temp, path)
-  } catch (error) {
-    console.warn('[kwin] could not write the picture-in-picture rule:', error)
-    return false
-  }
+    try {
+        // Through a temporary file: a half-written `kwinrulesrc` would take the
+        // viewer's own rules with it.
+        const temp = `${path}.rerun-tmp`;
+        writeFileSync(temp, updated, "utf8");
+        renameSync(temp, path);
+    } catch (error) {
+        console.warn(
+            "[kwin] could not write the picture-in-picture rule:",
+            error,
+        );
+        return false;
+    }
 
-  console.info(
-    enabled
-      ? '[kwin] installed the picture-in-picture window rule (overlay layer)'
-      : '[kwin] removed the picture-in-picture window rule'
-  )
-  reconfigureKwin()
-  return true
+    console.info(
+        enabled
+            ? "[kwin] installed the picture-in-picture window rule (overlay layer)"
+            : "[kwin] removed the picture-in-picture window rule",
+    );
+    reconfigureKwin();
+    return true;
 }
 
 /**
@@ -262,8 +276,8 @@ export function syncKwinPipRule(
  * mean nothing.
  */
 export function ensureKwinPipRule(
-  path = kwinRulesPath(),
-  env: NodeJS.ProcessEnv = process.env
+    path = kwinRulesPath(),
+    env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return syncKwinPipRule(true, path, env)
+    return syncKwinPipRule(true, path, env);
 }

@@ -10,115 +10,123 @@
  */
 
 .guide-body {
-  min-height: calc(100vh - var(--appbar-h));
+    min-height: calc(100vh - var(--appbar-h));
 }
 
 .guide-list {
-  padding: 18px 0 22px;
+    padding: 18px 0 22px;
 }
 
 .guide-listhead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 4px 22px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 4px 22px 10px;
 }
 
 .guide-newch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 22px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 22px 12px;
 }
 
 .guide-newch .textinput {
-  flex: 1;
+    flex: 1;
 }
 
 .guide-error {
-  margin: 0 22px 12px;
-  font-size: 12.5px;
-  color: var(--danger);
+    margin: 0 22px 12px;
+    font-size: 12.5px;
+    color: var(--danger);
 }
 
 .guide-list .empty {
-  margin: 0 22px;
+    margin: 0 22px;
 }
 
 .guide-empty-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
 }
 
 /* ============ a channel: its row, plus the fold under it ============ */
 
+/* The lineup is a real <ul>/<li> so the list is announced as one; the rows are
+   full-bleed, so the browser's markers and indent have to go. */
+.guide-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
 .ch-row {
-  display: grid;
-  grid-template-columns: 96px 1fr auto;
-  align-items: center;
-  gap: 18px;
-  padding: 14px 22px;
-  cursor: default;
-  border-left: 3px solid transparent;
+    display: grid;
+    grid-template-columns: 96px 1fr auto;
+    align-items: center;
+    gap: 18px;
+    padding: 14px 22px;
+    cursor: default;
+    border-left: 3px solid transparent;
 }
 
 .ch-row:hover {
-  background: rgba(40, 51, 143, 0.16);
+    background: rgba(40, 51, 143, 0.16);
 }
 
 .ch-row.sel {
-  background: rgba(40, 51, 143, 0.3);
-  border-left-color: var(--amber);
+    background: rgba(40, 51, 143, 0.3);
+    border-left-color: var(--amber);
 }
 
 /* The open channel keeps its highlight even when the pointer wanders off, so
    the fold below is never orphaned from the row it belongs to. */
 .ch-row.editing {
-  background: rgba(40, 51, 143, 0.3);
-  border-left-color: var(--amber);
+    background: rgba(40, 51, 143, 0.3);
+    border-left-color: var(--amber);
 }
 
 /* Inset so the ring reads inside the full-bleed row instead of being clipped. */
 .ch-row:focus-visible {
-  outline: 2px solid var(--amber);
-  outline-offset: -2px;
+    outline: 2px solid var(--amber);
+    outline-offset: -2px;
 }
 
 .ch-row.dragging {
-  opacity: 0.45;
+    opacity: 0.45;
 }
 
 .ch-row.sel .ch-num small,
 .ch-row.editing .ch-num small {
-  color: var(--amber);
+    color: var(--amber);
 }
 
 .ch-meta {
-  min-width: 0;
+    min-width: 0;
 }
 
 .ch-meta .ch-name {
-  font-weight: 600;
-  font-size: 16px;
+    font-weight: 600;
+    font-size: 16px;
 }
 
 .ch-meta .ch-deck {
-  font-size: 13px;
-  color: var(--steel);
-  margin-top: 2px;
+    font-size: 13px;
+    color: var(--steel);
+    margin-top: 2px;
 }
 
 .ch-meta .ch-deck code {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--amber);
-  background: var(--amber-dim);
-  border-radius: 4px;
-  padding: 1px 6px;
-  margin-right: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--amber);
+    background: var(--amber-dim);
+    border-radius: 4px;
+    padding: 1px 6px;
+    margin-right: 6px;
 }
 
 /*
@@ -129,118 +137,118 @@
  */
 .ch-shows,
 .ch-ctrls {
-  grid-column: 3;
-  grid-row: 1;
-  justify-self: end;
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
 }
 
 .ch-shows {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--steel-dim);
-  text-align: right;
-  line-height: 1.7;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--steel-dim);
+    text-align: right;
+    line-height: 1.7;
 }
 
 .ch-ctrls {
-  display: none;
-  gap: 8px;
-  align-items: center;
+    display: none;
+    gap: 8px;
+    align-items: center;
 }
 
 .ch-row:hover .ch-shows,
 .ch-row.editing .ch-shows,
 .ch-row:focus-within .ch-shows {
-  visibility: hidden;
+    visibility: hidden;
 }
 
 .ch-row:hover .ch-ctrls,
 .ch-row.editing .ch-ctrls,
 .ch-row:focus-within .ch-ctrls {
-  display: flex;
+    display: flex;
 }
 
 .iconbtn {
-  font-size: 14px;
-  line-height: 1;
-  color: var(--steel);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  width: 32px;
-  height: 32px;
-  cursor: pointer;
-  flex: none;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--steel);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    flex: none;
 }
 
 .iconbtn:hover:not(:disabled) {
-  color: var(--white);
-  border-color: var(--steel-dim);
+    color: var(--white);
+    border-color: var(--steel-dim);
 }
 
 .iconbtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .iconbtn.play {
-  color: #201302;
-  background: var(--amber);
-  border-color: transparent;
+    color: #201302;
+    background: var(--amber);
+    border-color: transparent;
 }
 
 .iconbtn.play:hover:not(:disabled) {
-  filter: brightness(1.06);
+    filter: brightness(1.06);
 }
 
 /* ---- the fold ---- */
 
 .fold {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 240ms ease;
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 240ms ease;
 }
 
 .fold.open {
-  grid-template-rows: 1fr;
+    grid-template-rows: 1fr;
 }
 
 .fold-inner {
-  overflow: hidden;
-  min-height: 0;
+    overflow: hidden;
+    min-height: 0;
 }
 
 .guide-hint {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 16px 22px 0;
-  margin: 0;
-  font-size: 11.5px;
-  color: var(--steel-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 16px 22px 0;
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--steel-dim);
 }
 
 /* ============ narrow windows ============ */
 
 @media (max-width: 860px) {
-  .ch-row {
-    grid-template-columns: 72px 1fr auto;
-    padding: 14px;
-  }
+    .ch-row {
+        grid-template-columns: 72px 1fr auto;
+        padding: 14px;
+    }
 
-  /* No hover on touch-ish widths: the controls simply stay out, and the show
+    /* No hover on touch-ish widths: the controls simply stay out, and the show
      titles give up the column to them. */
-  .ch-shows {
-    display: none;
-  }
+    .ch-shows {
+        display: none;
+    }
 
-  .ch-ctrls {
-    display: flex;
-  }
+    .ch-ctrls {
+        display: flex;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fold {
-    transition: none;
-  }
+    .fold {
+        transition: none;
+    }
 }

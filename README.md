@@ -17,6 +17,7 @@ npm approve-scripts better-sqlite3 electron esbuild   # first install only
 npm rebuild
 
 npm run dev        # develop
+npm run lint:fix   # format + lint with Biome (a pre-commit hook checks this)
 npm run dist       # build a Linux AppImage into release/
 ```
 

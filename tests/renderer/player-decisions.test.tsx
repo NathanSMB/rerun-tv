@@ -19,34 +19,39 @@
  * tests cannot fail on the original bugs is decoration.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
-import { openPlayer, type Scenario } from './harness.js'
-import { arcDeck, EPISODE_DURATION_S, reportedEnds, standaloneDeck } from './fixtures.js'
+import { afterEach, describe, expect, it } from "vitest";
+import {
+    arcDeck,
+    EPISODE_DURATION_S,
+    reportedEnds,
+    standaloneDeck,
+} from "./fixtures.js";
+import { openPlayer, type Scenario } from "./harness.js";
 
-let player: Scenario | null = null
+let player: Scenario | null = null;
 
 async function open(...args: Parameters<typeof openPlayer>): Promise<Scenario> {
-  player = await openPlayer(...args)
-  return player
+    player = await openPlayer(...args);
+    return player;
 }
 
 afterEach(async () => {
-  await player?.unmount()
-  player = null
-})
+    await player?.unmount();
+    player = null;
+});
 
-describe('the walking skeleton', () => {
-  it('puts the first episode of the deck on air', async () => {
-    const deck = standaloneDeck(3)
-    const sc = await open(deck)
+describe("the walking skeleton", () => {
+    it("puts the first episode of the deck on air", async () => {
+        const deck = standaloneDeck(3);
+        const sc = await open(deck);
 
-    expect(sc.state().screen).toBe('player')
-    expect(sc.state().nowPlaying?.episode.id).toBe(deck[0].episode.id)
-    // The element on air is genuinely playing: `loadedmetadata` reached the
-    // Player, which asked for `play()`, and it took.
-    expect(sc.activeVideo().paused).toBe(false)
-  })
-})
+        expect(sc.state().screen).toBe("player");
+        expect(sc.state().nowPlaying?.episode.id).toBe(deck[0].episode.id);
+        // The element on air is genuinely playing: `loadedmetadata` reached the
+        // Player, which asked for `play()`, and it took.
+        expect(sc.activeVideo().paused).toBe(false);
+    });
+});
 
 /**
  * Bug 1. With the timer expired, the `pause` Chromium fires immediately before
@@ -55,23 +60,25 @@ describe('the walking skeleton', () => {
  * and an episode watched to the end was logged `completed: false`: a stop, not a
  * watch, and exactly the flag a shuffle bag reads to avoid repeats.
  */
-describe('the close of an episode', () => {
-  it('advances rather than sleeping when the pause is Chromium ending the episode', async () => {
-    const deck = standaloneDeck(3)
-    const sc = await open(deck)
-    await sc.expireSleep()
+describe("the close of an episode", () => {
+    it("advances rather than sleeping when the pause is Chromium ending the episode", async () => {
+        const deck = standaloneDeck(3);
+        const sc = await open(deck);
+        await sc.expireSleep();
 
-    await sc.endEpisode()
+        await sc.endEpisode();
 
-    // The whole assertion: one action, and it is the one that logs a watch.
-    expect(sc.actions).toEqual(['advance(true)'])
-    expect(reportedEnds(sc.calls)).toEqual([{ episodeId: deck[0].episode.id, completed: true }])
-    // The timer still lands where it should — at the boundary, not before it.
-    expect(sc.state().screen).toBe('blackout')
-    expect(sc.state().nowPlaying).toBeNull()
-    expect(sc.state().sleepUntil).toBeNull()
-  })
-})
+        // The whole assertion: one action, and it is the one that logs a watch.
+        expect(sc.actions).toEqual(["advance(true)"]);
+        expect(reportedEnds(sc.calls)).toEqual([
+            { episodeId: deck[0].episode.id, completed: true },
+        ]);
+        // The timer still lands where it should — at the boundary, not before it.
+        expect(sc.state().screen).toBe("blackout");
+        expect(sc.state().nowPlaying).toBeNull();
+        expect(sc.state().sleepUntil).toBeNull();
+    });
+});
 
 /**
  * Bug 2. A gapless handoff flips a hidden, buffered element to active; it is
@@ -84,74 +91,90 @@ describe('the close of an episode', () => {
  * the second, because in the promotion window the element on air has never
  * ended.
  */
-describe('a handoff mid-arc', () => {
-  it('plays on when the deadline is crossed inside the promotion window', async () => {
-    const deck = arcDeck(3)
-    const sc = await open(deck)
-    await sc.prewarm()
-    expect(sc.state().pendingNext?.episode.id).toBe(deck[1].episode.id)
+describe("a handoff mid-arc", () => {
+    it("plays on when the deadline is crossed inside the promotion window", async () => {
+        const deck = arcDeck(3);
+        const sc = await open(deck);
+        await sc.prewarm();
+        expect(sc.state().pendingNext?.episode.id).toBe(deck[1].episode.id);
 
-    await sc.pauseForEnd()
-    await sc.ended()
+        await sc.pauseForEnd();
+        await sc.ended();
 
-    // Mid-flip: part 2 is on air and has not started yet. This is the window.
-    const promoted = sc.activeVideo()
-    expect(sc.state().nowPlaying?.episode.id).toBe(deck[1].episode.id)
-    expect(promoted.paused).toBe(true)
-    expect(promoted.ended).toBe(false)
+        // Mid-flip: part 2 is on air and has not started yet. This is the window.
+        const promoted = sc.activeVideo();
+        expect(sc.state().nowPlaying?.episode.id).toBe(deck[1].episode.id);
+        expect(promoted.paused).toBe(true);
+        expect(promoted.ended).toBe(false);
 
-    await sc.expireSleep()
-    await sc.settle()
+        await sc.expireSleep();
+        await sc.settle();
 
-    expect(sc.actions).toEqual(['advance(true)'])
-    expect(sc.state().screen).toBe('player')
-    expect(sc.state().nowPlaying?.arc).toMatchObject({ partIndex: 2, partCount: 3 })
-    // Part 2 was committed and is playing — not picked and abandoned.
-    expect(reportedEnds(sc.calls)).toEqual([{ episodeId: deck[0].episode.id, completed: true }])
-    expect(sc.activeVideo().paused).toBe(false)
-  })
+        expect(sc.actions).toEqual(["advance(true)"]);
+        expect(sc.state().screen).toBe("player");
+        expect(sc.state().nowPlaying?.arc).toMatchObject({
+            partIndex: 2,
+            partCount: 3,
+        });
+        // Part 2 was committed and is playing — not picked and abandoned.
+        expect(reportedEnds(sc.calls)).toEqual([
+            { episodeId: deck[0].episode.id, completed: true },
+        ]);
+        expect(sc.activeVideo().paused).toBe(false);
+    });
 
-  it('carries an already-expired timer through the boundary into the next part', async () => {
-    const deck = arcDeck(3)
-    const sc = await open(deck)
-    await sc.expireSleep()
-    await sc.prewarm()
+    it("carries an already-expired timer through the boundary into the next part", async () => {
+        const deck = arcDeck(3);
+        const sc = await open(deck);
+        await sc.expireSleep();
+        await sc.prewarm();
 
-    await sc.endEpisode()
+        await sc.endEpisode();
 
-    expect(sc.actions).toEqual(['advance(true)'])
-    expect(sc.state().screen).toBe('player')
-    expect(sc.state().nowPlaying?.arc).toMatchObject({ partIndex: 2, partCount: 3 })
-    expect(reportedEnds(sc.calls)).toEqual([{ episodeId: deck[0].episode.id, completed: true }])
-  })
-})
+        expect(sc.actions).toEqual(["advance(true)"]);
+        expect(sc.state().screen).toBe("player");
+        expect(sc.state().nowPlaying?.arc).toMatchObject({
+            partIndex: 2,
+            partCount: 3,
+        });
+        expect(reportedEnds(sc.calls)).toEqual([
+            { episodeId: deck[0].episode.id, completed: true },
+        ]);
+    });
+});
 
 /**
  * The other side of the guard: it must not be so strong that the paused branch
  * never fires. A viewer who paused and did not come back is the exact case the
  * timer is for, and it is the one path that stops mid-episode.
  */
-describe('a genuine viewer pause', () => {
-  it('stops at once when the timer expires while the viewer has it paused', async () => {
-    const deck = standaloneDeck(3)
-    const sc = await open(deck)
+describe("a genuine viewer pause", () => {
+    it("stops at once when the timer expires while the viewer has it paused", async () => {
+        const deck = standaloneDeck(3);
+        const sc = await open(deck);
 
-    // The OSD button, not the element: `togglePlay` is the only place a human
-    // asks, and it is the only place `wantsPlayRef` is cleared.
-    await sc.viewerPause()
-    expect(sc.activeVideo().paused).toBe(true)
+        // The OSD button, not the element: `togglePlay` is the only place a human
+        // asks, and it is the only place `wantsPlayRef` is cleared.
+        await sc.viewerPause();
+        expect(sc.activeVideo().paused).toBe(true);
 
-    await sc.expireSleep()
-    await sc.settle()
+        await sc.expireSleep();
+        await sc.settle();
 
-    expect(sc.actions).toEqual(['sleepNow'])
-    // Nothing finished, so this one is not a watch — the honest half of stopping.
-    expect(reportedEnds(sc.calls)).toEqual([{ episodeId: deck[0].episode.id, completed: false }])
-    expect(sc.calls).toContainEqual({ call: 'release', channelId: 7, episodeId: null })
-    expect(sc.state().screen).toBe('blackout')
-    expect(sc.state().sleepUntil).toBeNull()
-  })
-})
+        expect(sc.actions).toEqual(["sleepNow"]);
+        // Nothing finished, so this one is not a watch — the honest half of stopping.
+        expect(reportedEnds(sc.calls)).toEqual([
+            { episodeId: deck[0].episode.id, completed: false },
+        ]);
+        expect(sc.calls).toContainEqual({
+            call: "release",
+            channelId: 7,
+            episodeId: null,
+        });
+        expect(sc.state().screen).toBe("blackout");
+        expect(sc.state().sleepUntil).toBeNull();
+    });
+});
 
 /**
  * The prewarm gate. Once the timer is due to stop after this episode there is
@@ -163,22 +186,26 @@ describe('a genuine viewer pause', () => {
  * re-runs the effect and the prewarm fires late but still in time to be gapless.
  * Setting the ref eagerly would cost the handoff on every change of mind.
  */
-describe('the up-next window with the timer expired', () => {
-  it('suppresses the prewarm, then makes it up when the timer is cancelled', async () => {
-    const deck = standaloneDeck(3)
-    const sc = await open(deck)
-    await sc.expireSleep()
+describe("the up-next window with the timer expired", () => {
+    it("suppresses the prewarm, then makes it up when the timer is cancelled", async () => {
+        const deck = standaloneDeck(3);
+        const sc = await open(deck);
+        await sc.expireSleep();
 
-    await sc.at(EPISODE_DURATION_S - 25)
+        await sc.at(EPISODE_DURATION_S - 25);
 
-    expect(sc.actions).toEqual([])
-    expect(sc.calls.some((entry) => entry.call === 'prewarmNext')).toBe(false)
-    expect(sc.state().pendingNext).toBeNull()
+        expect(sc.actions).toEqual([]);
+        expect(sc.calls.some((entry) => entry.call === "prewarmNext")).toBe(
+            false,
+        );
+        expect(sc.state().pendingNext).toBeNull();
 
-    await sc.armSleep(null)
+        await sc.armSleep(null);
 
-    expect(sc.actions).toEqual(['prewarm'])
-    expect(sc.calls.filter((entry) => entry.call === 'prewarmNext')).toHaveLength(1)
-    expect(sc.state().pendingNext?.episode.id).toBe(deck[1].episode.id)
-  })
-})
+        expect(sc.actions).toEqual(["prewarm"]);
+        expect(
+            sc.calls.filter((entry) => entry.call === "prewarmNext"),
+        ).toHaveLength(1);
+        expect(sc.state().pendingNext?.episode.id).toBe(deck[1].episode.id);
+    });
+});

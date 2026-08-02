@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+# Formatting, import order and lint rules, over the staged files only.
+#
+# Check-only on purpose: a hook that rewrites files mid-commit would leave the
+# staged snapshot and the working tree disagreeing about what you just committed.
+# When this fails, run `npm run lint:fix`, look at the diff, and stage it.
+#
+# `npm test` is deliberately *not* here — it rebuilds better-sqlite3 for the Node
+# ABI, which leaves the app unable to boot until `npm run rebuild:electron`. That
+# is a fine thing to opt into; it is not a fine thing to do to someone committing.
+
+npx biome check --staged --no-errors-on-unmatched

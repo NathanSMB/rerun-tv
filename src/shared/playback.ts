@@ -11,10 +11,10 @@
  * tags.
  */
 
-import type { PlaybackPath } from './types.js'
+import type { PlaybackPath } from "./types.js";
 
 /** Containers Chromium can demux directly. */
-const DIRECT_CONTAINERS = new Set(['mp4', 'm4v', 'mov', 'webm'])
+const DIRECT_CONTAINERS = new Set(["mp4", "m4v", "mov", "webm"]);
 
 /**
  * Video codecs Chromium decodes in official Electron builds.
@@ -23,16 +23,28 @@ const DIRECT_CONTAINERS = new Set(['mp4', 'm4v', 'mov', 'webm'])
  * `UPDATE`, and `services/library.ts` into the Library aggregate — one list, so
  * the SQL and the decision can never disagree about what "playable" means.
  */
-export const SUPPORTED_VIDEO_CODECS = ['h264', 'avc1', 'vp8', 'vp9', 'av1'] as const
+export const SUPPORTED_VIDEO_CODECS = [
+    "h264",
+    "avc1",
+    "vp8",
+    "vp9",
+    "av1",
+] as const;
 
 /** Audio codecs Chromium decodes in official Electron builds. */
-export const SUPPORTED_AUDIO_CODECS = ['aac', 'mp3', 'opus', 'vorbis', 'flac'] as const
+export const SUPPORTED_AUDIO_CODECS = [
+    "aac",
+    "mp3",
+    "opus",
+    "vorbis",
+    "flac",
+] as const;
 
-const SUPPORTED_VIDEO: ReadonlySet<string> = new Set(SUPPORTED_VIDEO_CODECS)
-const SUPPORTED_AUDIO: ReadonlySet<string> = new Set(SUPPORTED_AUDIO_CODECS)
+const SUPPORTED_VIDEO: ReadonlySet<string> = new Set(SUPPORTED_VIDEO_CODECS);
+const SUPPORTED_AUDIO: ReadonlySet<string> = new Set(SUPPORTED_AUDIO_CODECS);
 
 /** ffprobe reports a stream-less track as `none` (see `library/ffprobe.ts`). */
-const NO_STREAM = 'none'
+const NO_STREAM = "none";
 
 /**
  * ffprobe names the *demuxer*, not the container, and reports it as a
@@ -50,36 +62,38 @@ const NO_STREAM = 'none'
  * the file extension first, so a genuine `.webm` is still direct-played.
  */
 const AMBIGUOUS_FORMATS: { member: string; resolvesTo: string }[] = [
-  // Matroska before WebM: WebM is a Matroska subset, so the demuxer can't tell
-  // them apart, and only one of the two is safe to assume.
-  { member: 'matroska', resolvesTo: 'matroska' },
-  // The whole mov/mp4/m4a family is direct-playable; `mp4` is the canonical
-  // name and the one that yields the right Content-Type.
-  { member: 'mp4', resolvesTo: 'mp4' }
-]
+    // Matroska before WebM: WebM is a Matroska subset, so the demuxer can't tell
+    // them apart, and only one of the two is safe to assume.
+    { member: "matroska", resolvesTo: "matroska" },
+    // The whole mov/mp4/m4a family is direct-playable; `mp4` is the canonical
+    // name and the one that yields the right Content-Type.
+    { member: "mp4", resolvesTo: "mp4" },
+];
 
 export function normalizeContainer(formatName: string): string {
-  const names = formatName
-    .toLowerCase()
-    .split(',')
-    .map((n) => n.trim())
-    .filter(Boolean)
+    const names = formatName
+        .toLowerCase()
+        .split(",")
+        .map((n) => n.trim())
+        .filter(Boolean);
 
-  if (names.length > 1) {
-    const ambiguous = AMBIGUOUS_FORMATS.find((f) => names.includes(f.member))
-    if (ambiguous) return ambiguous.resolvesTo
-  }
+    if (names.length > 1) {
+        const ambiguous = AMBIGUOUS_FORMATS.find((f) =>
+            names.includes(f.member),
+        );
+        if (ambiguous) return ambiguous.resolvesTo;
+    }
 
-  const direct = names.find((n) => DIRECT_CONTAINERS.has(n))
-  return direct ?? names[0] ?? 'unknown'
+    const direct = names.find((n) => DIRECT_CONTAINERS.has(n));
+    return direct ?? names[0] ?? "unknown";
 }
 
 export function isVideoSupported(vcodec: string): boolean {
-  return SUPPORTED_VIDEO.has(vcodec.toLowerCase())
+    return SUPPORTED_VIDEO.has(vcodec.toLowerCase());
 }
 
 export function isAudioSupported(acodec: string): boolean {
-  return SUPPORTED_AUDIO.has(acodec.toLowerCase())
+    return SUPPORTED_AUDIO.has(acodec.toLowerCase());
 }
 
 /**
@@ -90,9 +104,9 @@ export function isAudioSupported(acodec: string): boolean {
  * happens.
  */
 export function needsAudioTranscode(acodec: string): boolean {
-  const codec = acodec.toLowerCase()
-  if (codec === NO_STREAM) return false
-  return !SUPPORTED_AUDIO.has(codec)
+    const codec = acodec.toLowerCase();
+    if (codec === NO_STREAM) return false;
+    return !SUPPORTED_AUDIO.has(codec);
 }
 
 /**
@@ -115,15 +129,15 @@ export function needsAudioTranscode(acodec: string): boolean {
  * `docs/stall-fix-plan.html`).
  */
 export function decidePlaybackPath(
-  container: string,
-  vcodec: string,
-  acodec: string
+    container: string,
+    vcodec: string,
+    acodec: string,
 ): PlaybackPath {
-  if (!isVideoSupported(vcodec)) return 'transcode'
-  const containerOk = DIRECT_CONTAINERS.has(normalizeContainer(container))
-  // `needsAudioTranscode` rather than `isAudioSupported`, so a genuinely silent
-  // file direct-plays instead of being remuxed for an audio track it hasn't got.
-  return containerOk && !needsAudioTranscode(acodec) ? 'direct' : 'remux'
+    if (!isVideoSupported(vcodec)) return "transcode";
+    const containerOk = DIRECT_CONTAINERS.has(normalizeContainer(container));
+    // `needsAudioTranscode` rather than `isAudioSupported`, so a genuinely silent
+    // file direct-plays instead of being remuxed for an audio track it hasn't got.
+    return containerOk && !needsAudioTranscode(acodec) ? "direct" : "remux";
 }
 
 /**
@@ -133,8 +147,11 @@ export function decidePlaybackPath(
  * episode would otherwise be dragged onto the encode path to filter an audio
  * stream it hasn't got.
  */
-export function loudnessEqApplies(acodec: string, loudnessEq: boolean): boolean {
-  return loudnessEq && acodec.toLowerCase() !== NO_STREAM
+export function loudnessEqApplies(
+    acodec: string,
+    loudnessEq: boolean,
+): boolean {
+    return loudnessEq && acodec.toLowerCase() !== NO_STREAM;
 }
 
 /**
@@ -157,30 +174,34 @@ export function loudnessEqApplies(acodec: string, loudnessEq: boolean): boolean 
  * currently serving it.
  */
 export function effectivePlaybackPath(
-  stored: PlaybackPath,
-  acodec: string,
-  loudnessEq: boolean
+    stored: PlaybackPath,
+    acodec: string,
+    loudnessEq: boolean,
 ): PlaybackPath {
-  return stored === 'direct' && loudnessEqApplies(acodec, loudnessEq) ? 'remux' : stored
+    return stored === "direct" && loudnessEqApplies(acodec, loudnessEq)
+        ? "remux"
+        : stored;
 }
 
 /** `S04E11`, or `S01E03-E04` for a file holding a double episode. */
 export function episodeCode(
-  season: number,
-  episode: number,
-  episodeEnd?: number | null
+    season: number,
+    episode: number,
+    episodeEnd?: number | null,
 ): string {
-  const pad = (n: number): string => String(n).padStart(2, '0')
-  const base = `S${pad(season)}E${pad(episode)}`
-  return episodeEnd && episodeEnd !== episode ? `${base}-E${pad(episodeEnd)}` : base
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    const base = `S${pad(season)}E${pad(episode)}`;
+    return episodeEnd && episodeEnd !== episode
+        ? `${base}-E${pad(episodeEnd)}`
+        : base;
 }
 
 /** `44:00` / `1:04:22` — used by the OSD timecode and the guide. */
 export function formatDuration(totalSeconds: number): string {
-  const s = Math.max(0, Math.floor(totalSeconds))
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  const pad = (n: number): string => String(n).padStart(2, '0')
-  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`
+    const s = Math.max(0, Math.floor(totalSeconds));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }

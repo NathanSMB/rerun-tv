@@ -15,34 +15,38 @@
  * the transcode path.
  */
 
-import { app, BrowserWindow, net, protocol, shell } from 'electron'
-import { rmSync } from 'node:fs'
-import { dirname, join, normalize, sep } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import appIcon from '../../resources/icon.png?asset'
-import { EVENTS } from '../shared/ipc.js'
-import { ensureDesktopEntry } from './desktop-entry.js'
-import { ensureKwinPipRule } from './kwin-rule.js'
-import { PENDING_HW_ACCEL, type HwAccelReport, type SystemInfo } from '../shared/types.js'
-import { closeDb, openDatabase, setDb, type Db } from './db/index.js'
-import { getSettings } from './db/repositories/settings.js'
+import { rmSync } from "node:fs";
+import { dirname, join, normalize, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, BrowserWindow, net, protocol, shell } from "electron";
+import appIcon from "../../resources/icon.png?asset";
+import { EVENTS } from "../shared/ipc.js";
 import {
-  backupsDir,
-  configureAppPaths,
-  dataDir,
-  databasePath,
-  stagedImportMetaPath,
-  stagedImportPath
-} from './paths.js'
-import { applyStagedImport, recordRestoreReceipt } from './services/restore.js'
-import { Scanner } from './library/scanner.js'
-import { LoudnessScanner } from './library/loudness.js'
-import { startStreamServer, type StreamServer } from './stream/server.js'
-import { checkCodecs, resolveFfmpeg } from './stream/ffmpeg.js'
-import { probeHardwareAccel } from './stream/hwaccel.js'
-import { broadcast, registerHandlers } from './ipc/handlers.js'
+    type HwAccelReport,
+    PENDING_HW_ACCEL,
+    type SystemInfo,
+} from "../shared/types.js";
+import { closeDb, type Db, openDatabase, setDb } from "./db/index.js";
+import { getSettings } from "./db/repositories/settings.js";
+import { ensureDesktopEntry } from "./desktop-entry.js";
+import { broadcast, registerHandlers } from "./ipc/handlers.js";
+import { ensureKwinPipRule } from "./kwin-rule.js";
+import { LoudnessScanner } from "./library/loudness.js";
+import { Scanner } from "./library/scanner.js";
+import {
+    backupsDir,
+    configureAppPaths,
+    databasePath,
+    dataDir,
+    stagedImportMetaPath,
+    stagedImportPath,
+} from "./paths.js";
+import { applyStagedImport, recordRestoreReceipt } from "./services/restore.js";
+import { checkCodecs, resolveFfmpeg } from "./stream/ffmpeg.js";
+import { probeHardwareAccel } from "./stream/hwaccel.js";
+import { type StreamServer, startStreamServer } from "./stream/server.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * The renderer's origin, `app://bundle`.
@@ -69,22 +73,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * Nothing about the threat model changes: the scheme serves exactly one
  * directory, the bundle we shipped.
  */
-const APP_SCHEME = 'app'
-const APP_ORIGIN = `${APP_SCHEME}://bundle`
+const APP_SCHEME = "app";
+const APP_ORIGIN = `${APP_SCHEME}://bundle`;
 
 // Must run before `app.ready`, hence module scope rather than inside bootstrap.
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: APP_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true
-    }
-  }
-])
+    {
+        scheme: APP_SCHEME,
+        privileges: {
+            standard: true,
+            secure: true,
+            supportFetchAPI: true,
+            corsEnabled: true,
+            stream: true,
+        },
+    },
+]);
 
 /**
  * Serve the built renderer under `app://bundle/`.
@@ -96,74 +100,78 @@ protocol.registerSchemesAsPrivileged([
  * right amount for the one code path that turns a URL into a filesystem read.
  */
 function registerRendererProtocol(): void {
-  const root = normalize(join(__dirname, '..', 'renderer'))
+    const root = normalize(join(__dirname, "..", "renderer"));
 
-  protocol.handle(APP_SCHEME, async (request) => {
-    let pathname: string
-    try {
-      pathname = decodeURIComponent(new URL(request.url).pathname)
-    } catch {
-      return new Response('bad request', { status: 400 })
-    }
+    protocol.handle(APP_SCHEME, async (request) => {
+        let pathname: string;
+        try {
+            pathname = decodeURIComponent(new URL(request.url).pathname);
+        } catch {
+            return new Response("bad request", { status: 400 });
+        }
 
-    const relative = pathname.replace(/^\/+/, '')
-    const target = normalize(join(root, relative === '' ? 'index.html' : relative))
-    if (target !== root && !target.startsWith(root + sep)) {
-      return new Response('not found', { status: 404 })
-    }
-    return net.fetch(pathToFileURL(target).toString())
-  })
+        const relative = pathname.replace(/^\/+/, "");
+        const target = normalize(
+            join(root, relative === "" ? "index.html" : relative),
+        );
+        if (target !== root && !target.startsWith(root + sep)) {
+            return new Response("not found", { status: 404 });
+        }
+        return net.fetch(pathToFileURL(target).toString());
+    });
 }
 
-let mainWindow: BrowserWindow | null = null
-let streamServer: StreamServer | null = null
-let scanner: Scanner | null = null
-let loudnessScanner: LoudnessScanner | null = null
-let codecStatus: SystemInfo['codecCheck'] = 'pending'
+let mainWindow: BrowserWindow | null = null;
+let streamServer: StreamServer | null = null;
+let scanner: Scanner | null = null;
+let loudnessScanner: LoudnessScanner | null = null;
+let codecStatus: SystemInfo["codecCheck"] = "pending";
 /** What the GPU probe found. `pending` until it answers, which reads as software. */
-let hwAccelStatus: HwAccelReport = PENDING_HW_ACCEL
+let hwAccelStatus: HwAccelReport = PENDING_HW_ACCEL;
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    show: false,
-    autoHideMenuBar: true,
-    // Matches --tube so there's no white flash before the renderer paints.
-    backgroundColor: '#0b0e14',
-    title: 'Rerun TV',
-    // Linux has no bundle to read an icon from, so the window carries its own;
-    // packaged builds get the same `resources/icon.png` via electron-builder.
-    icon: appIcon,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  })
+    mainWindow = new BrowserWindow({
+        width: 1280,
+        height: 800,
+        minWidth: 900,
+        minHeight: 600,
+        show: false,
+        autoHideMenuBar: true,
+        // Matches --tube so there's no white flash before the renderer paints.
+        backgroundColor: "#0b0e14",
+        title: "Rerun TV",
+        // Linux has no bundle to read an icon from, so the window carries its own;
+        // packaged builds get the same `resources/icon.png` via electron-builder.
+        icon: appIcon,
+        webPreferences: {
+            preload: join(__dirname, "../preload/index.cjs"),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+        },
+    });
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+    mainWindow.once("ready-to-show", () => mainWindow?.show());
 
-  // The renderer is a local UI, never a browser: external links open in the
-  // user's actual browser and in-window navigation is refused outright.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
-    return { action: 'deny' }
-  })
-  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
+    // The renderer is a local UI, never a browser: external links open in the
+    // user's actual browser and in-window navigation is refused outright.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        void shell.openExternal(url);
+        return { action: "deny" };
+    });
+    mainWindow.webContents.on("will-navigate", (event) =>
+        event.preventDefault(),
+    );
 
-  // Dev already serves the renderer over http://localhost, which is a real origin
-  // too; production gets `app://bundle` for the same reason (see APP_SCHEME).
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) void mainWindow.loadURL(devUrl)
-  else void mainWindow.loadURL(`${APP_ORIGIN}/index.html`)
+    // Dev already serves the renderer over http://localhost, which is a real origin
+    // too; production gets `app://bundle` for the same reason (see APP_SCHEME).
+    const devUrl = process.env.ELECTRON_RENDERER_URL;
+    if (devUrl) void mainWindow.loadURL(devUrl);
+    else void mainWindow.loadURL(`${APP_ORIGIN}/index.html`);
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
+    mainWindow.on("closed", () => {
+        mainWindow = null;
+    });
 }
 
 /**
@@ -174,12 +182,12 @@ function createWindow(): void {
  * which is why the teardown is spelled out here instead.
  */
 async function restart(): Promise<void> {
-  scanner?.dispose()
-  loudnessScanner?.dispose()
-  await streamServer?.close() // awaited so ffmpeg children die with us
-  closeDb() // checkpoints and removes -wal/-shm
-  app.relaunch()
-  app.exit(0)
+    scanner?.dispose();
+    loudnessScanner?.dispose();
+    await streamServer?.close(); // awaited so ffmpeg children die with us
+    closeDb(); // checkpoints and removes -wal/-shm
+    app.relaunch();
+    app.exit(0);
 }
 
 /**
@@ -193,158 +201,168 @@ async function restart(): Promise<void> {
  * must not cost anyone their television.
  */
 function removeXwaylandLeftovers(db: Db): void {
-  try {
-    db.prepare("DELETE FROM settings WHERE key = 'pipKeepOnTop'").run()
-  } catch (error) {
-    console.warn('[boot] could not drop the stale pipKeepOnTop setting:', error)
-  }
-  try {
-    rmSync(join(dataDir(), 'boot.json'))
-  } catch {
-    // Absent on every run but the first after upgrading, which is the point.
-  }
+    try {
+        db.prepare("DELETE FROM settings WHERE key = 'pipKeepOnTop'").run();
+    } catch (error) {
+        console.warn(
+            "[boot] could not drop the stale pipKeepOnTop setting:",
+            error,
+        );
+    }
+    try {
+        rmSync(join(dataDir(), "boot.json"));
+    } catch {
+        // Absent on every run but the first after upgrading, which is the point.
+    }
 }
 
 async function bootstrap(): Promise<void> {
-  // Before anything opens the database: if an import is staged, this is the one
-  // moment nothing holds a handle on the file, so the swap is safe here.
-  const receipt = applyStagedImport({
-    dbPath: databasePath(),
-    stagedPath: stagedImportPath(),
-    metaPath: stagedImportMetaPath(),
-    backupsDir: backupsDir()
-  })
+    // Before anything opens the database: if an import is staged, this is the one
+    // moment nothing holds a handle on the file, so the swap is safe here.
+    const receipt = applyStagedImport({
+        dbPath: databasePath(),
+        stagedPath: stagedImportPath(),
+        metaPath: stagedImportMetaPath(),
+        backupsDir: backupsDir(),
+    });
 
-  const db = openDatabase(databasePath())
-  setDb(db)
-  if (receipt) recordRestoreReceipt(db, receipt)
+    const db = openDatabase(databasePath());
+    setDb(db);
+    if (receipt) recordRestoreReceipt(db, receipt);
 
-  removeXwaylandLeftovers(db)
+    removeXwaylandLeftovers(db);
 
-  const settings = getSettings(db)
-  // How the picture-in-picture window stays above a full-screen game: a KWin
-  // window rule, which is the only thing that can put a window in the overlay
-  // layer and works the same whether we are on Wayland or X11 (`kwin-rule.ts`).
-  // Idempotent, and a no-op off KDE.
-  ensureKwinPipRule()
-  // How the taskbar gets an icon on Wayland: a desktop entry matching our
-  // `app_id`, installed the same way (`desktop-entry.ts`). The `icon` option on
-  // the window below only covers X11.
-  ensureDesktopEntry(
-    appIcon,
-    join(dataDir(), 'icon.png'),
-    process.env['APPIMAGE'] ?? `"${process.execPath}" "${app.getAppPath()}"`
-  )
-  const ffmpeg = resolveFfmpeg()
+    const settings = getSettings(db);
+    // How the picture-in-picture window stays above a full-screen game: a KWin
+    // window rule, which is the only thing that can put a window in the overlay
+    // layer and works the same whether we are on Wayland or X11 (`kwin-rule.ts`).
+    // Idempotent, and a no-op off KDE.
+    ensureKwinPipRule();
+    // How the taskbar gets an icon on Wayland: a desktop entry matching our
+    // `app_id`, installed the same way (`desktop-entry.ts`). The `icon` option on
+    // the window below only covers X11.
+    ensureDesktopEntry(
+        appIcon,
+        join(dataDir(), "icon.png"),
+        process.env.APPIMAGE ?? `"${process.execPath}" "${app.getAppPath()}"`,
+    );
+    const ffmpeg = resolveFfmpeg();
 
-  streamServer = await startStreamServer({
-    db,
-    getSettings: () => getSettings(db),
-    getHwAccel: () => hwAccelStatus
-  })
+    streamServer = await startStreamServer({
+        db,
+        getSettings: () => getSettings(db),
+        getHwAccel: () => hwAccelStatus,
+    });
 
-  scanner = new Scanner({
-    db,
-    ffprobePath: ffmpeg.ffprobePath ?? 'ffprobe',
-    onProgress: (status) => broadcast(EVENTS.scanProgress, status),
-    onLibraryChanged: () => {
-      broadcast(EVENTS.libraryChanged)
-      // New episodes are new work for the measuring job — and a no-op when it
-      // is already running or the setting is off.
-      loudnessScanner?.start()
-    }
-  })
+    scanner = new Scanner({
+        db,
+        ffprobePath: ffmpeg.ffprobePath ?? "ffprobe",
+        onProgress: (status) => broadcast(EVENTS.scanProgress, status),
+        onLibraryChanged: () => {
+            broadcast(EVENTS.libraryChanged);
+            // New episodes are new work for the measuring job — and a no-op when it
+            // is already running or the setting is off.
+            loudnessScanner?.start();
+        },
+    });
 
-  loudnessScanner = new LoudnessScanner({
-    db,
-    ffmpegPath: ffmpeg.ffmpegPath,
-    getSettings: () => getSettings(db),
-    // "Busy" is anything the user would hear or watch stutter: a live encoder on
-    // any channel, or a library scan already spending the disk.
-    isBusy: () =>
-      (streamServer?.activeKeys().length ?? 0) > 0 || scanner?.getStatus().state === 'scanning'
-  })
+    loudnessScanner = new LoudnessScanner({
+        db,
+        ffmpegPath: ffmpeg.ffmpegPath,
+        getSettings: () => getSettings(db),
+        // "Busy" is anything the user would hear or watch stutter: a live encoder on
+        // any channel, or a library scan already spending the disk.
+        isBusy: () =>
+            (streamServer?.activeKeys().length ?? 0) > 0 ||
+            scanner?.getStatus().state === "scanning",
+    });
 
-  registerHandlers({
-    db,
-    scanner,
-    loudness: loudnessScanner,
-    stream: streamServer,
-    codecCheck: () => codecStatus,
-    hwAccel: () => hwAccelStatus,
-    restart
-  })
+    registerHandlers({
+        db,
+        scanner,
+        loudness: loudnessScanner,
+        stream: streamServer,
+        codecCheck: () => codecStatus,
+        hwAccel: () => hwAccelStatus,
+        restart,
+    });
 
-  registerRendererProtocol()
-  createWindow()
+    registerRendererProtocol();
+    createWindow();
 
-  // Background work, after the window is on its way.
-  void checkCodecs(ffmpeg.ffmpegPath)
-    .then((result) => {
-      codecStatus = result
-    })
-    .catch(() => {
-      codecStatus = 'failed'
-    })
+    // Background work, after the window is on its way.
+    void checkCodecs(ffmpeg.ffmpegPath)
+        .then((result) => {
+            codecStatus = result;
+        })
+        .catch(() => {
+            codecStatus = "failed";
+        });
 
-  // Same contract as the codec check: non-fatal, never blocks the window, and
-  // until it answers every transcode runs on software (`effectiveAccel`).
-  void probeHardwareAccel(ffmpeg.ffmpegPath)
-    .then((report) => {
-      hwAccelStatus = report
-      const found = [
-        report.vaapi === 'ok' ? `vaapi (${report.vaapiDevice})` : null,
-        report.nvenc === 'ok' ? 'nvenc' : null
-      ].filter(Boolean)
-      console.log(
-        found.length > 0
-          ? `[hwaccel] available: ${found.join(', ')}`
-          : '[hwaccel] no hardware encoder available; transcodes run on libx264'
-      )
-    })
-    .catch(() => {
-      hwAccelStatus = { vaapi: 'failed', nvenc: 'failed', vaapiDevice: null }
-    })
+    // Same contract as the codec check: non-fatal, never blocks the window, and
+    // until it answers every transcode runs on software (`effectiveAccel`).
+    void probeHardwareAccel(ffmpeg.ffmpegPath)
+        .then((report) => {
+            hwAccelStatus = report;
+            const found = [
+                report.vaapi === "ok" ? `vaapi (${report.vaapiDevice})` : null,
+                report.nvenc === "ok" ? "nvenc" : null,
+            ].filter(Boolean);
+            console.log(
+                found.length > 0
+                    ? `[hwaccel] available: ${found.join(", ")}`
+                    : "[hwaccel] no hardware encoder available; transcodes run on libx264",
+            );
+        })
+        .catch(() => {
+            hwAccelStatus = {
+                vaapi: "failed",
+                nvenc: "failed",
+                vaapiDevice: null,
+            };
+        });
 
-  if (settings.watchFolders) scanner.startWatching()
-  void scanner.scan().catch((err) => console.error('[scan] initial pass failed:', err))
-  // Measuring waits behind the initial scan on its own (`isBusy`), so this only
-  // has to be kicked once.
-  loudnessScanner.start()
+    if (settings.watchFolders) scanner.startWatching();
+    void scanner
+        .scan()
+        .catch((err) => console.error("[scan] initial pass failed:", err));
+    // Measuring waits behind the initial scan on its own (`isBusy`), so this only
+    // has to be kicked once.
+    loudnessScanner.start();
 }
 
 // A single instance owns the database and the stream port; a second launch
 // should just focus the window that's already running.
 if (!app.requestSingleInstanceLock()) {
-  app.quit()
+    app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
-  })
+    app.on("second-instance", () => {
+        if (!mainWindow) return;
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    });
 
-  configureAppPaths()
+    configureAppPaths();
 
-  void app.whenReady().then(() => {
-    void bootstrap().catch((err) => {
-      console.error('[boot] failed:', err)
-      app.quit()
-    })
+    void app.whenReady().then(() => {
+        void bootstrap().catch((err) => {
+            console.error("[boot] failed:", err);
+            app.quit();
+        });
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
-  })
+        app.on("activate", () => {
+            if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        });
+    });
 
-  app.on('window-all-closed', () => {
-    app.quit()
-  })
+    app.on("window-all-closed", () => {
+        app.quit();
+    });
 
-  app.on('will-quit', () => {
-    scanner?.dispose()
-    loudnessScanner?.dispose()
-    void streamServer?.close()
-    closeDb()
-  })
+    app.on("will-quit", () => {
+        scanner?.dispose();
+        loudnessScanner?.dispose();
+        void streamServer?.close();
+        closeDb();
+    });
 }
