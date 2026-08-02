@@ -16,8 +16,6 @@ export default defineConfig({
         // Node stays the default. `tests/renderer/` opts itself out per file with a
         // `@vitest-environment happy-dom` docblock, so nothing else pays for a DOM.
         environment: "node",
-        // Coverage is reporting-only for now: no thresholds, so `npm test` never
-        // fails on a number. It exists so gaps are visible while we backfill tests.
         coverage: {
             provider: "v8",
             // Only our own source counts. `tests/`, config files and scripts are
@@ -33,6 +31,16 @@ export default defineConfig({
             // `json-summary` writes coverage/coverage-summary.json, which
             // scripts/coverage-badge.mjs turns into the README badge in CI.
             reporter: ["text", "html", "json-summary"],
+            // A floor, not a target: coverage sat at ~73% lines / 78% functions /
+            // 82% branches when this was set, so 70% only stops regressions.
+            // Raise it as the backfill lands. Only applies with `--coverage`, so
+            // plain `npm test` still never fails on a number.
+            thresholds: {
+                statements: 70,
+                branches: 70,
+                functions: 70,
+                lines: 70,
+            },
         },
     },
 });

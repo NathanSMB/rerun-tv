@@ -1,8 +1,8 @@
 name: CI
 
+# PRs only: main is meant to change exclusively through PRs, so a push run on
+# main would re-test a commit whose PR run already passed.
 on:
-    push:
-        branches: [main]
     pull_request:
 
 # A second push to the same branch makes the first run pointless; cancel it.
@@ -26,12 +26,11 @@ jobs:
             # Check out the PR's head branch rather than the default detached
             # merge commit, so the badge step below has a branch to commit onto.
             # The tradeoff is that PR runs test the head commit, not its merge
-            # with main; `push` runs on main cover the merged result.
+            # with main.
             - uses: actions/checkout@v4
               with:
-                  ref: ${{ github.event.pull_request.head.ref || github.ref }}
-                  repository:
-                      ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+                  ref: ${{ github.event.pull_request.head.ref }}
+                  repository: ${{ github.event.pull_request.head.repo.full_name }}
 
             - uses: actions/setup-node@v4
               with:
@@ -55,8 +54,8 @@ jobs:
             # `test:coverage` first runs `npm rebuild better-sqlite3`, putting the
             # native binding back on the Node ABI that `install-app-deps` moved to
             # Electron's. Vitest runs in Node, so that rebuild is required.
-            # Coverage is reporting-only (no thresholds): it feeds the badge and
-            # the PR summary, and can never turn this step red on its own.
+            # Coverage thresholds live in vitest.config.ts: below 70% this step
+            # goes red, which is what blocks the merge.
             - run: npm run test:coverage
 
             # Surface the numbers on the PR itself (checks tab → job summary).
