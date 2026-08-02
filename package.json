@@ -4,6 +4,10 @@
     "description": "Turn a local media library into lean-back TV channels",
     "author": "Nathan Burchill",
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/NathanSMB/rerun-tv.git"
+    },
     "engines": {
         "node": ">=20"
     },
@@ -22,7 +26,8 @@
         "soak": "node scripts/soak.mjs",
         "rebuild:node": "npm rebuild better-sqlite3",
         "rebuild:electron": "electron-rebuild -f -m . -o better-sqlite3",
-        "dist": "npm run build && electron-builder --linux AppImage",
+        "dist": "npm run build && electron-builder --linux AppImage --publish never",
+        "release": "npm run build && electron-builder --linux AppImage --publish always",
         "postinstall": "electron-builder install-app-deps",
         "prepare": "husky"
     },
@@ -72,7 +77,14 @@
                 "AppImage"
             ],
             "category": "AudioVideo",
-            "maintainer": "Nathan Burchill"
+            "maintainer": "Nathan Burchill",
+            "artifactName": "${name}-${version}-${arch}.AppImage"
+        },
+        "publish": {
+            "provider": "github",
+            "owner": "NathanSMB",
+            "repo": "rerun-tv",
+            "releaseType": "release"
         }
     },
     "allowScripts": {

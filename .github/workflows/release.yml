@@ -1,0 +1,88 @@
+name: Release
+
+# Releases are a deliberate act, not a side effect of merging. Pushing a
+# `v*.*.*` tag is the trigger, which also means the tag is an immutable record
+# of exactly what shipped. Cut one with:
+#
+#     npm version patch|minor|major && git push --follow-tags
+#
+# `npm version` bumps package.json and creates the matching tag in one commit,
+# which is what keeps the tag and the version in step (see the guard below).
+on:
+    push:
+        tags:
+            - "v*.*.*"
+
+# Two tags pushed close together would otherwise race to publish. Unlike ci.yml
+# this does not cancel in progress: a half-uploaded release is worse than a
+# slow one.
+concurrency:
+    group: release
+    cancel-in-progress: false
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+        # electron-builder's GitHub publisher creates the release and uploads the
+        # AppImage with this token. Nothing else here writes to the repo.
+        permissions:
+            contents: write
+        env:
+            # Same as ci.yml: turn a missing ffmpeg into a hard failure rather
+            # than letting the suites that need it skip themselves green.
+            RERUN_REQUIRE_FFMPEG: "1"
+        steps:
+            # A tag push checks out the tagged commit, which is what we want to
+            # build. No `ref` override here, unlike ci.yml.
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+                  cache: npm
+
+            # electron-builder names the artifact from package.json's version, so
+            # a tag that disagrees with it would publish `v0.2.0` containing a
+            # 0.1.0 build. Tags do not go through PR review; this is the only
+            # thing standing between a typo and a mislabelled release.
+            - name: Check the tag matches package.json
+              run: |
+                  tag="${GITHUB_REF_NAME#v}"
+                  pkg="$(node -p "require('./package.json').version")"
+                  if [ "$tag" != "$pkg" ]; then
+                      echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg." >&2
+                      echo "Use \`npm version\` to bump and tag together." >&2
+                      exit 1
+                  fi
+                  echo "Releasing $pkg"
+
+            # The test fixtures are muxed with a real ffmpeg. Same install as
+            # ci.yml, same reasoning for not using a caching action: every
+            # third-party action is supply-chain surface on a job holding a
+            # `contents: write` token.
+            - name: Install ffmpeg
+              run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+            - run: npm ci
+
+            # A tag can point at any commit, including one that never went
+            # through PR CI. Re-running the checks here is a few minutes on a
+            # workflow that runs a handful of times a year.
+            - run: npm run lint
+
+            - run: npm run typecheck
+
+            # `npm test` rather than `test:coverage`: the 70% floor is a merge
+            # gate, and blocking a release on a coverage number for code that
+            # already passed that gate on main buys nothing.
+            - run: npm test
+
+            # Builds (which re-runs typecheck, a few seconds) and hands the
+            # AppImage plus latest-linux.yml to electron-builder's GitHub
+            # publisher. That metadata file is what electron-updater would read
+            # if in-app updates get wired up later — free to publish now,
+            # awkward to backfill.
+            - name: Build and publish to GitHub Releases
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: npm run release
