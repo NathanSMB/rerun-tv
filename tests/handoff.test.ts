@@ -16,7 +16,7 @@
  * actually saw.**
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RerunApi } from '@shared/ipc.js'
 import type { EpisodeView, NowPlaying } from '@shared/types.js'
 import { DEFAULT_SETTINGS, SLEEP_MAX_MIN } from '@shared/types.js'
@@ -583,6 +583,120 @@ describe('sleep timer', () => {
     // Skipped, not watched — the outcome is logged honestly either way.
     expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 0 }])
     expect(commits).toBe(1)
+  })
+})
+
+/**
+ * The fullscreen handoff (docs/blackout-fullscreen-plan.html).
+ *
+ * Fullscreen belongs to the Player's stage wrapper, and going dark unmounts the
+ * Player — so without a handoff the sleep screen drops back to a window and a
+ * dark room gets its taskbar back at the one moment the app means to emit
+ * nothing. The store's part is to re-target fullscreen to the document root
+ * *before* it flips the screen, which is the ordering these cases pin down.
+ *
+ * This module is compiled DOM-free (see `tsconfig.node.json`), so the document
+ * is a stand-in installed on `globalThis` — the same way the preload bridge is
+ * faked, and the same way the store reaches both.
+ */
+describe('going dark keeps fullscreen', () => {
+  /** Screens the fake document had been asked to fill, in order. */
+  let fullscreenRequests: string[]
+  /** Set when the request is made, to prove it happened before the screen flip. */
+  let screenAtRequest: string | null
+
+  /**
+   * @param element what `document.fullscreenElement` reports — null is a viewer
+   *   watching in a window, and must leave the request unmade.
+   * @param reject a Chromium that refuses the gesture-less re-target.
+   */
+  function fakeDocument(element: unknown, reject = false): void {
+    ;(globalThis as { document?: unknown }).document = {
+      fullscreenElement: element,
+      documentElement: {
+        requestFullscreen: async (): Promise<void> => {
+          fullscreenRequests.push('documentElement')
+          screenAtRequest = store().screen
+          if (reject) throw new Error('gesture required')
+        }
+      }
+    }
+  }
+
+  beforeEach(() => {
+    sequentialChannel(4)
+    fullscreenRequests = []
+    screenAtRequest = null
+  })
+
+  afterEach(() => {
+    delete (globalThis as { document?: unknown }).document
+  })
+
+  it('hands fullscreen to the document root before the Player unmounts', async () => {
+    await store().tune(channelId)
+    fakeDocument({ id: 'stage' })
+    expireSleepTimer()
+
+    await store().advance(true)
+
+    expect(fullscreenRequests).toEqual(['documentElement'])
+    // The whole point of the ordering: the stage still exists when the request
+    // is made, so there is a live session to re-target and no gesture is needed.
+    expect(screenAtRequest).toBe('player')
+    expect(store().screen).toBe('blackout')
+  })
+
+  it('makes the same handoff when the timer expires while paused', async () => {
+    await store().tune(channelId)
+    fakeDocument({ id: 'stage' })
+    expireSleepTimer()
+
+    await store().sleepNow()
+
+    expect(fullscreenRequests).toEqual(['documentElement'])
+    expect(store().screen).toBe('blackout')
+  })
+
+  it('asks for nothing when the viewer was watching in a window', async () => {
+    await store().tune(channelId)
+    fakeDocument(null)
+    expireSleepTimer()
+
+    await store().advance(true)
+
+    // Requesting here would *enter* fullscreen on someone who never asked for it.
+    expect(fullscreenRequests).toEqual([])
+    expect(store().screen).toBe('blackout')
+  })
+
+  it('still goes dark when the browser refuses the re-target', async () => {
+    await store().tune(channelId)
+    fakeDocument({ id: 'stage' }, true)
+    const first = store().nowPlaying!
+    expireSleepTimer()
+
+    await store().advance(true)
+
+    // A refusal costs the fullscreen, never the sleep: black-but-windowed is the
+    // degraded case, and a rejected promise must not strand a running channel.
+    expect(store().screen).toBe('blackout')
+    expect(store().nowPlaying).toBeNull()
+    expect(released).toContain(`channel:${channelId}`)
+    expect(playLog()).toEqual([{ episodeId: first.episode.id, completed: 1 }])
+  })
+
+  it('leaves fullscreen alone when the viewer walks out to the guide', async () => {
+    await store().tune(channelId)
+    fakeDocument({ id: 'stage' })
+    store().armSleep(30)
+
+    await store().leavePlayer()
+
+    // Leaving is a decision to go and browse, and the guide is a windowed screen
+    // with an app bar — the Player's own teardown drops fullscreen there.
+    expect(fullscreenRequests).toEqual([])
+    expect(store().screen).toBe('guide')
   })
 })
 

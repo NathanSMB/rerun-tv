@@ -58,6 +58,41 @@ function bridge(): RerunApi {
   return api
 }
 
+/**
+ * The two members of `document` the fullscreen handoff needs, declared here
+ * rather than imported.
+ *
+ * This module is compiled without the DOM library on purpose — it is the one
+ * renderer file the Node tests drive directly (see `tsconfig.node.json`) — so
+ * the handoff reaches the document the same way it reaches the preload bridge:
+ * through `globalThis`, structurally typed, absent under test.
+ */
+type FullscreenDoc = {
+  fullscreenElement: unknown
+  documentElement: { requestFullscreen: () => Promise<void> }
+}
+
+/**
+ * Move fullscreen off the element that is about to be unmounted.
+ *
+ * Fullscreen belongs to the Player's stage wrapper, and going dark unmounts the
+ * Player. Removing the fullscreen element is itself enough to drop fullscreen,
+ * which would hand a dark room its taskbar back at exactly the moment the app
+ * is trying to emit nothing — so the document root, which outlives every
+ * screen, takes it over first and the blackout inherits it.
+ *
+ * Re-targeting needs no user gesture while a session already exists — the same
+ * allowance a PiP transfer relies on (docs/pip-plan.html §2) — which is what
+ * makes it usable here, where nobody is touching anything. A refusal is
+ * survivable and deliberately swallowed: it leaves the older behaviour, black
+ * but windowed.
+ */
+async function handOffFullscreen(): Promise<void> {
+  const doc = (globalThis as { document?: FullscreenDoc }).document
+  if (!doc?.fullscreenElement) return
+  await doc.documentElement.requestFullscreen().catch(() => undefined)
+}
+
 const EMPTY_SCAN: ScanStatus = {
   state: 'idle',
   total: 0,
@@ -239,6 +274,10 @@ async function goDark(
   get: () => AppState,
   set: (partial: Partial<AppState>) => void
 ): Promise<void> {
+  // Before anything is torn down, so the handoff lands while the stage the
+  // Player is holding fullscreen with is still in the document.
+  await handOffFullscreen()
+
   const api = bridge()
   const current = get().nowPlaying
   // The whole channel, so a prewarmed standby cannot outlive the screen — the

@@ -36,6 +36,7 @@ import { createRoot } from 'react-dom/client'
 import type { RerunApi } from '@shared/ipc.js'
 import type { AppSettings, NowPlaying } from '@shared/types.js'
 import { DEFAULT_SETTINGS } from '@shared/types.js'
+import Blackout from '../../src/renderer/src/screens/Blackout.js'
 import Player from '../../src/renderer/src/screens/Player.js'
 import { useStore } from '../../src/renderer/src/store.js'
 import { CHANNEL_ID, scriptedBridge, type BridgeCall } from './fixtures.js'
@@ -253,6 +254,61 @@ function installPipModel(): PipModel {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The measured fullscreen model
+// ---------------------------------------------------------------------------
+
+/**
+ * Fullscreen as Chromium performs it, in the two respects the blackout handoff
+ * turns on (docs/blackout-fullscreen-plan.html):
+ *
+ * 1. **Removing the fullscreen element from the document drops fullscreen.**
+ *    Modelled as a getter that reports a detached element as nothing at all,
+ *    which is what makes the failure this feature fixes reachable from a test:
+ *    the stage unmounts with the Player, and without the handoff there is no
+ *    fullscreen left for the blackout to inherit.
+ * 2. **A fresh request needs a user gesture; re-targeting an existing session
+ *    does not.** The same rule as PiP above, and the same reason it matters:
+ *    the sleep timer fires with nobody touching anything, so the handoff is
+ *    only legal *because* the Player is already fullscreen when it is made.
+ *
+ * happy-dom implements none of this. The simplification against the real API is
+ * that the transition is synchronous rather than a round trip through the
+ * compositor; what the tests read is the ordering against the screen flip, which
+ * that does not disturb.
+ */
+let fullscreenInstalled = false
+let fullscreenElement: Element | null = null
+
+function installFullscreenModel(): void {
+  if (!fullscreenInstalled) {
+    fullscreenInstalled = true
+
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => (fullscreenElement?.isConnected === true ? fullscreenElement : null)
+    })
+
+    Element.prototype.requestFullscreen = function (this: Element): Promise<void> {
+      if (document.fullscreenElement === null && gestureDepth === 0) {
+        const error = new Error('Fullscreen request requires a user gesture.')
+        error.name = 'TypeError'
+        return Promise.reject(error)
+      }
+      fullscreenElement = this
+      document.dispatchEvent(new Event('fullscreenchange'))
+      return Promise.resolve()
+    }
+
+    document.exitFullscreen = function (): Promise<void> {
+      fullscreenElement = null
+      document.dispatchEvent(new Event('fullscreenchange'))
+      return Promise.resolve()
+    }
+  }
+  fullscreenElement = null
+}
+
 /**
  * Run something with user activation, the way a real click or keystroke carries
  * it. Synchronous on purpose: Chromium's activation does not survive an await,
@@ -310,9 +366,12 @@ function letPlaysTake(): void {
 
 /**
  * The screen switch, as `App.tsx` makes it: the Player owns the window while
- * `screen === 'player'`, and is unmounted the moment it doesn't — which is what
- * a blackout looks like from in here. The other screens are not this layer's
- * business, so they are not mounted.
+ * `screen === 'player'`, and is unmounted the moment it doesn't. The other
+ * screens are not this layer's business and are not mounted — except the
+ * blackout, which is, because it is the one screen whose behaviour is a
+ * *consequence* of the Player's teardown: it inherits fullscreen across the
+ * unmount (docs/blackout-fullscreen-plan.html), and nothing on either side of
+ * that swap can be tested without both halves of it present.
  *
  * The exception is the one App.tsx makes: with the picture floating in a PiP
  * window the Player stays mounted, off-stage, so the channel keeps running while
@@ -323,7 +382,8 @@ function letPlaysTake(): void {
 function Shell(): JSX.Element | null {
   const screen = useStore((s) => s.screen)
   const pipActive = useStore((s) => s.pipActive)
-  if (screen === 'blackout') return null
+  if (screen === 'blackout') return <Blackout />
+
   if (screen === 'player') return <Player />
   return pipActive ? <Player floating /> : null
 }
@@ -379,6 +439,14 @@ export interface Scenario {
   closePipWindow(): Promise<void>
   /** Ask for PiP from outside any gesture, the way an effect would. */
   enterPipWithoutGesture(): Promise<void>
+
+  // ---- fullscreen ----
+  /**
+   * What is filling the screen: the Player's `stage` wrapper, the document root
+   * the blackout inherits, or nothing. An element that has been unmounted reads
+   * as `null`, exactly as Chromium reports it.
+   */
+  fullscreenTarget(): 'stage' | 'root' | 'other' | null
   /** The stream dying under the player: what raises the Retry/Skip card. */
   breakStream(): Promise<void>
   /** T−30s: reserve the next pick into the standby surface. */
@@ -409,6 +477,7 @@ export async function openPlayer(
   settings: Partial<AppSettings> = {}
 ): Promise<Scenario> {
   installMediaModel()
+  installFullscreenModel()
   const pip = installPipModel()
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -595,6 +664,18 @@ export async function openPlayer(
      */
     press: async (key) => {
       const target = document.activeElement ?? document.body
+      // Esc in fullscreen is Chromium's, not ours: it leaves fullscreen and the
+      // page never sees the keystroke (the Player's Esc map is written around
+      // exactly this, which is why its first Esc only un-fullscreens). Modelled
+      // here so a screen that quietly relies on receiving that key fails.
+      if (key === 'Escape' && document.fullscreenElement !== null) {
+        await act(async () => {
+          await document.exitFullscreen()
+          await macrotask()
+        })
+        await settle()
+        return
+      }
       await act(async () => {
         // A keystroke carries user activation, which is what lets <kbd>P</kbd>
         // open a fresh session at all.
@@ -654,6 +735,13 @@ export async function openPlayer(
         await macrotask()
       })
       await settle()
+    },
+
+    fullscreenTarget: () => {
+      const el = document.fullscreenElement
+      if (el === null) return null
+      if (el === document.documentElement) return 'root'
+      return el.classList.contains('stage') ? 'stage' : 'other'
     },
 
     enterPipWithoutGesture: async () => {

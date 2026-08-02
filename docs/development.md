@@ -167,6 +167,15 @@ The two seams are the ones the repo already treats as contracts:
   (`fixtures.tsx`). It keeps the one scheduler distinction the handoff rests on:
   `prewarmNext` reserves, `promoteNext` commits.
 
+The harness also models the two Chromium APIs happy-dom lacks entirely, each
+carrying the measured rule the Player is built around rather than merely
+allowing what it asks for: **picture-in-picture** (a fresh entry needs a
+gesture, a transfer does not, and a transfer's `leavepictureinpicture` precedes
+the new element's enter) and **fullscreen** (same gesture rule, a detached
+element reports as no fullscreen at all, and `Esc` is swallowed by the browser
+on its way out — the facts the blackout's fullscreen handoff turns on, see
+[blackout-fullscreen-plan.html](blackout-fullscreen-plan.html)).
+
 **What it deliberately does not cover.** Real Chromium semantics. This layer
 *encodes* what the soak harness measured; it cannot discover anything new about
 a media element, and a fake that fires `ended` without a preceding `pause` would
@@ -208,7 +217,10 @@ point — a harness whose tests cannot fail on the original bugs is decoration.
 #### The screen suites
 
 `harness.tsx` is the *Player's* rig, and most of what it models — media-element
-orderings, PiP activation rules — is meaningless anywhere else. Other screens are
+orderings, PiP and fullscreen activation rules — is meaningless anywhere else.
+Its shell mounts one other screen: the Blackout, because inheriting fullscreen
+across the Player's unmount (`blackout-fullscreen.test.tsx`) is a property of
+the swap between them, invisible with either half missing. Other screens are
 mounted directly with `createRoot`, with only the preload bridge scripted per
 file: `settings-rail.test.tsx`, `sleep-panel.test.tsx`, `guide-fold.test.tsx`.
 

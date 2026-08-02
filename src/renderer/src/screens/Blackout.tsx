@@ -7,6 +7,11 @@
  * That is the entire point of the feature, and it is why this screen is inert
  * rather than merely dark.
  *
+ * If the viewer was watching fullscreen they still are: `goDark` re-targets
+ * fullscreen to the document root before unmounting the Player, so this screen
+ * inherits it. Dropping back to a window here would hand a dark room its
+ * taskbar at the one moment the app is trying to emit nothing.
+ *
  * The one affordance — a way back to the guide — is hidden until the pointer
  * moves, on the same reveal-then-idle pattern the Player's OSD uses, tuned by
  * the same `osdHideAfterS` setting. A visible button on a screen you fell asleep
@@ -41,7 +46,20 @@ export default function Blackout(): JSX.Element {
     setActivity((n) => n + 1)
   }, [])
 
-  const backToGuide = useCallback(() => navigate('guide'), [navigate])
+  /**
+   * The way out, from the button and from both keys.
+   *
+   * This screen may be fullscreen — `goDark` hands fullscreen to the document
+   * root on the way in, so the blackout is as chromeless as the picture was —
+   * and the guide is a windowed screen with an app bar. A fullscreen guide is
+   * not a state this app has, so the exit gives fullscreen up on the way out.
+   * On <kbd>Esc</kbd> Chromium has already done it and this is a no-op, as it
+   * is for anyone who dozed off in a window.
+   */
+  const backToGuide = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+    navigate('guide')
+  }, [navigate])
 
   /** The idle timer, in the Player's shape: an effect keyed on the activity bump. */
   useEffect(() => {

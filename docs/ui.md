@@ -172,7 +172,10 @@ Two behaviours are load-bearing plan decisions:
 
 - **Fullscreen wraps the stage, not the video.** `requestFullscreen()` is called
   on a wrapper containing both the `<video>` and the OSD, so swapping the video
-  `src` at an episode handoff never drops out of fullscreen.
+  `src` at an episode handoff never drops out of fullscreen. The one thing the
+  wrapper cannot survive is its own unmount — which is what going dark does — so
+  the sleep path hands fullscreen to the document root first; see the Blackout
+  section below and [blackout-fullscreen-plan.html](blackout-fullscreen-plan.html).
 - **Seeking depends on the playback path.** Direct-play files seek natively via
   `currentTime`; remuxed and transcoded streams are open-ended pipes, so a scrub
   loads a new URL with `?t=` and the player tracks the offset to keep the
@@ -354,11 +357,25 @@ wake lock (the app has no `powerSaveBlocker`) — so the OS display-sleep policy
 takes over. That inertness *is* the feature; a merely dark screen would hold the
 display awake all night.
 
+**A fullscreen viewer stays fullscreen.** Fullscreen belongs to the Player's
+stage wrapper, and going dark unmounts the Player — removing the fullscreen
+element is itself enough to drop fullscreen, which would hand a dark room its
+taskbar back. So `goDark` re-targets fullscreen to the document root *before*
+flipping the screen (legal without a gesture while a session exists — the same
+allowance PiP transfers rely on), and the blackout inherits it. The Player's
+teardown still exits fullscreen when leaving for the guide, but only when the
+stage is still the fullscreen element, so it cannot undo the handoff. Designed
+in [blackout-fullscreen-plan.html](blackout-fullscreen-plan.html).
+
 The one affordance, *Back to channels*, is hidden until the pointer moves, on the
 same reveal-then-idle pattern the OSD uses and tuned by the same
 `osdHideAfterS`. It is `tabIndex={-1}` and `aria-hidden` while hidden, so focus
 can't land on an invisible control, and the cursor hides with it. `Esc` and
-`Enter` do the same thing, so the exit is never mouse-only.
+`Enter` do the same thing, so the exit is never mouse-only. Leaving drops
+fullscreen on the way out — the guide is a windowed screen — with one asymmetry
+inherited from Chromium: in fullscreen the browser swallows `Esc` to exit
+fullscreen (as on the Player), so `Esc` out of a fullscreen blackout takes two
+presses where `Enter` or the button take one.
 
 ### Library — where files become television
 

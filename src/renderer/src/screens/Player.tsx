@@ -803,8 +803,13 @@ export default function Player({ floating = false }: PlayerProps): JSX.Element |
     document.addEventListener('fullscreenchange', onChange)
     return () => {
       document.removeEventListener('fullscreenchange', onChange)
-      // Leaving the player must not strand the window in fullscreen.
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+      // Leaving the player must not strand the window in fullscreen — but only
+      // while fullscreen is still ours. Going dark re-targets it to the document
+      // root before unmounting us (`goDark` in the store) precisely so the
+      // blackout inherits a chromeless screen; exiting here would undo that.
+      if (document.fullscreenElement === stageRef.current) {
+        void document.exitFullscreen().catch(() => undefined)
+      }
     }
   }, [])
 
