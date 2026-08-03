@@ -1,5 +1,5 @@
 /**
- * Screen 02 — the Player (plan §7).
+ * Screen 02 — the Player (docs/ui.md, "Player").
  *
  * Full-bleed video with an OSD layer that rises on mouse move or key press and
  * fades after `settings.osdHideAfterS` seconds of idle.
@@ -13,8 +13,8 @@
  *    auto-advance, and would also hide our OSD behind Chromium's native controls.
  *
  * 2. **Seeking is done by loading a new URL, not by setting `currentTime`.**
- *    The remux and transcode paths (plan §6) are open-ended ffmpeg pipes with no
- *    byte ranges and no known length, so the browser cannot seek them. The
+ *    The remux and transcode paths (docs/playback.md) are open-ended ffmpeg
+ *    pipes with no byte ranges and no known length, so the browser cannot seek them. The
  *    stream server's contract is `/stream/<id>?t=<seconds>`: it restarts ffmpeg
  *    at `-ss`. Because the fresh stream then reports `currentTime` from zero, we
  *    keep the requested position in the slot's `offset` and render
@@ -40,9 +40,10 @@
  *    Unlike fullscreen there is no wrapper to hand it: PiP floats one `<video>`.
  *    So the session has to follow every swap, and it can — a transfer to another
  *    element needs no user gesture while a session is live, which a *fresh* entry
- *    does (docs/pip-plan.html §2). All of that intent lives in `player/pip.ts`;
- *    this screen only executes the commands it returns, and is the only place
- *    that touches `requestPictureInPicture()`.
+ *    does (docs/playback.md, "Picture-in-picture across a handoff"). All of
+ *    that intent lives in `player/pip.ts`; this screen only executes the
+ *    commands it returns, and is the only place that touches
+ *    `requestPictureInPicture()`.
  *
  * While PiP is floating the viewer may leave for the guide, and then this screen
  * stays *mounted but hidden* (`floating`) so the streams, the handoffs and the
@@ -76,8 +77,8 @@ import "./Player.css";
 
 /**
  * Seconds of remaining runtime that trigger the "up next" toast *and* the
- * prewarm (plan §6). One window, deliberately: the toast is the user-visible
- * promise that the next episode is ready, and now it actually is.
+ * prewarm (docs/playback.md). One window, deliberately: the toast is the
+ * user-visible promise that the next episode is ready, and now it actually is.
  */
 const UP_NEXT_WINDOW_S = 30;
 // Coupled across the process boundary to `MAX_JOBS_PER_CHANNEL` in
@@ -329,7 +330,8 @@ export default function Player({
     /**
      * The button and <kbd>P</kbd>. Both arrive inside a user gesture, which is the
      * only moment a *fresh* session may be opened, so the request must not be
-     * deferred to an effect (docs/pip-plan.html §2, fact R5).
+     * deferred to an effect
+     * (docs/playback.md, "Picture-in-picture across a handoff").
      */
     const togglePip = useCallback(() => {
         // Fullscreen and a floating window are mutually exclusive states of the same

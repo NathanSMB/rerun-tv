@@ -415,8 +415,8 @@ describe.skipIf(noFfmpeg)("piped paths", () => {
 });
 
 /**
- * Phase 3 of docs/hwaccel-plan.html: the failures a startup probe cannot rule
- * out — a driver that refuses one particular profile, an exhausted encoder
+ * The runtime fallback (docs/playback.md, "Hardware encode & decode"): the
+ * failures a startup probe cannot rule out — a driver that refuses one particular profile, an exhausted encoder
  * session, a GPU unplugged since launch — must cost a beat of tune-in latency,
  * never a dead channel.
  *

@@ -1,5 +1,5 @@
 /**
- * Multipart arc detection (plan §3).
+ * Multipart arc detection (docs/library.md).
  *
  * A "Part 1 / Part 2" pair is the one piece of structure that filenames reliably
  * carry, and it matters more than it looks: an arc is a single *playable unit*

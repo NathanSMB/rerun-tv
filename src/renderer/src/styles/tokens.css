@@ -1,9 +1,9 @@
 /*
  * Design tokens — "Saturday, 1994".
  *
- * Straight from docs/mockup.html: tube-black chrome, the indigo of the old
- * cable guide channel, and phosphor amber for everything the broadcast says to
- * you (channel numbers, episode codes, timecodes) in a VCR-OSD mono.
+ * Tube-black chrome, the indigo of the old cable guide channel, and phosphor
+ * amber for everything the broadcast says to you (channel numbers, episode
+ * codes, timecodes) in a VCR-OSD mono. See docs/ui.md, "The design language".
  *
  * These names are the contract for every component. Never hardcode a hex value
  * in a component stylesheet — add a token here instead.

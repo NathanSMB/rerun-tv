@@ -1,5 +1,5 @@
 /**
- * The SQLite schema (plan §4).
+ * The SQLite schema (docs/data-model.md).
  *
  * Eight core tables plus two supporting ones (`scan_roots`, `unmatched_files`).
  * The important split: `channel_shows` is *configuration* (the lineup you built)
@@ -139,7 +139,7 @@ export const MIGRATIONS: string[] = [
   `,
     // -- 3 ---------------------------------------------------------------------
     //
-    // The audio-only transcode path (docs/stall-fix-plan.html, phase 1). Every
+    // The audio-only transcode path (docs/playback.md, "The decision"). Every
     // file whose *video* Chromium can decode now goes down the remux pipe, where
     // the video is a byte copy and only the audio is encoded. Previously an AC3
     // soundtrack dragged a perfectly playable H.264 stream onto libx264 — which
@@ -158,9 +158,10 @@ export const MIGRATIONS: string[] = [
     // -- 4 ---------------------------------------------------------------------
     //
     // Cached EBU R128 loudness, for the equalization setting
-    // (docs/loudness-equalization-plan.html, phase 2). Measuring costs a real
-    // audio decode of the whole file, so the answer is stored rather than derived:
-    // ffprobe cannot produce it, and no one is waiting minutes at tune-in.
+    // (docs/playback.md, "The background measuring job"). Measuring costs a
+    // real audio decode of the whole file, so the answer is stored rather than
+    // derived: ffprobe cannot produce it, and no one is waiting minutes at
+    // tune-in.
     //
     // Nullable with no default, because "not measured yet" is a state the player
     // has to handle anyway — a library only fills in over time, and until a row is
@@ -178,10 +179,10 @@ export const MIGRATIONS: string[] = [
   `,
     // -- 5 ---------------------------------------------------------------------
     //
-    // Hardware encode/decode (docs/hwaccel-plan.html). The old `hardwareEncode`
-    // boolean shipped visible-but-disabled and was never read by anything, so it
-    // is always `false` where it exists; it is replaced by `hardwareAccel`, a
-    // three-way choice of backend.
+    // Hardware encode/decode (docs/playback.md, "Hardware encode & decode").
+    // The old `hardwareEncode` boolean shipped visible-but-disabled and was
+    // never read by anything, so it is always `false` where it exists; it is
+    // replaced by `hardwareAccel`, a three-way choice of backend.
     //
     // Nothing is migrated *into* the new key: `getSettings` merges stored rows
     // over `DEFAULT_SETTINGS`, so an absent key already reads as 'software' — the

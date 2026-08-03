@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 /**
- * Picture-in-picture, wired to the real Player (docs/pip-plan.html).
+ * Picture-in-picture, wired to the real Player
+ * (docs/ui.md, "Picture-in-picture").
  *
  * `tests/pip.test.ts` pins the controller: events in, commands out, every
  * ordering, no DOM. This layer asks the question that one cannot — whether the

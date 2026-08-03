@@ -3,10 +3,10 @@
  *
  * Screen 01 · the Guide's fold-out channel editor.
  *
- * The Channels screen was retired into the Guide (docs/channel-edit-ux.html,
- * "Hot Rows"), which moved three things that used to be somebody else's problem
- * onto one surface. Each is pinned here because each was load-bearing in the
- * design rather than incidental:
+ * The Channels screen was retired into the Guide (docs/ui.md, "Hot rows, and
+ * the fold-out editor"), which moved three things that used to be somebody
+ * else's problem onto one surface. Each is pinned here because each was
+ * load-bearing in the design rather than incidental:
  *
  *  1. **One fold at a time.** ✎ on another row has to *move* the editor, not open
  *     a second one — the store holds a single `channelDetail`, so two open folds

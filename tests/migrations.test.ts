@@ -6,7 +6,7 @@
  * a database *at the previous version*, migrates it, and checks the rows.
  *
  * Migration 3 is the interesting one: it re-derives `playback_path` for the
- * audio-only transcode path (docs/stall-fix-plan.html, phase 1) instead of
+ * audio-only transcode path (docs/playback.md, "The decision") instead of
  * making the user sit through a full rescan to reach the same answer. The
  * assertion that matters is therefore not just "the labels changed" but "they
  * changed to exactly what a fresh scan would have written".
@@ -210,7 +210,7 @@ describe("migration 3 — the audio-only transcode path", () => {
 
 /**
  * Migration 4 — cached EBU R128 loudness
- * (docs/loudness-equalization-plan.html, phase 2).
+ * (docs/playback.md, "The background measuring job").
  *
  * Five nullable columns and nothing else: no data is derived, because loudness
  * cannot be derived — it takes a full audio decode per file, which is what the
@@ -278,7 +278,8 @@ describe("migration 4 — cached loudness", () => {
 });
 
 /**
- * Migration 5 retires the dead `hardwareEncode` toggle (docs/hwaccel-plan.html).
+ * Migration 5 retires the dead `hardwareEncode` toggle
+ * (docs/playback.md, "Hardware encode & decode").
  *
  * The replacement key is *not* written by the migration, and that is the point:
  * `getSettings` merges stored rows over `DEFAULT_SETTINGS`, so an absent

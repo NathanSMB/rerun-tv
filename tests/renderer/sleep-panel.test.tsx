@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 /**
- * The sleep panel's wiring (docs/sleep-dial-plan.html).
+ * The sleep panel's wiring (docs/ui.md, "The sleep timer").
  *
  * `handoff.test.ts` owns what the *store* does with a duration — the clamp, the
  * relative nudge, the unit boundary. What it cannot see is whether a keystroke

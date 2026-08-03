@@ -1,6 +1,6 @@
 # The library: scanning, parsing, arcs
 
-`src/main/library/` — the implementation of [plan.html](plan.html) §3.
+`src/main/library/`.
 
 You add one or more root folders in Settings. The scanner walks them, parses
 filenames, probes each file with ffprobe, and writes the result to SQLite.
@@ -44,9 +44,10 @@ the MVP.
 A file that doesn't parse lands in `unmatched_files` and shows up in the Library
 screen's *Unmatched — N files waiting for a home* queue, where you assign it a
 show, season and episode by hand. It is never silently dropped, and it never
-blocks the rest of the show from airing — that's the mitigation for plan §10's
-"filename chaos in real libraries". The parser grammar can then grow case by
-case without anything being lost in the meantime.
+blocks the rest of the show from airing — that is the whole mitigation for
+"filename chaos in real libraries"
+([architecture.md](architecture.md#risks-and-what-answers-them)). The parser
+grammar can then grow case by case without anything being lost in the meantime.
 
 ## Arc detection
 
@@ -89,3 +90,14 @@ new files are parsed and probed as they appear, then broadcast as a
 
 Episodes whose file no longer exists on disk are deleted at the end of a pass,
 and a show left with zero episodes is deleted with them.
+
+## The other job in this directory
+
+`loudness.ts` is not part of a scan. It is the background EBU R128 measuring job,
+and it lives here only because it walks the library the way the scanner does —
+one file at a time, over rows the scanner produced. It never runs inside a scan
+pass: measuring an episode is a full audio decode, seconds per file against the
+milliseconds an ffprobe costs, so it waits while a scan or any live stream is
+using the machine. A `libraryChanged` broadcast wakes it, since new episodes are
+new work for it. It is documented with the filter chain it feeds, in
+[playback.md](playback.md#the-background-measuring-job).

@@ -1,5 +1,5 @@
 /**
- * The MSE pump (docs/stall-fix-plan.html, phase 2).
+ * The MSE pump (docs/playback.md, "The renderer: MediaSource, not `src`").
  *
  * Two halves, tested two ways.
  *

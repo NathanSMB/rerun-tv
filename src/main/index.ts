@@ -11,8 +11,8 @@
  *   5. register IPC handlers, then finally open the window.
  *
  * The codec check runs in the background: it must never delay the window, and
- * per plan §10 a failure is non-fatal — anything unplayable simply routes to
- * the transcode path.
+ * a failure is non-fatal — anything unplayable simply routes to the transcode
+ * path (docs/architecture.md, "Risks, and what answers them").
  */
 
 import { rmSync } from "node:fs";

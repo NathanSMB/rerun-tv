@@ -1,6 +1,6 @@
 /**
  * The background loudness measuring job
- * (docs/loudness-equalization-plan.html, phase 2).
+ * (docs/playback.md, "The background measuring job").
  *
  * Measuring an episode means decoding its whole soundtrack — seconds per file,
  * not the milliseconds a probe costs — so it can never sit in the scanner's

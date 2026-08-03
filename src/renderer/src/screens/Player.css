@@ -1,11 +1,10 @@
 /*
  * Screen 02 — the Player.
  *
- * Straight from docs/mockup.html, with one adaptation: the mockup's stage is a
- * fixed 16/8.4 block inside a TV frame, while the real screen is the window. So
- * `.stage` fills the viewport and goes black, and the video letterboxes itself
- * with `object-fit: contain` rather than the stage faking a picture with
- * gradients.
+ * One adaptation from the original design: its stage was a fixed 16/8.4 block
+ * inside a TV frame, while the real screen is the window. So `.stage` fills the
+ * viewport and goes black, and the video letterboxes itself with
+ * `object-fit: contain` rather than the stage faking a picture with gradients.
  *
  * `.stage` is also the element we hand to `requestFullscreen()`, which is why
  * the OSD lives inside it — see the header of Player.tsx.

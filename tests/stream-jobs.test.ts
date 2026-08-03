@@ -1,5 +1,5 @@
 /**
- * Encoder job bookkeeping (docs/stall-fix-plan.html, phase 3).
+ * Encoder job bookkeeping (docs/playback.md, "Gapless handoffs").
  *
  * Plan §6's original invariant was "never more than one ffmpeg job per channel".
  * The gapless handoff relaxes it to two — the episode on air plus the one

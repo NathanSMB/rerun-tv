@@ -94,8 +94,8 @@ type FullscreenDoc = {
  * screen, takes it over first and the blackout inherits it.
  *
  * Re-targeting needs no user gesture while a session already exists — the same
- * allowance a PiP transfer relies on (docs/pip-plan.html §2) — which is what
- * makes it usable here, where nobody is touching anything. A refusal is
+ * allowance a PiP transfer relies on (docs/playback.md, "Picture-in-picture
+ * across a handoff") — which is what makes it usable here, where nobody is touching anything. A refusal is
  * survivable and deliberately swallowed: it leaves the older behaviour, black
  * but windowed.
  */
@@ -213,7 +213,8 @@ interface AppState {
     upNext: EpisodeView | null;
     /**
      * A pick the scheduler has **reserved** for this channel, waiting to be
-     * promoted when the current episode ends (docs/stall-fix-plan.html, phase 3).
+     * promoted when the current episode ends
+     * (docs/playback.md, "Gapless handoffs").
      *
      * Its presence is what forbids calling `player.next` on the next advance —
      * the standby is buffering this exact episode, and promotion must commit

@@ -1,5 +1,5 @@
 /**
- * Loudness equalization (docs/loudness-equalization-plan.html).
+ * Loudness equalization (docs/playback.md, "Loudness equalization").
  *
  * Three layers, and the middle one is the reason this file exists at all:
  *

@@ -1,5 +1,5 @@
 /**
- * The picture-in-picture session controller (docs/pip-plan.html §5).
+ * The picture-in-picture session controller (docs/ui.md, "Picture-in-picture").
  *
  * Everything here is the logic that cannot be tested anywhere else: happy-dom
  * has no PiP APIs, and the orderings that matter — a `leavepictureinpicture`

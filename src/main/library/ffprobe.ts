@@ -1,5 +1,5 @@
 /**
- * The scan-time ffprobe call (plan §3, §6).
+ * The scan-time ffprobe call (docs/library.md, docs/playback.md).
  *
  * Every file is probed exactly once — on first sight, or after its mtime/size
  * changed — and the answer is written to the episode row. That is what makes

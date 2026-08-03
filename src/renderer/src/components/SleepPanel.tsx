@@ -1,5 +1,5 @@
 /**
- * The sleep dial (docs/sleep-dial-plan.html).
+ * The sleep dial (docs/ui.md, "The sleep timer").
  *
  * Replaces the press-to-cycle presets: one drag sets any duration from off to
  * five hours in five-minute detents, and the panel's readout says what that

@@ -1,5 +1,6 @@
 /**
- * Picture-in-picture — the session controller (docs/pip-plan.html §5).
+ * Picture-in-picture — the session controller
+ * (docs/ui.md, "Picture-in-picture").
  *
  * ## Why this module exists
  *

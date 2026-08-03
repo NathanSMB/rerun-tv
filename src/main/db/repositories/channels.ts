@@ -1,6 +1,7 @@
 /**
  * Every write to the channel side of the database — `channels`, `channel_shows`,
- * `channel_show_state`, `play_log` — plus the shared row mapping (plan §4).
+ * `channel_show_state`, `play_log` — plus the shared row mapping
+ * (docs/data-model.md).
  *
  * As in the library repository, a query written to shape one view lives with
  * that view (`services/channels.ts`) rather than here; this module owns the

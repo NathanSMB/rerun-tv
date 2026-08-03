@@ -97,7 +97,7 @@ export interface RerunApi {
         /**
          * Reserve the *next* pick early, ~30s before the current episode ends, and
          * return everything the standby player needs to start buffering it
-         * (docs/stall-fix-plan.html, phase 3).
+         * (docs/playback.md, "Gapless handoffs").
          *
          * A reservation, not a commit: the scheduler plans the pick and holds the
          * mutations until `promoteNext` applies them at the handoff. Abandoning the

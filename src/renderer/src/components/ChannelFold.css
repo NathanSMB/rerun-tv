@@ -1,5 +1,6 @@
 /*
- * The channel editor's fold-out — docs/channel-edit-ux.html, "Hot Rows".
+ * The channel editor's fold-out — docs/ui.md, "Hot rows, and the fold-out
+ * editor".
  *
  * Two columns inside the fold: the lineup on the left (one dense strip per show
  * carrying its mode, weight and live scheduler progress) and the library picker

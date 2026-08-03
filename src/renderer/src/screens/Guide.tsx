@@ -6,7 +6,7 @@
  * process, which is why tuning in is instant).
  *
  * Interaction model, in one place so it stays coherent
- * (docs/channel-edit-ux.html, "Hot Rows"):
+ * (docs/ui.md, "Hot rows, and the fold-out editor"):
  *
  *  - The list is one full-width column — there is no preview aside, and no
  *    Channels screen. Pointing at a row swaps its show-title block for two

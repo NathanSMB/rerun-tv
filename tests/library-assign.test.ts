@@ -1,5 +1,6 @@
 /**
- * `assignUnmatched` — the Library screen's fix-up (plan §3, §8).
+ * `assignUnmatched` — the Library screen's fix-up
+ * (docs/library.md, docs/ui.md).
  *
  * This is the one library write a *user* drives: they look at a file the
  * filename parser gave up on, type the show, season and episode themselves, and

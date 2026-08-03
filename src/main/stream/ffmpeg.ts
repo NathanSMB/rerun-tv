@@ -1,5 +1,6 @@
 /**
- * ffmpeg discovery, the startup codec assertion, and the job supervisor (plan §6).
+ * ffmpeg discovery, the startup codec assertion, and the job supervisor
+ * (docs/playback.md).
  *
  * Two jobs in one module because they share the same premise: ffmpeg is an
  * external process we do not control. We find it, prove it can produce the one
@@ -7,9 +8,10 @@
  * child we spawn hard enough that closing the app — or changing the channel —
  * never leaves an encoder running.
  *
- * Packaging note (plan §1): the AppImage deliberately prefers the system
- * binary (`pacman -S ffmpeg`) so the image stays small and the codec set tracks
- * the distro; a bundled static build is only a fallback for machines without one.
+ * Packaging note (docs/architecture.md, "The decisions everything else
+ * assumes"): the AppImage deliberately prefers the system binary
+ * (`pacman -S ffmpeg`) so the image stays small and the codec set tracks the
+ * distro; a bundled static build is only a fallback for machines without one.
  */
 
 import {
@@ -146,9 +148,11 @@ export function resetFfmpegCache(): void {
  * player consumes: H.264 video + AAC audio muxed into a fragmented MP4 on stdout.
  *
  * The asset is generated on the fly by `lavfi` (`testsrc` + `anullsrc`) so no
- * fixture has to ship with the app, and nothing touches disk. Per plan §10 a
- * failure is *informational*, never fatal — a broken encoder just means those
- * files stay unplayable, and everything that can direct-play still works.
+ * fixture has to ship with the app, and nothing touches disk. A failure is
+ * *informational*, never fatal — a broken encoder just means those files stay
+ * unplayable, and everything that can direct-play still works. This is the whole
+ * mitigation for Electron's codec support drifting under us
+ * (docs/architecture.md, "Risks, and what answers them").
  */
 export function checkCodecs(
     ffmpegPath: string | null,
@@ -254,9 +258,9 @@ export interface JobHooks {
  * or a seek needs — the client just requests the new URL and the old encoder
  * goes away without any explicit teardown call.
  *
- * Keys are grouped by prefix, which is what carries plan §6's "never more than
- * one job per channel" — and its relaxation for the gapless handoff
- * (docs/stall-fix-plan.html, phase 3). A key is now
+ * Keys are grouped by prefix, which is what carries "never more than one job per
+ * channel" — and its relaxation for the gapless handoff
+ * (docs/playback.md, "Gapless handoffs"). A key is now
  * `channel:<channelId>:<episodeId>`, so one channel can legitimately hold two
  * live jobs for the ~30 seconds while the next episode prewarms behind the
  * current one, and `killByPrefix` retires the whole channel at once. After

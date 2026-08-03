@@ -106,7 +106,8 @@ function toNowPlaying(
         channelNumber: channel.number,
         channelName: channel.name,
         episode,
-        // No seek: tuning in always starts an episode from the top (plan §7).
+        // No seek: tuning in always starts an episode from the top
+        // (docs/ui.md, "Player").
         streamUrl: ctx.stream.urlFor(episodeId, 0, channelId),
         arc,
     };
@@ -304,7 +305,8 @@ export function registerHandlers(ctx: HandlerContext): void {
 
     handle(IPC.player.tune, (channelId: number): NowPlaying | null => {
         // An arc left dangling by a crash mid-airing is validated (and cleared if
-        // stale) here, at tune-in — plan §10.
+        // stale) here, at tune-in — the mitigation for scheduler state corruption
+        // (docs/architecture.md, "Risks, and what answers them").
         validateActiveArc(db, channelId);
         ctx.stream.releaseChannel(channelId);
         const pick = pickNext(db, channelId);
@@ -323,7 +325,8 @@ export function registerHandlers(ctx: HandlerContext): void {
     });
 
     /**
-     * The gapless handoff's reserving half (docs/stall-fix-plan.html, phase 3).
+     * The gapless handoff's reserving half
+     * (docs/playback.md, "Gapless handoffs").
      *
      * Deliberately `reserveNext`, not `peekNext`: the standby has to buffer *the*
      * episode that will air, and for a shuffle show or a multipart arc only a

@@ -1,5 +1,6 @@
 /**
- * Hardware-accelerated transcoding (docs/hwaccel-plan.html).
+ * Hardware-accelerated transcoding
+ * (docs/playback.md, "Hardware encode & decode").
  *
  * Two jobs, same premise as `ffmpeg.ts`: the GPU is external hardware we do not
  * control. We build the arg recipes that would use it, and we *prove* at startup

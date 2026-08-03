@@ -1,6 +1,6 @@
 /**
- * The scheduler (plan §5) — arcs are atomic, the lottery is over units, and
- * peeking never spends the schedule.
+ * The scheduler (docs/scheduler.md) — arcs are atomic, the lottery is over
+ * units, and peeking never spends the schedule.
  */
 
 import { type Db, openDatabase } from "@main/db/index.js";

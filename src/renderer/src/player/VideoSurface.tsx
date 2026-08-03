@@ -1,6 +1,6 @@
 /**
- * One `<video>` element and, when it needs one, one MSE pump (plan §7,
- * docs/stall-fix-plan.html phase 2).
+ * One `<video>` element and, when it needs one, one MSE pump (docs/ui.md, and
+ * docs/playback.md, "The renderer: MediaSource, not `src`").
  *
  * This is the only DOM-touching half of the MediaSource work: `new MediaSource()`,
  * `fetch`, object URLs, and the teardown order that keeps them from leaking. All
@@ -195,7 +195,7 @@ export default function VideoSurface({
      * object is merely re-created, `durationS` is re-read, or the stable
      * `onStreamError` callback is re-bound. Widening it to what the exhaustive-deps
      * rule asks for restarts the encoder on every render, which is the stall this
-     * player was rewritten to fix (docs/stall-fix-plan.html).
+     * player was rewritten to fix (docs/playback.md).
      */
     // biome-ignore lint/correctness/useExhaustiveDependencies: restarting the pump on every render is the stall bug
     useEffect(() => {

@@ -1,5 +1,5 @@
 /**
- * Filename parsing (plan §3).
+ * Filename parsing (docs/library.md).
  *
  * The MVP has no network metadata lookups, so a file's identity is whatever we
  * can read off the path: the show from the top-level folder under the scan root,

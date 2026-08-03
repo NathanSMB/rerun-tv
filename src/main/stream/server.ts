@@ -1,8 +1,8 @@
 /**
- * The loopback HTTP stream server (plan §2, §6).
+ * The loopback HTTP stream server (docs/architecture.md, docs/playback.md).
  *
- * Why HTTP instead of `file://` (plan §2): it gives all three playback paths
- * *one URL shape*. The `<video>` element only ever sees
+ * Why HTTP instead of `file://` (docs/architecture.md): it gives all three
+ * playback paths *one URL shape*. The `<video>` element only ever sees
  * `http://127.0.0.1:<port>/stream/<episodeId>` and has no idea whether it is
  * getting a range-served file off disk, a live `-c copy` remux, or a full
  * transcode. ffmpeg pipes fragmented MP4 straight into the response body, so
@@ -166,7 +166,7 @@ function contentTypeFor(container: string, filePath: string): string {
 
 /**
  * Why a wide-open CORS header on a server whose whole point is that nobody else
- * can reach it (docs/stall-fix-plan.html, phase 2).
+ * can reach it (docs/playback.md, "The renderer: MediaSource, not `src`").
  *
  * A `<video src>` fetches media *without* CORS: the element is allowed to load a
  * cross-origin stream it simply cannot read the bytes of. The MSE pump in
@@ -718,9 +718,9 @@ export async function startStreamServer(
 /**
  * How many encoders one channel may own at once.
  *
- * Two, not one (docs/stall-fix-plan.html, phase 3): the episode on air, plus the
- * next one prewarming behind it for the last ~30 seconds of a handoff. After
- * phase 1 both are stream copies, so the overlap is nearly free.
+ * Two, not one (docs/playback.md, "Gapless handoffs"): the episode on air, plus
+ * the next one prewarming behind it for the last ~30 seconds of a handoff. Both
+ * are usually stream copies, so the overlap is nearly free.
  */
 const MAX_JOBS_PER_CHANNEL = 2;
 
@@ -757,8 +757,9 @@ function inputArgs(
         "-loglevel",
         "error",
         ...decode,
-        // `-ss` before `-i` for a fast keyframe-aligned seek (plan §10 accepts the
-        // resulting coarse seek in the MVP).
+        // `-ss` before `-i` for a fast keyframe-aligned seek. The resulting coarse
+        // seek is accepted (docs/architecture.md, "Risks, and what answers
+        // them").
         ...(seekS > 0 ? ["-ss", String(seekS)] : []),
         "-i",
         file,
