@@ -1,0 +1,45 @@
+name: Pages
+
+# The landing page (site/) is static and has no build step, so deploys are
+# cheap: upload the directory as-is whenever it changes on main. The
+# workflow_dispatch trigger is the recovery hatch — re-publish without a
+# commit if a deploy is lost or Pages is re-enabled.
+on:
+    push:
+        branches:
+            - main
+        paths:
+            - "site/**"
+            - ".github/workflows/pages.yml"
+    workflow_dispatch:
+
+# The OIDC deployment path: deploy-pages exchanges the id-token for a Pages
+# deployment instead of pushing to a gh-pages branch, so no branch exists to
+# drift from site/.
+permissions:
+    contents: read
+    pages: write
+    id-token: write
+
+# Two pushes close together should not race to publish; the newer one wins.
+concurrency:
+    group: pages
+    cancel-in-progress: true
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/configure-pages@v5
+
+            - uses: actions/upload-pages-artifact@v3
+              with:
+                  path: site
+
+            - id: deployment
+              uses: actions/deploy-pages@v4
