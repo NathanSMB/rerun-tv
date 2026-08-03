@@ -71,10 +71,11 @@ code, but they're easier to follow if someone says them out loud:
   what was measured.
 
 - **The tsconfig split is load-bearing.** `tsconfig.node.json` deliberately
-  includes three renderer files (`player/mse.ts`, `store.ts`, `player/pip.ts`) to
-  *enforce* that they stay free of DOM types — that's what lets the trickiest
-  playback logic be tested in Node. If you add a DOM reference to one of those,
-  the typecheck failure is the design telling you something, not a config bug.
+  includes four renderer files (`player/mse.ts`, `player/stage.ts`, `store.ts`,
+  `player/pip.ts`) to *enforce* that they stay free of DOM types — that's what
+  lets the trickiest playback logic be tested in Node. If you add a DOM
+  reference to one of those, the typecheck failure is the design telling you
+  something, not a config bug.
 
 - **State that several surfaces share lives in the store; a mutation only one
   screen makes is called on `window.rerun` by that screen, which then calls the
