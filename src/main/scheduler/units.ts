@@ -1,5 +1,5 @@
 /**
- * Playable units (plan §4, "the key abstraction").
+ * Playable units (docs/data-model.md, "the key abstraction").
  *
  * A *unit* is either one standalone episode or an entire multipart arc. Every
  * scheduling structure in the app — sequential cursors, shuffle bags, and the

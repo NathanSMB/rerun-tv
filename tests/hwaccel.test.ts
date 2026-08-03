@@ -1,5 +1,5 @@
 /**
- * Hardware encode/decode (docs/hwaccel-plan.html).
+ * Hardware encode/decode (docs/playback.md, "Hardware encode & decode").
  *
  * The arg builders carry the whole feature, so they are asserted directly: what
  * matters is that each backend produces a command ffmpeg will accept, that the

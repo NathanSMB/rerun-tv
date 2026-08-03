@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 /**
- * The blackout inherits fullscreen (docs/blackout-fullscreen-plan.html).
+ * The blackout inherits fullscreen (docs/ui.md, "Blackout").
  *
  * `handoff.test.ts` owns the store's half — that `goDark` asks for the handoff,
  * and asks before it flips the screen. What it cannot see is the half that made

@@ -1,6 +1,6 @@
 # The scheduler
 
-`src/main/scheduler/` — the implementation of [plan.html](plan.html) §5. This is
+`src/main/scheduler/`. This is
 the heart of the app: when a channel needs its next episode (tune-in,
 auto-advance, or skip), the scheduler runs a two-stage pick over the channel's
 lineup.
@@ -169,8 +169,10 @@ no await points inside a pick for another tune-in to interleave with.
 
 An arc left dangling by a crash mid-airing is caught by `validateActiveArc`,
 which runs at tune-in and clears an `active_group_id` pointing at a group that
-no longer exists or an out-of-range part index. That's plan §10's mitigation,
-implemented where it's cheapest to check.
+no longer exists or an out-of-range part index. That is the whole mitigation for
+scheduler state corruption
+([architecture.md](architecture.md#risks-and-what-answers-them)), implemented
+where it's cheapest to check.
 
 Shuffle bags store unit keys rather than episode ids, so regrouping episodes
 into an arc doesn't corrupt an in-flight bag: keys that no longer resolve to a

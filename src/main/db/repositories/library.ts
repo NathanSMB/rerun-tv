@@ -1,5 +1,6 @@
 /**
- * Every *write* to the library tables, and the shared row mapping (plan §4).
+ * Every *write* to the library tables, and the shared row mapping
+ * (docs/data-model.md).
  *
  * Read-model queries — the ones that exist to shape one view — deliberately
  * live beside the view model they feed, in `services/` and `scheduler/`, rather
@@ -405,7 +406,7 @@ export function listEpisodePaths(
 }
 
 // ---------------------------------------------------------------------------
-// Cached loudness (docs/loudness-equalization-plan.html, phase 2)
+// Cached loudness (docs/playback.md, "The background measuring job")
 // ---------------------------------------------------------------------------
 
 /**
@@ -723,8 +724,8 @@ export function deleteArc(db: Db, groupId: number): void {
  * Throw away this show's *detected* arcs so the scanner can redetect them.
  *
  * Filtering on `source = 'auto'` is the whole point: the heuristic re-runs on
- * every scan, but a user's manual grouping is the source of truth (plan §3) and
- * has to survive a rescan untouched.
+ * every scan, but a user's manual grouping is the source of truth
+ * (docs/library.md) and has to survive a rescan untouched.
  */
 export function clearAutoArcs(db: Db, showId: number): void {
     db.transaction(() => {

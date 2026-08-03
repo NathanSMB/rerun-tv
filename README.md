@@ -77,39 +77,23 @@ Then: **Settings → + Add folder** to point at your library, wait for the scan,
 | [docs/architecture.md](docs/architecture.md) | The three processes, the IPC contract, layering |
 | [docs/data-model.md](docs/data-model.md) | The tables, and why progress is split from configuration |
 | [docs/scheduler.md](docs/scheduler.md) | Playable units, cursors, shuffle bags, arc locking |
-| [docs/playback.md](docs/playback.md) | direct / remux / transcode, seeking, the ffmpeg supervisor |
+| [docs/playback.md](docs/playback.md) | direct / remux / transcode, hardware encode, loudness, the ffmpeg supervisor |
 | [docs/library.md](docs/library.md) | Scanning, filename parsing, arc detection |
 | [docs/backup-restore.md](docs/backup-restore.md) | Backing up the database, and importing one back |
 | [docs/ui.md](docs/ui.md) | The screens, the sleep timer, and the design language |
-| [docs/development.md](docs/development.md) | Setup, scripts, layout, conventions |
+| [docs/development.md](docs/development.md) | Setup, scripts, layout, conventions, testing, CI and releases |
 
-## Planning documents
-
-Historical, and kept for the reasoning rather than as current truth — the `.md`
-files above describe how the app works *now*; these describe how it was
-designed. Where they disagree, the `.md` docs (and the code) win.
-
-- **[docs/plan.html](docs/plan.html)** — MVP architecture plan: locked decisions,
-  system architecture, data model, the scheduler, playback pipeline, player
-  behavior, build order, and risks.
-- **[docs/mockup.html](docs/mockup.html)** — UI design mock: the Guide, the
-  Player, the Channel Editor, the Library and Settings, in the "Saturday, 1994"
-  broadcast direction.
-- **[docs/channel-edit-ux.html](docs/channel-edit-ux.html)** — the redesign that
-  retired the mockup's standalone Channel Editor screen and folded channel
-  editing into the Guide.
-
-Open any of them directly in a browser. `docs/` also holds the per-feature
-plans the later work was built from (the stall fix, picture-in-picture, hardware
-acceleration, the sleep timer, loudness equalization, the renderer test
-harness); several are cited by name from the `.md` docs and from source
-comments, which is why they are still here.
+These describe how the app works now, and they carry the reasoning with them —
+what was measured, what failed first, and which obvious approach was abandoned
+and why. The design documents and per-feature plans they grew out of have been
+folded in and removed; `git log` has them if you want the archaeology.
 
 ## Not in the MVP
 
 Simulated live schedules (the duration data and play log already support them),
 interstitials/bumpers, external metadata lookups, LAN access, and mid-episode
-resume.
+resume. See
+[docs/architecture.md](docs/architecture.md#deliberately-out-of-scope).
 
 (Hardware-accelerated transcoding *has* since landed — VAAPI and NVENC, probed
 at startup and off by default. See Settings → Playback.)

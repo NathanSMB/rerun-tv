@@ -166,8 +166,8 @@ function videos(): HTMLVideoElement[] {
 // ---------------------------------------------------------------------------
 
 /**
- * PiP as Electron was measured performing it (docs/pip-plan.html §2). The
- * orderings were first taken on 38 and re-checked on 43, which is what the app
+ * PiP as Electron was measured performing it (docs/playback.md,
+ * "Picture-in-picture across a handoff"). The orderings were first taken on 38 and re-checked on 43, which is what the app
  * ships against; document-PiP differs between the two but element-PiP — the
  * only kind this models — did not change.
  *
@@ -283,7 +283,7 @@ function installPipModel(): PipModel {
 
 /**
  * Fullscreen as Chromium performs it, in the two respects the blackout handoff
- * turns on (docs/blackout-fullscreen-plan.html):
+ * turns on (docs/ui.md, "Blackout"):
  *
  * 1. **Removing the fullscreen element from the document drops fullscreen.**
  *    Modelled as a getter that reports a detached element as nothing at all,
@@ -411,7 +411,7 @@ function letPlaysTake(): boolean {
  * screens are not this layer's business and are not mounted — except the
  * blackout, which is, because it is the one screen whose behaviour is a
  * *consequence* of the Player's teardown: it inherits fullscreen across the
- * unmount (docs/blackout-fullscreen-plan.html), and nothing on either side of
+ * unmount (docs/ui.md, "Blackout"), and nothing on either side of
  * that swap can be tested without both halves of it present.
  *
  * The exception is the one App.tsx makes: with the picture floating in a PiP

@@ -1,5 +1,6 @@
 /**
- * Library read models and the unmatched-file fix-up (plan §3, §8).
+ * Library read models and the unmatched-file fix-up
+ * (docs/library.md, docs/ui.md).
  *
  * The Library screen wants one aggregate per show — episode count, season count,
  * arc count, and how the episodes split across the three playback paths (the

@@ -1,10 +1,9 @@
 # Architecture
 
-The implementation of [plan.html](plan.html) §2. Everything lives in one
-Electron app. The main process owns the library, the database, the scheduler and
-a loopback HTTP stream server that fronts ffmpeg; the renderer is a plain web UI
-whose `<video>` element points at that server. **The renderer never touches the
-filesystem.**
+Everything lives in one Electron app. The main process owns the library, the
+database, the scheduler and a loopback HTTP stream server that fronts ffmpeg; the
+renderer is a plain web UI whose `<video>` element points at that server. **The
+renderer never touches the filesystem.**
 
 ```
 ┌─ Renderer · Chromium ───────────┐      ┌─ Main · Node ──────────────────┐
@@ -30,6 +29,21 @@ filesystem.**
                                                   ~/TV/…
 ```
 
+## The decisions everything else assumes
+
+Settled before any code was written, and still true. Each one is load-bearing
+enough that changing it would be a rewrite rather than a refactor.
+
+| Axis | Decision | Why |
+| --- | --- | --- |
+| App shell | **Electron desktop app** | A single-window native app on Arch. Official Electron builds ship the H.264/AAC decoders, and the Node main process can spawn ffmpeg and own the database — one runtime covers both halves. |
+| Playback | **ffmpeg remux / transcode** | Plays anything in the library. Files are probed once at scan time; most MKVs need only a lossless remux, so full re-encodes are the rare path. |
+| Library | **Folder scan + filename parsing** | `Show/Season 01/Show - S01E03.mkv` parses on its own; a fix-up UI handles the oddballs. No network metadata. |
+| Channel model | **Lean-back playlist** | Tuning in starts the next episode from the top and auto-plays forever. Durations and a play log are recorded anyway, so a simulated-live schedule can layer on later without rework. |
+| Storage | **SQLite (`better-sqlite3`)** | One file, a synchronous API in the main process, trivial backup. The synchronous part is what makes every scheduler transition atomic without await points. |
+| UI stack | **React + TypeScript + Vite** | Fast iteration in the renderer, typed IPC through a preload bridge. |
+| Packaging | **AppImage (electron-builder)** | Runs on Arch without a package-manager dance. Uses the system ffmpeg (`pacman -S ffmpeg`) and never bundles one — which is also why shipping this raises no GPL question. |
+
 ## The three processes
 
 ### Main (`src/main/`)
@@ -42,10 +56,11 @@ interleave with.
 Boot order in `index.ts` is deliberate: XDG data dir → **apply a staged database
 import, if one is waiting** → open and migrate the database → install the desktop
 entry and, on KDE, the picture-in-picture window rule → resolve ffmpeg and
-start the stream server → construct the scanner → register IPC handlers → open
-the window. The codec check runs *after* the window is on its way, because per
-plan §10 a failure is non-fatal: anything unplayable just routes to the transcode
-path.
+start the stream server → construct the scanner and the background loudness job →
+register IPC handlers → open the window. The codec check and the hardware-encoder
+probe both run *after* the window is on its way, because a failure in either is
+non-fatal: anything unplayable just routes to the transcode path, and an
+unavailable backend degrades to software.
 
 The import step comes first because it's the only moment nothing holds a handle
 on the database file — see [backup-restore.md](backup-restore.md).
@@ -133,11 +148,51 @@ db/index.ts            open + migrate
 A handler that starts to look like it's deciding something belongs in
 `services/` or `scheduler/` instead.
 
+## Risks, and what answers them
+
+The five things most likely to go wrong were named up front, each with the
+mitigation it would get. All five shipped; this table is where the rest of the
+docs point when they say a behaviour is an accepted tradeoff rather than a bug.
+
+| Risk | What answers it |
+| --- | --- |
+| **Seek latency on transcoded streams** | Keyframe-aligned `-ss` *before* the input, which is a fast seek and a coarse one. Coarse is accepted: most content direct-plays or remuxes, where seeking is native anyway. See [playback.md](playback.md#the-stream-server). |
+| **Filename chaos in real libraries** | The Unmatched bucket plus manual assignment, so a bad parse never blocks a show from airing and the parser grammar can grow case by case. See [library.md](library.md#the-unmatched-bucket). |
+| **The transition gap between episodes** | Pre-resolve the next unit and warm its stream during the last 30 seconds; the channel banner covers the handoff moment. This started as "warm the URL" and became the real double-buffered handoff — see [playback.md](playback.md#gapless-handoffs). |
+| **Electron codec drift** | Codec support is asserted at startup against a tiny generated asset, and a failure is non-fatal: anything unplayable routes to the transcode path. See [playback.md](playback.md#codec-check). |
+| **Scheduler state corruption (a crash mid-arc)** | Every state transition is a single SQLite transaction, and an orphaned active arc is validated — and cleared if stale — at tune-in. See [scheduler.md](scheduler.md#durability). |
+
+Two consequences of the last one are visible in normal use rather than only after
+a crash: an episode left mid-play logs as incomplete, and a schedule step
+committed by a prewarm that nobody watched is simply spent. Both are the same
+tradeoff, taken deliberately — the alternative is a rollback path that has to be
+correct across a process death.
+
+## Deliberately out of scope
+
+Not "not yet built" so much as "not what this is". The data model already
+supports the first two, which is why the durations and the play log are recorded
+now:
+
+- **Simulated live schedules** — a per-channel virtual clock, so tuning in drops
+  you mid-episode rather than at the top of one.
+- **Interstitials** — bumpers and commercials from a clips folder, between
+  episodes.
+- **External metadata** (TVDB/TMDB artwork and titles), movies as channel filler,
+  LAN or TV-browser access, multi-user profiles, and mid-episode resume.
+
+Hardware-accelerated transcoding was on this list and has since landed — VAAPI
+and NVENC, probed at startup, off by default
+([playback.md](playback.md#hardware-encode--decode)).
+
 ## Further reading
 
 - [data-model.md](data-model.md) — the eight tables and why state is split from configuration
 - [scheduler.md](scheduler.md) — playable units, cursors, shuffle bags, arc locking
-- [playback.md](playback.md) — direct / remux / transcode, seeking, the supervisor
+- [playback.md](playback.md) — direct / remux / transcode, hardware encode,
+  loudness, the supervisor
 - [library.md](library.md) — scanning, filename parsing, arc detection
 - [backup-restore.md](backup-restore.md) — backing up the database, and importing one back
 - [ui.md](ui.md) — the four screens and the design language
+- [development.md](development.md) — setup, scripts, conventions, testing,
+  CI and releases

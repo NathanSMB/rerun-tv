@@ -1,12 +1,11 @@
 # The UI
 
-`src/renderer/` — the implementation of [mockup.html](mockup.html) and
-[plan.html](plan.html) §7–8. Four screens plus a blackout, all configuration
-in-app, no config files.
+`src/renderer/`. Four screens plus a blackout, all configuration in-app, no
+config files.
 
-The mockup shows a fifth: a standalone **Channels** screen. It is gone — channel
-editing now unfolds inside the Guide, designed in
-[channel-edit-ux.html](channel-edit-ux.html) and described under *Guide* below.
+The original design had a fifth: a standalone **Channels** screen, reached from
+its own app-bar tab. It is gone — channel editing now unfolds inside the Guide,
+described under *Guide* below.
 
 ## The design language
 
@@ -91,8 +90,9 @@ it isn't mouse-only.
 
 #### Hot rows, and the fold-out editor
 
-Designed in [channel-edit-ux.html](channel-edit-ux.html), which retired the
-standalone Channels screen. Three decisions carry the design:
+The design that retired the standalone Channels screen — and the Guide's preview
+aside with it, so the lineup is now one full-width surface. Three decisions carry
+it:
 
 - **Controls surface under the pointer.** Hovering a row replaces its mono
   show-title block with two buttons: **▶** tunes straight in, **✎** unfolds that
@@ -175,7 +175,7 @@ Two behaviours are load-bearing plan decisions:
   `src` at an episode handoff never drops out of fullscreen. The one thing the
   wrapper cannot survive is its own unmount — which is what going dark does — so
   the sleep path hands fullscreen to the document root first; see the Blackout
-  section below and [blackout-fullscreen-plan.html](blackout-fullscreen-plan.html).
+  section below.
 - **Seeking depends on the playback path.** Direct-play files seek natively via
   `currentTime`; remuxed and transcoded streams are open-ended pipes, so a scrub
   loads a new URL with `?t=` and the player tracks the offset to keep the
@@ -185,14 +185,14 @@ Auto-advance fires the scheduler on `ended`, shows the banner briefly, and plays
 on. In the last 30 seconds an *up next* toast appears while the next stream
 pre-warms.
 
-Keyboard map (plan §7): `Space` play/pause · `↑`/`↓` volume · `→` skip · `F`
+Keyboard map: `Space` play/pause · `↑`/`↓` volume · `→` skip · `F`
 fullscreen · `Esc` back to the guide · `M` mute · `S` sleep timer · `P`
 picture-in-picture.
 
 ### Picture-in-picture — the channel follows you
 
 A PiP button in the OSD row, or `P`, floats the picture in an always-on-top
-window (designed in [pip-plan.html](pip-plan.html)). It is *element* PiP, so
+window. It is *element* PiP, so
 there is no OSD of ours in the floating window; the controls in it are
 Chromium's. (Document PiP was broken in Electron 38, which forced that choice;
 as of Electron 43 `documentPictureInPicture.requestWindow()` works, so floating
@@ -222,6 +222,29 @@ Three consequences are worth knowing before touching any of it:
 Both the button and `P` are refused nothing else: fullscreen and PiP are
 mutually exclusive states of the same picture, so asking for one leaves the
 other. A blackout closes the window — a floating window is a light source too.
+
+Three smaller decisions, each of which someone will otherwise rediscover:
+
+- **A dead stream exits PiP.** A failed episode in the floating window is a
+  frozen frame with no explanation, because the Retry/Skip card is drawn in the
+  main window where nobody is looking. So a stream error with PiP active brings
+  the picture home first.
+- **Chromium's own overlay pause has to count as a human pause.** It drives the
+  same element without going through our OSD, so it must clear `wantsPlayRef`
+  through the `pause` event path — otherwise the sleep timer's
+  expired-while-paused rule can't see it. Both close buttons (`✕` and "back to
+  tab") are likewise indistinguishable to us: they fire the same
+  `leavepictureinpicture`, so there is one rule for both, and no attempt to guess
+  intent.
+- **Auto-PiP on minimize is deliberately not built.** The renderer cannot do it —
+  a fresh entry needs a gesture. The main process *could* fake one
+  (`webContents.executeJavaScript(code, /* userGesture */ true)` on the minimize
+  event), and that is written down here so nobody rediscovers it as a clever
+  idea: shipping a synthetic-gesture workaround for a Chromium policy is the kind
+  of cleverness this codebase has learned to distrust.
+
+Window geometry is Chromium's: it sizes the float from the video's aspect ratio
+and remembers a resize per origin, so there is nothing for us to persist.
 
 #### Staying on top: one window rule
 
@@ -282,9 +305,13 @@ the keyboard's media keys through MPRIS.
 ### The sleep timer
 
 A moon button in the OSD row, or `S`, which opens the **sleep panel**
-(`components/SleepPanel.tsx`, designed in
-[sleep-dial-plan.html](sleep-dial-plan.html)). An amber chip beside the moon
-counts down whenever something is armed.
+(`components/SleepPanel.tsx`). An amber chip beside the moon counts down whenever
+something is armed.
+
+It replaced a press-to-cycle button over six presets, where arming two hours cost
+five presses and anything above two hours or between presets was unreachable. The
+dial makes all 61 durations one gesture, and the first press still arms the
+configured default, so the fast path survived the change.
 
 The panel is a dial from off to five hours (`SLEEP_MAX_MIN`) in five-minute
 detents, so any bedtime is one drag away rather than a preset it happens to land
@@ -367,8 +394,17 @@ taskbar back. So `goDark` re-targets fullscreen to the document root *before*
 flipping the screen (legal without a gesture while a session exists — the same
 allowance PiP transfers rely on), and the blackout inherits it. The Player's
 teardown still exits fullscreen when leaving for the guide, but only when the
-stage is still the fullscreen element, so it cannot undo the handoff. Designed
-in [blackout-fullscreen-plan.html](blackout-fullscreen-plan.html).
+stage is still the fullscreen element, so it cannot undo the handoff.
+
+The bug this fixes had two sufficient causes, which is why the fix is in two
+places: removing the fullscreen element from the DOM makes Chromium exit
+fullscreen on its own (spec behaviour, not a bug), *and* the Player's cleanup
+called `exitFullscreen()` unconditionally on unmount. Both are pinned from both
+sides — `tests/handoff.test.ts` asserts the store asks for the handoff while the
+screen is still `player`, and `tests/renderer/blackout-fullscreen.test.tsx`
+mounts both screens across the swap. The fallback, had Chromium refused the
+gesture-less re-target, was window fullscreen from the main process; it was never
+needed, and it would have mixed the app's two fullscreen systems.
 
 The one affordance, *Back to channels*, is hidden until the pointer moves, on the
 same reveal-then-idle pattern the OSD uses and tuned by the same
@@ -400,6 +436,12 @@ a two-column grid, which stopped working once Playback grew to twice the height
 of Library: no arrangement of quadrants hides that, one column always ends early
 and leaves a hole in the page. A single column has no such seam.
 
+Two other layouts were drawn before the rail won: **menu pages**, where each
+section is its own page behind a tab strip, and a **program log**, one long
+scroll with each section collapsed to a summary line until opened. Both hide
+rows behind a click, which is the wrong trade for a screen whose job is to show
+every knob at once.
+
 The rail lights the section you're reading and jumps to one on click. Its spy is
 scroll-position based rather than an `IntersectionObserver`, for the sake of the
 last stop: System is shorter than the window, so it never reaches the reading
@@ -426,7 +468,17 @@ probe found ("available", "not detected"), but every option stays *selectable*:
 a probe can be wrong, and a backend this machine can't honour simply falls back
 to software at stream time. The System section reports both backends' verdicts
 and the render node VAAPI proved out. See
-[hwaccel-plan.html](hwaccel-plan.html).
+[playback.md](playback.md#hardware-encode--decode).
+
+**Loudness equalization** is the one Playback toggle that changes what a file
+costs rather than only how it is encoded: turning it on takes direct-play files
+down the remux pipe and gives up the audio stream copy on the rest, because a
+filter needs an encoder. It is off by default for that reason. The hint says
+what it does in the terms a viewer has — evening out volume across episodes and
+between quiet and loud scenes — and mentions that episodes are measured in the
+background while nothing is playing, since that measuring is the only visible
+sign the feature is doing anything before the audio changes. See
+[playback.md](playback.md#loudness-equalization).
 
 ## Accessibility
 

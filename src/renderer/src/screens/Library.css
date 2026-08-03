@@ -1,10 +1,10 @@
 /*
- * Screen 04 · The Library — mockup.html screen 04.
+ * Screen 04 · The Library.
  *
  * A full-width scan strip over a two-column body: parsed shows and the
  * unmatched queue on the left, the arc panel on the right. Buttons that are
  * really rows (a show row, an episode in the arc builder) reset the native
- * button chrome and take their look from the mockup's div markup.
+ * button chrome so they can look like the rows they are.
  */
 
 /* ---- scan strip ---- */

@@ -1,9 +1,9 @@
 /**
  * Screen 05 · Settings.
  *
- * Every knob in one place — the app never asks anyone to edit JSON (plan §8).
- * Four sections: where the media lives, how it plays, how the interface
- * behaves, and what the system underneath is doing.
+ * Every knob in one place — the app never asks anyone to edit JSON
+ * (docs/ui.md). Four sections: where the media lives, how it plays, how the
+ * interface behaves, and what the system underneath is doing.
  *
  * They are laid out as stops on a tuning rail — numbered 01–04 down a sticky
  * dial, with one flat column of rows beside it — rather than the four cards in

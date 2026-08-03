@@ -45,8 +45,10 @@ has no hook until someone has installed once.
 | `npm run lint:fix` | The same, applying every safe fix |
 | `npm test` | Vitest, once |
 | `npm run test:watch` | Vitest, watching |
+| `npm run test:coverage` | Vitest with coverage, against the floor in `vitest.config.ts` |
 | `npm run soak` | Drive the built app over CDP and fail on playback stalls — see below |
 | `npm run dist` | Build and package a Linux **AppImage** into `release/` |
+| `npm run release` | The same, publishing to a GitHub release — CI's job, not yours |
 
 ## Project layout
 
@@ -65,9 +67,11 @@ src/
       index.ts       open + migrate
       schema.ts      the migration list
       repositories/  all SQL, camel-cased at the boundary
-    library/         parse · arcs · ffprobe · scanner
+    library/         parse · arcs · ffprobe · scanner · loudness (the background
+                     R128 measuring job, not part of a scan)
     scheduler/       playable units · what plays next
-    stream/          ffmpeg supervisor · loopback HTTP server
+    stream/          ffmpeg supervisor · loopback HTTP server · hwaccel (the three
+                     encoder recipes + the startup probe) · loudness (the filter chain)
     services/        view models the renderer consumes · restore.ts
     ipc/handlers.ts  one handle() per IPC channel
   preload/index.ts   contextBridge — the only thing the renderer can see
@@ -82,12 +86,15 @@ src/
     src/player/      mse.ts · pip.ts · stage.ts (all DOM-free) · VideoSurface.tsx
     src/styles/      tokens.css (design tokens) · global.css (shared chrome)
 .husky/              the pre-commit hook — Biome over the staged files
+.github/workflows/   ci.yml · release.yml · pages.yml — see "CI and releases" below
 biome.json           formatter + linter config, the one source of style truth
 resources/           the application icon — electron-builder's buildResources and the running window's icon
+scripts/             soak.mjs (below) · coverage-badge.mjs · verify-native-abi.mjs
+site/                the GitHub Pages landing page — static, no build step
 tests/               Vitest — parser, arcs, units, scheduler, stream, repos, restore
   renderer/          the DOM suites: the Player's effect decisions, the guide's fold
   helpers/           db fixtures · media clips · the Electron stub (handlers.test.ts)
-docs/                this documentation, plus the original plan and mockup
+docs/                this documentation
 ```
 
 ## Conventions
@@ -154,7 +161,7 @@ The configuration is Biome's own defaults with three deliberate departures:
 | --- | --- |
 | `indentStyle: space`, `indentWidth: 4` | House style |
 | `quoteStyle: double` | House style |
-| `files.includes` excludes `docs/**` | Those are standalone plan and mockup documents, not source. They are hand-written HTML that happens to contain script tags, and formatting them would rewrite artefacts nobody imports. |
+| `files.includes` excludes `docs` | Prose, not source. Biome has no Markdown handler today, so this changes nothing right now; it is kept so that whatever lands in `docs/` next isn't reformatted by a tool that doesn't know what it is. |
 | `overrides` turns off `noNonNullAssertion` under `tests/` | A `!` in a test asserts a fixture invariant. If the invariant breaks the test fails loudly, which is the point — rewriting 55 of them into guards would add noise and hide nothing. It stays on for `src/`. |
 
 Everything else — the `recommended` rule set, including the a11y and
@@ -168,7 +175,7 @@ off globally. There are only a handful, and each is load-bearing:
 - `VideoSurface.tsx` and `Player.tsx` narrow their effect dependency lists on
   purpose. That effect owns an ffmpeg process; widening it to what
   `useExhaustiveDependencies` wants restarts the encoder on every render, which
-  is exactly the stall documented in [stall-fix-plan.html](stall-fix-plan.html).
+  is exactly the stall class [playback.md](playback.md) exists to describe.
 - The guide's channel row is a `role="button"` div rather than a `<button>`,
   because a real button synthesises a click from Enter and Space and the list's
   key handler already spends those on "tune in" — the row would activate twice.
@@ -248,6 +255,15 @@ does not use anywhere.
 directories that belong to the user's desktop, and both are variations on
 *leave everything else exactly as it was*.
 
+`hwaccel.test.ts` and `loudness.test.ts` are both mostly about **arg spelling**,
+which sounds trivial and is not: an argument array that composes cleanly in
+TypeScript and that ffmpeg then rejects is worth nothing. So the interesting
+cases in both run the built command line through a real ffmpeg, and skip
+themselves when there isn't one. Around that sit the pure halves — the quality
+tier mapping and the device-enumeration order with an injected node lister, the
+pre-gain arithmetic and the loudnorm JSON parser, and the measuring job's
+stop/restart and back-off behaviour.
+
 `restore.test.ts` is the exception that uses real files in a temp directory,
 because the whole point of that module is filesystem behaviour — what survives a
 rejected import, what gets copied before a swap, what happens to a stale WAL
@@ -281,6 +297,19 @@ Everything between the two seams is production code: the Player, `VideoSurface`
 (including the rule that events are forwarded only while a surface is active),
 and the store with its `serialize()` queue.
 
+Three other shapes were considered and rejected, and each rejection is why this
+one looks the way it does. **Extracting the decision into a DOM-free module** —
+the `mse.ts` pattern this repo otherwise reaches for first — would have been
+trivially correct while the real effect stayed broken, because the bugs were in
+the *wiring*: dependency arrays, ref reads, event-to-state timing. **Booting
+Electron in CI** inherits the `better-sqlite3` ABI dance plus a display server,
+the two things `npm test` has deliberately stayed free of; real-Chromium
+verification already has a home in the soak rig. And **trusting a DOM emulator's
+`<video>`** is the trap the whole layer is built to avoid — a fake that fires
+`ended` without a preceding `pause` happily passes the broken code. So the
+element is *ours*, and the measured orderings live in the harness rather than in
+a dependency.
+
 The two seams are the ones the repo already treats as contracts:
 
 - **The media elements.** `happy-dom` supplies DOM globals so `react-dom` can
@@ -299,7 +328,7 @@ gesture, a transfer does not, and a transfer's `leavepictureinpicture` precedes
 the new element's enter) and **fullscreen** (same gesture rule, a detached
 element reports as no fullscreen at all, and `Esc` is swallowed by the browser
 on its way out — the facts the blackout's fullscreen handoff turns on, see
-[blackout-fullscreen-plan.html](blackout-fullscreen-plan.html)).
+[ui.md](ui.md#blackout--where-the-sleep-timer-leaves-you)).
 
 **What it deliberately does not cover.** Real Chromium semantics. This layer
 *encodes* what the soak harness measured; it cannot discover anything new about
@@ -347,7 +376,8 @@ Its shell mounts one other screen: the Blackout, because inheriting fullscreen
 across the Player's unmount (`blackout-fullscreen.test.tsx`) is a property of
 the swap between them, invisible with either half missing. Other screens are
 mounted directly with `createRoot`, with only the preload bridge scripted per
-file: `settings-rail.test.tsx`, `sleep-panel.test.tsx`, `guide-fold.test.tsx`.
+file: `settings-rail.test.tsx`, `settings-hwaccel.test.tsx`,
+`sleep-panel.test.tsx`, `guide-fold.test.tsx`, `library.test.tsx`.
 
 `guide-fold.test.tsx` covers the Guide's fold-out channel editor
 ([ui.md](ui.md)) — one fold at a time, the keyboard path hover cannot serve,
@@ -355,7 +385,7 @@ and the two-step delete. Two things it does not assert, deliberately:
 
 - **The row's fixed height under hover.** happy-dom lays nothing out, so every
   box is 0×0. That the controls and the show titles share one grid cell is a CSS
-  fact and belongs to the mockup and a real window, not to a DOM test.
+  fact and belongs to a real window, not to a DOM test.
 - **Anything the fold's mutations do to the scheduler.** Those go over the bridge
   and are `scheduler.test.ts`'s job against a real database.
 
@@ -367,6 +397,56 @@ Two harness details are worth copying rather than rediscovering:
 - **React installs its own `value` setter on controlled inputs** and ignores a
   plain assignment, so typing has to call the native setter (`type()` in that
   file) or `onChange` never fires and the form stays empty.
+
+## CI and releases
+
+Three workflows in `.github/workflows/`, each with a different trigger.
+
+**`ci.yml`** runs on every pull request *and* on `main` after a merge. Those are
+not redundant: a PR run tests the branch head rather than its merge with `main`,
+so two individually-green PRs can still merge into a broken `main`, and the push
+run is the only thing watching the branch everyone builds on. It runs lint,
+typecheck, the suite with coverage, and a production build, with
+`RERUN_REQUIRE_FFMPEG=1` set — several suites skip themselves silently without a
+real ffmpeg, and that variable turns the skip into a hard failure so a broken
+install can never quietly turn the suite green.
+
+The coverage badge in the README is regenerated by `scripts/coverage-badge.mjs`
+and committed onto the PR branch, so the number arrives for review alongside the
+code that moved it. Don't edit it by hand. On fork PRs the token is read-only and
+the step skips itself, which is expected. The badge is a static shields.io URL
+with the number baked in, so the README is self-describing — no gist, branch or
+third-party service holds the real value.
+
+**`release.yml`** fires on a `v*.*.*` tag, never on a merge. Cut one with:
+
+```sh
+npm version patch|minor|major && git push --follow-tags
+```
+
+`npm version` bumps `package.json` and creates the matching tag in one commit,
+which is what keeps the two in step — the job refuses to publish if they
+disagree, because electron-builder names the artifact from `package.json` and a
+typo would otherwise ship a `v0.2.0` release containing a 0.1.0 build. A tag can
+point at any commit, including one that never went through PR CI, so the job
+re-runs lint, typecheck and the suite before building.
+
+**`verify-native-abi.mjs` is the interesting part of that job.** It is an
+electron-builder `afterPack` hook that `dlopen`s every packed `.node` addon with
+the *packed Electron binary* and fails the build on a `NODE_MODULE_VERSION`
+mismatch. It exists because 0.1.0 shipped an AppImage that died on boot with
+`ERR_DLOPEN_FAILED`: `npm test` had flipped `better-sqlite3` to the Node ABI,
+`@electron/rebuild` read its own stale `.forge-meta` marker, concluded the module
+was already built for Electron, and packaged the Node binary. Nothing before
+packaging noticed, because every earlier step runs under Node — where the
+wrong-ABI binary is the *correct* one. `rebuild:node` now clears that marker, and
+this hook is the backstop if one slips through: the last point where a bad build
+can still be stopped rather than shipped.
+
+**`pages.yml`** publishes `site/` — a static landing page with no build step — to
+GitHub Pages whenever it changes on `main`. It deploys via OIDC rather than
+pushing a `gh-pages` branch, so there is no second copy of the page to drift from
+the one in the repo.
 
 ## The soak harness
 

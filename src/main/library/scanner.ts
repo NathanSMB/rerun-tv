@@ -1,5 +1,5 @@
 /**
- * The library scanner (plan §3).
+ * The library scanner (docs/library.md).
  *
  * Walks the configured scan roots, parses filenames, probes what changed, and
  * writes episodes to SQLite. Two properties matter more than anything else here:
@@ -462,7 +462,7 @@ export class Scanner {
      *
      * Only `auto` groups are rewritten, and episodes already inside a *manual*
      * group are withheld from the detector — the user's grouping is the source of
-     * truth (plan §3) and a rescan must never quietly re-cut it.
+     * truth (docs/library.md) and a rescan must never quietly re-cut it.
      */
     #refreshAutoArcs(showId: number): void {
         const manualMembers = new Set<number>();

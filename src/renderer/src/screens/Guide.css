@@ -1,5 +1,5 @@
 /*
- * Screen 01 · The Guide — docs/channel-edit-ux.html, "Hot Rows".
+ * Screen 01 · The Guide — docs/ui.md, "Hot rows, and the fold-out editor".
  *
  * One full-width column: the preview aside is gone, and the channel editor
  * unfolds beneath a row instead (see components/ChannelFold.css).

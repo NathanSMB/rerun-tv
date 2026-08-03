@@ -1,5 +1,6 @@
 /**
- * MediaSource playback — the pump (docs/stall-fix-plan.html, phase 2).
+ * MediaSource playback — the pump
+ * (docs/playback.md, "The renderer: MediaSource, not `src`").
  *
  * ## Why this module exists
  *

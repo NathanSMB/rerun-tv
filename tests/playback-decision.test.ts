@@ -80,7 +80,7 @@ describe("decidePlaybackPath", () => {
     });
 
     /**
-     * Phase 1 of docs/stall-fix-plan.html. This is the case that mattered: 328 of
+     * Phase 1 of docs/playback.md. This is the case that mattered: 328 of
      * 386 episodes in the reference library were being fully re-encoded purely
      * because they carried AC3, and a full re-encode is what turns a dropped
      * connection into a minute of dead air rather than a second.

@@ -1,14 +1,14 @@
 /**
  * Screen 04 · The Library.
  *
- * Where files become television (plan §3). Three jobs:
+ * Where files become television (docs/library.md). Three jobs:
  *
  * 1. **Scan status** — a live strip driven by `scan` push events from main, with
  *    the one button that means pause / resume / rescan depending on state.
  * 2. **Shows** — what the scanner parsed, and how each file will play (the
- *    DIRECT / REMUX / TRANSCODE decision made once at scan time, plan §6).
- *    Unparseable files wait in the Unmatched queue instead of vanishing, and can
- *    be assigned by hand or dismissed.
+ *    DIRECT / REMUX / TRANSCODE decision made once at scan time — see
+ *    docs/playback.md). Unparseable files wait in the Unmatched queue instead
+ *    of vanishing, and can be assigned by hand or dismissed.
  * 3. **Arcs** — the Part-N heuristic only proposes; this panel is the source of
  *    truth the scheduler obeys, so it can ungroup false positives and group any
  *    set of episodes the heuristic missed.

@@ -1,5 +1,5 @@
 /**
- * Loudness equalization (docs/loudness-equalization-plan.html).
+ * Loudness equalization (docs/playback.md, "Loudness equalization").
  *
  * Two different complaints, one filter chain:
  *

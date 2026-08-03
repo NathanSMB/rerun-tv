@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The playback soak harness (docs/stall-fix-plan.html, "Verification & rollout").
+ * The playback soak harness (docs/development.md, "The soak harness").
  *
  * This is the rig that found the stall bug, promoted into a regression test. It
  * drives the real app over the Chrome DevTools Protocol: tunes in, plays several

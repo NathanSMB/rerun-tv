@@ -1,5 +1,5 @@
 /**
- * The gapless handoff (docs/stall-fix-plan.html, phase 3).
+ * The gapless handoff (docs/playback.md, "Gapless handoffs").
  *
  * This is the phase with a way to be quietly, badly wrong: `prewarmNext`
  * *reserves* the next pick thirty seconds early and `promoteNext` commits it at
@@ -371,7 +371,7 @@ describe("prewarm then handoff", () => {
 });
 
 /**
- * The sleep timer (docs/sleep-timer-plan.html).
+ * The sleep timer (docs/ui.md, "The sleep timer").
  *
  * Same invariant as the rest of this file — one play-log entry per episode
  * watched — with one addition: going to sleep is *not* the same as walking out.
@@ -470,8 +470,8 @@ describe("sleep timer", () => {
     });
 
     /**
-     * The dial's far end (docs/sleep-dial-plan.html). A five-hour timer is one a
-     * whole evening runs underneath, so what is checked here is that nothing about
+     * The dial's far end (docs/ui.md, "The sleep timer"). A five-hour timer is
+     * one a whole evening runs underneath, so what is checked here is that nothing about
      * the handoff path treats a long deadline differently: episodes keep airing,
      * one log entry each, and the stop lands on the unit that crosses expiry.
      */
@@ -625,7 +625,7 @@ describe("sleep timer", () => {
 });
 
 /**
- * The fullscreen handoff (docs/blackout-fullscreen-plan.html).
+ * The fullscreen handoff (docs/ui.md, "Blackout").
  *
  * Fullscreen belongs to the Player's stage wrapper, and going dark unmounts the
  * Player — so without a handoff the sleep screen drops back to a window and a

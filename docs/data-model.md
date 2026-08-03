@@ -26,6 +26,28 @@ shows ─1:many─ episodes ─0:1─ part_groups          channels ─1:many─
 settings (k/v)      scan_roots      unmatched_files
 ```
 
+## The migrations, so far
+
+Append-only: add an entry, never edit one that has shipped, and never build one
+out of a live constant (migration 3 freezes its codec list as literals for exactly
+that reason — a migration's text is history, and a database created after such an
+edit would take a different path through it than one that migrated before).
+
+| | |
+| --- | --- |
+| 1 | The ten tables above |
+| 2 | `channel_show_season_modes` — per-season mode overrides |
+| 3 | Re-derive `playback_path` for the audio-only transcode split, in one `UPDATE` rather than a rescan |
+| 4 | The five `loudness_*` columns on `episodes` |
+| 5 | Delete the dead `hardwareEncode` settings row, replaced by `hardwareAccel` |
+| 6 | An index on `play_log(episode_id)` |
+
+Note what 5 does *not* do: nothing is migrated *into* the new key. `getSettings`
+merges stored rows over `DEFAULT_SETTINGS`, so an absent key already reads as the
+default — the migration only stops a stale row riding along in that spread
+forever. Every settings change works this way, which is why the settings table
+needs a migration roughly never.
+
 ## The tables
 
 ### `shows`
@@ -38,7 +60,8 @@ the folder name *is* the show name.
 ### `episodes`
 `id · show_id · season · episode · episode_end · title · path (unique) ·
 duration_s · container · vcodec · acodec · width · height · part_group_id ·
-part_index · playback_path · mtime_ms · size_bytes`
+part_index · playback_path · mtime_ms · size_bytes · loudness_i · loudness_tp ·
+loudness_lra · loudness_thresh · loudness_scanned_at`
 
 - `episode_end` is non-null only for a file holding a double episode
   (`S01E03-E04`), so `episodeCode()` can render `S01E03-E04`.
@@ -51,6 +74,16 @@ part_index · playback_path · mtime_ms · size_bytes`
   rescan of a large library cheap.
 - `part_group_id` / `part_index` are arc membership. Null for a standalone
   episode; `part_index` is 1-based within the arc.
+- The five `loudness_*` columns cache one EBU R128 measurement, filled in by a
+  background job rather than by the scanner (ffprobe cannot produce them, and
+  nobody is waiting minutes at tune-in). All nullable with no default, because
+  "not measured yet" is a state the player has to handle anyway. `scanned_at` is
+  separate from the values on purpose: it records that we *tried*, so a genuinely
+  silent episode — which measures as `-inf` and stores nulls — is never queued
+  again. They are the one set of columns `upsertEpisode` protects conditionally:
+  invalidated only when the mtime/size pair actually moved, so a full rescan
+  doesn't throw away hours of measuring to learn nothing. See
+  [playback.md](playback.md#loudness-equalization).
 
 ### `part_groups` (arcs)
 `id · show_id · title · source`
@@ -67,7 +100,7 @@ sort_order`
 `active_group_id` / `active_part_index` are the **arc lock**. While they're set,
 the channel is airing a multipart arc and nothing may interrupt it. They're
 validated (and cleared if stale) at tune-in, so a crash mid-arc can't wedge a
-channel — plan §10.
+channel — see [architecture.md](architecture.md#risks-and-what-answers-them).
 
 `number` is the dial number the guide renders at 44px; `sort_order` is the
 drag-reorder position, kept separate so you can reorder the guide without
@@ -122,6 +155,14 @@ at the end of an episode records `true` (it finished), while leaving, skipping,
 or a timer expiring while paused records `false`. See
 [playback.md](playback.md#two-things-chromium-does-around-ended) for the Chromium
 event ordering that got this backwards once.
+
+This is the one table with no upper bound — a row per airing, forever — and only
+`lastAired` ever reads it. Rows are tiny, so the growth is not the problem; the
+*delete* path was. `episode_id` carries an `ON DELETE CASCADE` with nothing behind
+it, so SQLite had to find the referencing rows on every episode delete, and
+without an index that is a full scan of the log **per row** — and the scanner's
+prune can delete hundreds in one pass after an unmounted root or a renamed
+folder. Migration 6 is the index that stops it.
 
 ### `settings`
 `key · value` — JSON-encoded values, merged over `DEFAULT_SETTINGS` on read so a

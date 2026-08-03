@@ -1,6 +1,6 @@
 /**
- * Channel view models — the shapes the renderer actually draws (plan §8,
- * mockup Screens 01 and 03).
+ * Channel view models — the shapes the renderer actually draws
+ * (docs/ui.md — the Guide, and the channel fold-out).
  *
  * The repository layer owns the writes; this layer answers questions the UI
  * asks: "what's on deck for every channel?" and "what does this lineup look

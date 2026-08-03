@@ -1,5 +1,5 @@
 /**
- * The scheduler — what plays next (plan §5).
+ * The scheduler — what plays next (docs/scheduler.md).
  *
  * Every time a channel needs an episode (tune-in, auto-advance on `ended`, or a
  * user skip) this module runs the plan's two-stage pick: draw a *show* by
@@ -15,7 +15,7 @@
  *
  * Two invariants this module is built around:
  *
- * 1. **Every state transition is a single SQLite transaction** (plan §10). The
+ * 1. **Every state transition is a single SQLite transaction.** The
  *    cursor advance, the bag pop, the arc lock and the play-log write either
  *    all land or none do, so a crash mid-arc can never leave a channel
  *    pointing at half a decision. better-sqlite3 is synchronous, so there are
@@ -554,7 +554,8 @@ export function resetProgress(db: Db, channelId: number, showId: number): void {
  *
  * Called at tune-in: a crash mid-arc, or a Library edit that deleted the arc
  * while the channel was locked to it, would otherwise wedge the channel on a
- * decision it can never finish (plan §10, "scheduler state corruption").
+ * decision it can never finish (docs/architecture.md, "Risks, and what answers
+ * them").
  */
 export function validateActiveArc(db: Db, channelId: number): void {
     db.transaction(() => {

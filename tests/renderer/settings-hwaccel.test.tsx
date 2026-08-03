@@ -1,7 +1,8 @@
 /**
  * @vitest-environment happy-dom
  *
- * Screen 05 · the hardware acceleration control (docs/hwaccel-plan.html).
+ * Screen 05 · the hardware acceleration control
+ * (docs/playback.md, "Hardware encode & decode").
  *
  * The dropdown replaced a toggle that shipped disabled and was wired to nothing,
  * so the things worth pinning are the ones that make it *not* that: it writes

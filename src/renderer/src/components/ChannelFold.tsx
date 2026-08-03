@@ -1,11 +1,12 @@
 /**
  * The channel editor, as a fold-out beneath a guide row.
  *
- * This is where the retired Channels screen went (docs/channel-edit-ux.html,
- * "Hot Rows"). Every scheduling knob from plan §5 is still a visible control —
- * the lineup itself (each show holds one lottery ticket per `weight`), the
- * per-show play mode (a cursor for *In order*, a dealt bag for *Shuffle*), the
- * season overrides, and the live progress state with a way to reset it — but the
+ * This is where the retired Channels screen went (docs/ui.md, "Hot rows, and
+ * the fold-out editor"). Every scheduling knob in docs/scheduler.md is still a
+ * visible control — the lineup itself (each show holds one lottery ticket per
+ * `weight`), the per-show play mode (a cursor for *In order*, a dealt bag for
+ * *Shuffle*), the season overrides, and the live progress state with a way to
+ * reset it — but the
  * layout is compressed to one strip per show so a channel can be tuned without
  * leaving the dial.
  *

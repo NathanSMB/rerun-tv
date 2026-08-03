@@ -1,5 +1,5 @@
 /**
- * The scanner, without ffmpeg (plan §3).
+ * The scanner, without ffmpeg (docs/library.md).
  *
  * `tests/integration.test.ts` already drives the scanner end-to-end, but that
  * suite needs a real ffmpeg to make its clips and skips itself wholesale where

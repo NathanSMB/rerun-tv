@@ -1,5 +1,5 @@
 /**
- * The playback decision (plan §6).
+ * The playback decision (docs/playback.md).
  *
  * Electron's Chromium plays H.264/AAC natively, so we pick the cheapest path
  * that yields a playable stream. This runs at *scan* time against ffprobe
@@ -126,7 +126,7 @@ export function needsAudioTranscode(acodec: string): boolean {
  * episodes in the reference library were being fully re-encoded purely because
  * they carried AC3 audio — and a full re-encode is what makes a dropped
  * connection cost a minute of dead air instead of a second (see
- * `docs/stall-fix-plan.html`).
+ * `docs/playback.md`).
  */
 export function decidePlaybackPath(
     container: string,
