@@ -61,9 +61,13 @@ jobs:
 
             - run: npm run typecheck
 
-            # `test:coverage` first runs `npm rebuild better-sqlite3`, putting the
-            # native binding back on the Node ABI that `install-app-deps` moved to
-            # Electron's. Vitest runs in Node, so that rebuild is required.
+            # `test:coverage` first runs `rebuild:node`, putting the native
+            # binding back on the Node ABI that `install-app-deps` moved to
+            # Electron's. Vitest runs in Node, so that rebuild is required. It
+            # also deletes @electron/rebuild's `.forge-meta` marker, which still
+            # claims Electron's ABI and would otherwise make a later packaging
+            # run skip its rebuild and ship the Node binary — how the 0.1.0
+            # AppImage shipped broken.
             # Coverage thresholds live in vitest.config.ts: below 70% this step
             # goes red, which is what blocks the merge.
             - run: npm run test:coverage

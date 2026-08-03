@@ -24,7 +24,7 @@
         "test:coverage": "npm run rebuild:node --silent && vitest run --coverage",
         "test:watch": "vitest",
         "soak": "node scripts/soak.mjs",
-        "rebuild:node": "npm rebuild better-sqlite3",
+        "rebuild:node": "npm rebuild better-sqlite3 && node -e \"require('node:fs').rmSync('node_modules/better-sqlite3/build/Release/.forge-meta', { force: true })\"",
         "rebuild:electron": "electron-rebuild -f -m . -o better-sqlite3",
         "dist": "npm run build && electron-builder --linux AppImage --publish never",
         "release": "npm run build && electron-builder --linux AppImage --publish always",
@@ -66,6 +66,7 @@
             "output": "release",
             "buildResources": "resources"
         },
+        "afterPack": "./scripts/verify-native-abi.mjs",
         "files": [
             "dist/**/*",
             "resources/**/*",

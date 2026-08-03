@@ -75,6 +75,13 @@ jobs:
             # `npm test` rather than `test:coverage`: the 70% floor is a merge
             # gate, and blocking a release on a coverage number for code that
             # already passed that gate on main buys nothing.
+            #
+            # This step flips better-sqlite3 to Node's ABI so Vitest can load it,
+            # which is what broke the 0.1.0 AppImage: @electron/rebuild then read
+            # its own stale `.forge-meta` marker, concluded the module was
+            # already built for Electron, skipped the rebuild and packaged the
+            # Node binary. `rebuild:node` now clears that marker, and the
+            # `afterPack` hook below fails the build if one slips through anyway.
             - run: npm test
 
             # Builds (which re-runs typecheck, a few seconds) and hands the
@@ -82,6 +89,12 @@ jobs:
             # publisher. That metadata file is what electron-updater would read
             # if in-app updates get wired up later — free to publish now,
             # awkward to backfill.
+            #
+            # scripts/verify-native-abi.mjs runs as electron-builder's
+            # `afterPack`, dlopening every packed addon with the packed Electron
+            # binary. It is the only step here that exercises Electron's ABI, and
+            # it runs before the AppImage is assembled, so a mismatch fails the
+            # job instead of publishing an app that dies on launch.
             - name: Build and publish to GitHub Releases
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
