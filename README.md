@@ -6,17 +6,18 @@
 Turn a local media library into lean-back TV channels — you build the lineup,
 the channel decides what's on. Linux-first (Arch), Electron + ffmpeg.
 
-> **Status: 0.1.0, source-only.** There are no prebuilt downloads yet — you
-> build it yourself with `npm run dist`, which produces a Linux AppImage. It is
-> developed and tested on CachyOS with KDE/Wayland; other distributions and
-> desktops should work but are not exercised. macOS and Windows are not
-> packaged.
+> Tagged releases publish a Linux AppImage to the
+> [Releases page](https://github.com/NathanSMB/rerun-tv/releases/latest)
+> (`chmod +x` it and run it); you can also build one yourself with
+> `npm run dist`. It is developed and tested on CachyOS with KDE/Wayland; other
+> distributions and desktops should work but are not exercised. macOS and
+> Windows are not packaged.
 
-Point it at `~/TV`, group some shows into a channel, and tune in. Shows play in
-order or on shuffle — down to individual seasons, so you can run the first eight
-in order and shuffle the rest — multipart arcs air start-to-finish without
-interruption, and the next episode starts on its own. Nothing to configure in a
-text file.
+Point it at any folder of shows, group some of them into a channel, and tune in.
+Shows play in order or on shuffle — down to individual seasons, so you can run
+the first eight in order and shuffle the rest — multipart arcs air
+start-to-finish without interruption, and the next episode starts on its own.
+Nothing to configure in a text file.
 
 ## Quick start
 
@@ -41,7 +42,8 @@ Node, so the next `npm run dev` fails with an ABI error until you run
 [docs/development.md](docs/development.md).
 
 Then: **Settings → + Add folder** to point at your library, wait for the scan,
-**Channels** to build a lineup, **Guide** to tune in.
+then **Guide → + New channel** to build a lineup and tune in. The Guide is both
+the lineup and the place channels are edited; there is no separate Channels screen.
 
 ## How it works
 
