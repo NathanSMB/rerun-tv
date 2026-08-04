@@ -47,7 +47,7 @@ has no hook until someone has installed once.
 | `npm run test:watch` | Vitest, watching |
 | `npm run test:coverage` | Vitest with coverage, against the floor in `vitest.config.ts` |
 | `npm run soak` | Drive the built app over CDP and fail on playback stalls — see below |
-| `npm run dist` | Build and package a Linux **AppImage** into `release/` |
+| `npm run dist` | Build and package the app for the current platform (Linux AppImage, macOS dmg+zip, Windows NSIS) into `release/` |
 | `npm run release` | The same, publishing to a GitHub release — CI's job, not yours |
 
 ## Project layout
@@ -429,7 +429,12 @@ which is what keeps the two in step — the job refuses to publish if they
 disagree, because electron-builder names the artifact from `package.json` and a
 typo would otherwise ship a `v0.2.0` release containing a 0.1.0 build. A tag can
 point at any commit, including one that never went through PR CI, so the job
-re-runs lint, typecheck and the suite before building.
+re-runs lint, typecheck and the suite before building. The job is a three-OS
+matrix: each runner builds and uploads only its own targets (Linux AppImage,
+macOS dmg+zip for arm64 and x64, Windows NSIS installer) to the same GitHub
+release. The macOS and Windows artifacts are unsigned — there is no developer
+certificate in the pipeline — so first launch goes through Gatekeeper's
+right-click-Open dance or SmartScreen's "run anyway".
 
 **`verify-native-abi.mjs` is the interesting part of that job.** It is an
 electron-builder `afterPack` hook that `dlopen`s every packed `.node` addon with

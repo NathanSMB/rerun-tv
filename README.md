@@ -6,12 +6,14 @@
 Turn a local media library into lean-back TV channels — you build the lineup,
 the channel decides what's on. Linux-first (Arch), Electron + ffmpeg.
 
-> Tagged releases publish a Linux AppImage to the
-> [Releases page](https://github.com/NathanSMB/rerun-tv/releases/latest)
-> (`chmod +x` it and run it); you can also build one yourself with
-> `npm run dist`. It is developed and tested on CachyOS with KDE/Wayland; other
-> distributions and desktops should work but are not exercised. macOS and
-> Windows are not packaged.
+> Tagged releases publish a Linux AppImage (`chmod +x` it and run it), a macOS
+> dmg (arm64 and x64) and a Windows installer to the
+> [Releases page](https://github.com/NathanSMB/rerun-tv/releases/latest); you
+> can also build your platform's package yourself with `npm run dist`. It is
+> developed and tested on CachyOS with KDE/Wayland; other platforms should work
+> but are not exercised, and the macOS/Windows builds are unsigned (expect a
+> Gatekeeper/SmartScreen prompt). ffmpeg must be installed separately on every
+> platform.
 
 Point it at any folder of shows, group some of them into a channel, and tune in.
 Shows play in order or on shuffle — down to individual seasons, so you can run
@@ -29,7 +31,7 @@ npm rebuild
 npm run dev        # develop
 npm test           # run the suite
 npm run lint:fix   # format + lint with Biome (a pre-commit hook checks this)
-npm run dist       # build a Linux AppImage into release/
+npm run dist       # package the app for this platform into release/
 ```
 
 Requires **ffmpeg** on `PATH` (`pacman -S ffmpeg` on Arch) and a C toolchain for

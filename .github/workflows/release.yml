@@ -22,11 +22,28 @@ concurrency:
 
 jobs:
     release:
-        runs-on: ubuntu-latest
-        # electron-builder's GitHub publisher creates the release and uploads the
-        # AppImage with this token. Nothing else here writes to the repo.
+        # One job per platform; each builds and uploads only its own targets
+        # (Linux AppImage, macOS dmg+zip, Windows NSIS installer), so the jobs
+        # never touch each other's artifacts. electron-builder's publisher
+        # creates the release if it does not exist yet and otherwise attaches
+        # to it, so whichever job finishes first wins that race harmlessly.
+        strategy:
+            # A macOS packaging failure should not cancel a Linux upload that
+            # is already half done — let each platform finish or fail alone.
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, macos-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        # electron-builder's GitHub publisher creates the release and uploads
+        # the artifacts with this token. Nothing else here writes to the repo.
         permissions:
             contents: write
+        defaults:
+            run:
+                # The tag-check step and npm scripts below are written for a
+                # POSIX shell; without this the Windows runner would hand them
+                # to PowerShell.
+                shell: bash
         env:
             # Same as ci.yml: turn a missing ffmpeg into a hard failure rather
             # than letting the suites that need it skip themselves green.
@@ -56,12 +73,21 @@ jobs:
                   fi
                   echo "Releasing $pkg"
 
-            # The test fixtures are muxed with a real ffmpeg. Same install as
-            # ci.yml, same reasoning for not using a caching action: every
-            # third-party action is supply-chain surface on a job holding a
-            # `contents: write` token.
-            - name: Install ffmpeg
+            # The test fixtures are muxed with a real ffmpeg. Same reasoning as
+            # ci.yml for using each OS's package manager rather than a caching
+            # action: every third-party action is supply-chain surface on a job
+            # holding a `contents: write` token.
+            - name: Install ffmpeg (Linux)
+              if: runner.os == 'Linux'
               run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+            - name: Install ffmpeg (macOS)
+              if: runner.os == 'macOS'
+              run: brew install ffmpeg
+
+            - name: Install ffmpeg (Windows)
+              if: runner.os == 'Windows'
+              run: choco install ffmpeg -y --no-progress
 
             - run: npm ci
 
@@ -84,17 +110,18 @@ jobs:
             # `afterPack` hook below fails the build if one slips through anyway.
             - run: npm test
 
-            # Builds (which re-runs typecheck, a few seconds) and hands the
-            # AppImage plus latest-linux.yml to electron-builder's GitHub
-            # publisher. That metadata file is what electron-updater would read
-            # if in-app updates get wired up later — free to publish now,
+            # Builds (which re-runs typecheck, a few seconds) and hands this
+            # platform's targets plus its update-metadata file (latest-linux.yml,
+            # latest-mac.yml or latest.yml) to electron-builder's GitHub
+            # publisher. Those metadata files are what electron-updater would
+            # read if in-app updates get wired up later — free to publish now,
             # awkward to backfill.
             #
             # scripts/verify-native-abi.mjs runs as electron-builder's
             # `afterPack`, dlopening every packed addon with the packed Electron
             # binary. It is the only step here that exercises Electron's ABI, and
-            # it runs before the AppImage is assembled, so a mismatch fails the
-            # job instead of publishing an app that dies on launch.
+            # it runs before the final package is assembled, so a mismatch fails
+            # the job instead of publishing an app that dies on launch.
             - name: Build and publish to GitHub Releases
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
