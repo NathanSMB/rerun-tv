@@ -26,8 +26,8 @@
         "soak": "node scripts/soak.mjs",
         "rebuild:node": "npm rebuild better-sqlite3 && node -e \"require('node:fs').rmSync('node_modules/better-sqlite3/build/Release/.forge-meta', { force: true })\"",
         "rebuild:electron": "electron-rebuild -f -m . -o better-sqlite3",
-        "dist": "npm run build && electron-builder --linux AppImage --publish never",
-        "release": "npm run build && electron-builder --linux AppImage --publish always",
+        "dist": "npm run build && electron-builder --publish never",
+        "release": "npm run build && electron-builder --publish always",
         "postinstall": "electron-builder install-app-deps",
         "prepare": "husky"
     },
@@ -80,6 +80,37 @@
             "category": "AudioVideo",
             "maintainer": "Nathan Burchill",
             "artifactName": "${name}-${version}-${arch}.AppImage"
+        },
+        "mac": {
+            "category": "public.app-category.entertainment",
+            "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "arm64",
+                        "x64"
+                    ]
+                },
+                {
+                    "target": "zip",
+                    "arch": [
+                        "arm64",
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "${name}-${version}-${arch}.${ext}"
+        },
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "${name}-${version}-${arch}.${ext}"
         },
         "publish": {
             "provider": "github",

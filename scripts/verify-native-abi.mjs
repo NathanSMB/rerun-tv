@@ -52,22 +52,57 @@ function findAddons(dir) {
     });
 }
 
+// Where each platform's packed layout keeps the Electron binary and the
+// unpacked resources. Linux and Windows are flat; macOS nests everything in
+// the .app bundle, whose name comes from productName rather than
+// executableName.
+const layouts = {
+    linux: {
+        binary: ({ appOutDir, packager }) =>
+            path.join(appOutDir, packager.executableName),
+        unpacked: ({ appOutDir }) =>
+            path.join(appOutDir, "resources", "app.asar.unpacked"),
+    },
+    win32: {
+        binary: ({ appOutDir, packager }) =>
+            path.join(appOutDir, `${packager.executableName}.exe`),
+        unpacked: ({ appOutDir }) =>
+            path.join(appOutDir, "resources", "app.asar.unpacked"),
+    },
+    darwin: {
+        binary: ({ appOutDir, packager }) =>
+            path.join(
+                appOutDir,
+                `${packager.appInfo.productFilename}.app`,
+                "Contents",
+                "MacOS",
+                packager.appInfo.productFilename,
+            ),
+        unpacked: ({ appOutDir, packager }) =>
+            path.join(
+                appOutDir,
+                `${packager.appInfo.productFilename}.app`,
+                "Contents",
+                "Resources",
+                "app.asar.unpacked",
+            ),
+    },
+};
+
 export default async function verifyNativeAbi(context) {
     const { appOutDir, electronPlatformName, packager } = context;
 
-    // Only the Linux layout is known here (the binary sits at the root of the
-    // output directory). A macOS or Windows target would need its own path, so
-    // say plainly that nothing was checked rather than passing by default.
-    if (electronPlatformName !== "linux") {
+    // A platform this hook does not know how to probe should say plainly that
+    // nothing was checked rather than passing by default.
+    const layout = layouts[electronPlatformName];
+    if (!layout) {
         console.log(
-            `  • skipped native ABI check  platform=${electronPlatformName} reason=only the linux layout is implemented`,
+            `  • skipped native ABI check  platform=${electronPlatformName} reason=layout not implemented`,
         );
         return;
     }
 
-    const addons = findAddons(
-        path.join(appOutDir, "resources", "app.asar.unpacked"),
-    );
+    const addons = findAddons(layout.unpacked({ appOutDir, packager }));
     if (addons.length === 0) return;
 
     // ELECTRON_RUN_AS_NODE gives a plain Node entry point that still reports
@@ -88,16 +123,15 @@ export default async function verifyNativeAbi(context) {
         }
     `;
 
+    // On the arm64 macOS runner the x64 slice of a dual-arch build executes
+    // under Rosetta, which the GitHub images ship with — the probe still runs
+    // the exact binary a user would.
     try {
-        execFileSync(
-            path.join(appOutDir, packager.executableName),
-            ["-e", probe],
-            {
-                env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-                stdio: "pipe",
-                encoding: "utf8",
-            },
-        );
+        execFileSync(layout.binary({ appOutDir, packager }), ["-e", probe], {
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+            stdio: "pipe",
+            encoding: "utf8",
+        });
     } catch (error) {
         throw new Error(
             "A packed native module was built for the wrong Node.js ABI and would crash this build on boot.\n" +
