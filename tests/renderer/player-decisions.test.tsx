@@ -24,6 +24,7 @@ import {
     arcDeck,
     EPISODE_DURATION_S,
     reportedEnds,
+    resumedDeck,
     standaloneDeck,
 } from "./fixtures.js";
 import { openPlayer, type Scenario } from "./harness.js";
@@ -207,5 +208,114 @@ describe("the up-next window with the timer expired", () => {
             sc.calls.filter((entry) => entry.call === "prewarmNext"),
         ).toHaveLength(1);
         expect(sc.state().pendingNext?.episode.id).toBe(deck[1].episode.id);
+    });
+});
+
+/**
+ * Resuming, and the autosave that makes it possible
+ * (docs/playback.md, "Resuming a channel").
+ *
+ * The layer this belongs to is the same one as everything above: not "does the
+ * database hold the right row" — `handoff.test.ts` owns that against the real
+ * scheduler — but what the *Player* does with a `NowPlaying` that arrives
+ * carrying a position, and which store action it calls on the way out.
+ */
+describe("resuming a channel", () => {
+    /** Every position the store wrote across the bridge, in order. */
+    const saved = (sc: Scenario): number[] =>
+        sc.calls.flatMap((entry) =>
+            entry.call === "savePosition" ? [entry.positionS] : [],
+        );
+
+    it("starts a piped episode at the saved offset without seeking the element", async () => {
+        const sc = await open(resumedDeck(3, 430));
+
+        // The offset is the whole of the fixup: the pipe restarted at `-ss 430`
+        // so the element's own clock is at zero, and the OSD still has to read
+        // 07:10. Getting this wrong makes every position wrong for the episode.
+        expect(sc.activeVideo().currentTime).toBe(0);
+        expect(sc.timecode()).toBe("7:10");
+    });
+
+    it("seeks the element for a direct file, which the server will not seek", async () => {
+        const sc = await open(resumedDeck(3, 430, "direct"));
+
+        // The other half of the same split: `serveFile` ignores `?t=`, so the
+        // position has to be put on the element itself — and the offset stays 0,
+        // or the timecode would count it twice.
+        expect(sc.activeVideo().currentTime).toBe(430);
+        expect(sc.timecode()).toBe("7:10");
+    });
+
+    it("starts a fresh pick from the top", async () => {
+        const sc = await open(standaloneDeck(3));
+        expect(sc.timecode()).toBe("0:00");
+        expect(sc.activeVideo().currentTime).toBe(0);
+    });
+
+    it("writes the position down when the viewer leaves for the guide", async () => {
+        const deck = standaloneDeck(3);
+        const sc = await open(deck);
+        await sc.at(612);
+
+        await sc.press("Escape");
+
+        expect(sc.actions).toEqual(["leavePlayer"]);
+        expect(saved(sc)).toEqual([612]);
+        // Order is load-bearing. `reportEnded` clears the resume point — every way
+        // off an episode passes through it — and the save is what puts it back for
+        // the two paths that mean "I am coming back to this". Save first and the
+        // clear would wipe it.
+        const order = sc.calls.map((entry) => entry.call);
+        expect(order.indexOf("reportEnded")).toBeLessThan(
+            order.indexOf("savePosition"),
+        );
+        // And before the channel is let go of, so nothing races the teardown.
+        expect(order.indexOf("savePosition")).toBeLessThan(
+            order.lastIndexOf("release"),
+        );
+    });
+
+    it("flushes when the window is hidden, not only on the interval", async () => {
+        const sc = await open(standaloneDeck(3));
+        await sc.at(300);
+
+        await sc.hideWindow();
+
+        // Chromium throttles timers in a backgrounded window, which is exactly
+        // when the app is most likely to be closed or killed — so the thirty-second
+        // tick is not allowed to be the only writer.
+        expect(saved(sc)).toEqual([300]);
+        expect(sc.state().screen).toBe("player");
+    });
+
+    it("writes the seek target rather than where the viewer scrubbed from", async () => {
+        const sc = await open(standaloneDeck(3));
+        await sc.at(120);
+
+        await sc.hideWindow();
+        expect(saved(sc)).toEqual([120]);
+
+        await sc.scrubToStart();
+
+        // The two numbers disagree on purpose. `performSeek` passes the target
+        // explicitly because the ref the store otherwise reads is a render behind
+        // the seek — take that route and this would record 120 again, and a crash
+        // straight after scrubbing would resume where the viewer scrubbed *from*.
+        expect(saved(sc)).toEqual([120, 0]);
+    });
+
+    it("does not save an episode that ran to the end", async () => {
+        const deck = standaloneDeck(3);
+        const sc = await open(deck);
+        await sc.at(EPISODE_DURATION_S - 2);
+
+        await sc.endEpisode();
+
+        // Finishing is not leaving. `reportEnded` cleared the resume point and the
+        // pick that follows writes the new episode at the top — a save here would
+        // strand the channel at the end of the episode it just finished.
+        expect(saved(sc)).toEqual([]);
+        expect(sc.state().nowPlaying?.episode.id).toBe(deck[1].episode.id);
     });
 });

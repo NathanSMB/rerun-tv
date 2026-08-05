@@ -119,13 +119,41 @@ export interface RerunApi {
         /** What the scheduler *would* pick next, without committing it. */
         peekNext(channelId: number): Promise<EpisodeView | null>;
         /**
-         * Log the outcome of the episode that just finished or was abandoned, and let
-         * go of its encoder. A prewarmed episode's job is deliberately untouched.
+         * Log the outcome of the episode that just finished or was abandoned, let
+         * go of its encoder, and **clear the channel's resume point**. A prewarmed
+         * episode's job is deliberately untouched.
+         *
+         * The clear is what makes `savePosition` mean something. Every way off an
+         * episode passes through here, and most of them — it ended, it was skipped,
+         * the sleep timer stopped the channel — mean the viewer is done with it. The
+         * two that do not (leaving the player, changing channel) call `savePosition`
+         * immediately afterwards, which puts the resume point back. So "we are
+         * coming back to this" is stated explicitly by the paths that mean it,
+         * rather than assumed by the paths that don't.
          */
         reportEnded(
             channelId: number,
             episodeId: number,
             completed: boolean,
+        ): Promise<void>;
+        /**
+         * Write down how far into `episodeId` this channel has got, so tuning back
+         * in resumes there (docs/playback.md, "Resuming a channel").
+         *
+         * Called on a thirty-second tick while an episode plays, and again at every
+         * graceful exit — which is what bounds an *ungraceful* one (a crash, a kill,
+         * a power cut) to half a minute of lost position. The write is a synchronous
+         * SQLite upsert, so it is durable the moment this resolves: quitting needs
+         * no flush of its own.
+         *
+         * `episodeId` is not decoration. A save that crosses an episode boundary in
+         * flight is refused rather than winding the channel back to the episode it
+         * was measured against.
+         */
+        savePosition(
+            channelId: number,
+            episodeId: number,
+            positionS: number,
         ): Promise<void>;
         /**
          * Drop encoders — and any prewarm reservation they were buffering for —
@@ -234,6 +262,7 @@ export const IPC = {
         promoteNext: "player:promoteNext",
         peekNext: "player:peekNext",
         reportEnded: "player:reportEnded",
+        savePosition: "player:savePosition",
         release: "player:release",
     },
     settings: {

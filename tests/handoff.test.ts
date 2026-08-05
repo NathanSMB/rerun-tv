@@ -25,19 +25,29 @@ import {
     setChannelShowMode,
 } from "@main/db/repositories/channels.js";
 import {
+    clearPlaybackState,
+    getPlaybackState,
+    savePlaybackPosition,
+} from "@main/db/repositories/playback-state.js";
+import {
     discardReserved,
     peekNext,
-    pickNext,
     promoteReserved,
     reserveNext,
+    resetProgress,
     validateActiveArc,
 } from "@main/scheduler/scheduler.js";
 import { toEpisodeView } from "@main/services/channels.js";
+import {
+    advanceChannel,
+    notePromoted,
+    tuneIn,
+} from "@main/services/playback.js";
 import type { RerunApi } from "@shared/ipc.js";
 import type { EpisodeView, NowPlaying } from "@shared/types.js";
 import { DEFAULT_SETTINGS, SLEEP_MAX_MIN } from "@shared/types.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { useStore } from "../src/renderer/src/store.js";
+import { providePosition, useStore } from "../src/renderer/src/store.js";
 
 let db: Db;
 let channelId: number;
@@ -99,6 +109,7 @@ function nowPlaying(
     channel: number,
     episodeId: number,
     arc: NowPlaying["arc"],
+    resumeAtS = 0,
 ): NowPlaying | null {
     const channelRow = getChannel(db, channel);
     const episode = toEpisodeView(db, episodeId);
@@ -109,14 +120,9 @@ function nowPlaying(
         channelName: channelRow.name,
         episode,
         streamUrl: `http://127.0.0.1:9/stream/${episodeId}?ch=${channel}`,
+        resumeAtS,
         arc,
     };
-}
-
-function commit(channel: number): NowPlaying | null {
-    commits += 1;
-    const pick = pickNext(db, channel);
-    return pick ? nowPlaying(channel, pick.episodeId, pick.arc) : null;
 }
 
 /**
@@ -132,11 +138,27 @@ function fakeBridge(): RerunApi {
         tune: async (channel) => {
             validateActiveArc(db, channel);
             released.push(`channel:${channel}`);
-            return commit(channel);
+            // The real handler's shape: `tuneIn` either resumes — spending
+            // nothing — or draws. A play-log row is written exactly when the
+            // schedule *is* spent, so counting rows is what tells the two apart.
+            const before = playLog().length;
+            const tuned = tuneIn(db, channel);
+            if (playLog().length > before) commits += 1;
+            if (!tuned) return null;
+            return nowPlaying(
+                channel,
+                tuned.episodeId,
+                tuned.arc,
+                tuned.resumeAtS,
+            );
         },
         next: async (channel) => {
             released.push(`channel:${channel}`);
-            return commit(channel);
+            commits += 1;
+            const tuned = advanceChannel(db, channel);
+            return tuned
+                ? nowPlaying(channel, tuned.episodeId, tuned.arc)
+                : null;
         },
         // A reservation, not a commit — the real handler's exact shape. `commits`
         // therefore does not move until the handoff promotes it.
@@ -147,6 +169,7 @@ function fakeBridge(): RerunApi {
         promoteNext: async (channel, episodeId) => {
             commits += 1;
             promoteReserved(db, channel, episodeId);
+            notePromoted(db, channel, episodeId);
         },
         peekNext: async (channel): Promise<EpisodeView | null> => {
             const pick = peekNext(db, channel);
@@ -154,7 +177,11 @@ function fakeBridge(): RerunApi {
         },
         reportEnded: async (channel, episodeId, completed) => {
             markLastAiringCompleted(db, channel, episodeId, completed);
+            clearPlaybackState(db, channel, episodeId);
             released.push(`channel:${channel}:${episodeId}`);
+        },
+        savePosition: async (channel, episodeId, positionS) => {
+            savePlaybackPosition(db, channel, episodeId, positionS);
         },
         release: async (channel, episodeId) => {
             // Mirrors the real handler: abandoning an encoder abandons the
@@ -181,6 +208,11 @@ beforeEach(() => {
     commits = 0;
     showId = insertShow("Gargoyles");
     (globalThis as { rerun?: RerunApi }).rerun = fakeBridge();
+    // The Player is what registers a playhead, and it is not mounted here — so
+    // the default is "nothing is playing" and `savePosition` writes nothing
+    // unless a case says otherwise. Reset per test: this is module-level state
+    // in the store, which is the one thing that can bleed between them.
+    providePosition(() => null);
 
     useStore.setState({
         nowPlaying: null,
@@ -979,5 +1011,240 @@ describe("a prewarm that would start an arc", () => {
         const channel = getChannel(db, channelId);
         expect(channel?.activeGroupId).not.toBeNull();
         expect(channel?.activePartIndex).toBe(1);
+    });
+});
+
+/**
+ * Resuming a channel (docs/playback.md, "Resuming a channel").
+ *
+ * The failure this suite is really about is the one the whole design is bent
+ * around: `pickNext` commits at hand-out time, so a resume that re-tuned
+ * through the scheduler would spend a *second* schedule step and hand back a
+ * different episode than the one being resumed. Every case below therefore
+ * checks two things at once — that the viewer lands back where they were, and
+ * that the schedule did not move while they did.
+ */
+describe("resuming a channel", () => {
+    /** The Player's playhead, as the store reads it through `providePosition`. */
+    function playheadAt(seconds: number): void {
+        providePosition(() => seconds);
+    }
+
+    describe("standalone episodes", () => {
+        beforeEach(() => sequentialChannel(6));
+
+        it("returns to the same episode and offset, spending nothing", async () => {
+            await store().tune(channelId);
+            const first = store().nowPlaying!;
+            expect(commits).toBe(1);
+
+            playheadAt(430);
+            await store().leavePlayer();
+
+            await store().tune(channelId);
+            const resumed = store().nowPlaying!;
+            expect(resumed.episode.id).toBe(first.episode.id);
+            expect(resumed.resumeAtS).toBe(430);
+            // The whole point: no second pick, so no second play-log row and no
+            // cursor movement. The viewer is one episode in, not two.
+            expect(commits).toBe(1);
+            expect(playLog()).toHaveLength(1);
+        });
+
+        it("carries the offset into the stream URL for a piped episode", async () => {
+            await store().tune(channelId);
+            playheadAt(430);
+            await store().leavePlayer();
+            await store().tune(channelId);
+            // The fake bridge mints a bare URL, so the assertion that matters here
+            // is the number the real `toNowPlaying` would put in `?t=`.
+            expect(store().nowPlaying?.resumeAtS).toBe(430);
+        });
+
+        it("keeps a separate place on each channel", async () => {
+            const other = createChannel(db, "Other", 4).id;
+            addChannelShow(db, other, showId);
+            setChannelShowMode(db, other, showId, "sequential");
+
+            await store().tune(channelId);
+            const onFirst = store().nowPlaying!;
+            playheadAt(200);
+            // Changing channel saves the outgoing one on its way past.
+            await store().tune(other);
+            const onSecond = store().nowPlaying!;
+            playheadAt(90);
+            await store().tune(channelId);
+
+            expect(store().nowPlaying?.episode.id).toBe(onFirst.episode.id);
+            expect(store().nowPlaying?.resumeAtS).toBe(200);
+
+            playheadAt(0);
+            await store().tune(other);
+            expect(store().nowPlaying?.episode.id).toBe(onSecond.episode.id);
+            expect(store().nowPlaying?.resumeAtS).toBe(90);
+        });
+
+        it("starts the next episode from the top after one finishes", async () => {
+            await store().tune(channelId);
+            const first = store().nowPlaying!;
+            playheadAt(1300);
+            // Watched to the end, which is the case a resume must *not* apply to.
+            await store().advance(true);
+            const second = store().nowPlaying!;
+            expect(second.episode.id).not.toBe(first.episode.id);
+            expect(second.resumeAtS).toBe(0);
+            // And the row already points at it, so a crash here reopens on the
+            // episode that is genuinely on air.
+            expect(getPlaybackState(db, channelId)?.episodeId).toBe(
+                second.episode.id,
+            );
+        });
+
+        it("does not resume an episode the viewer skipped", async () => {
+            await store().tune(channelId);
+            const first = store().nowPlaying!;
+            playheadAt(300);
+            await store().advance(false);
+            const second = store().nowPlaying!;
+
+            playheadAt(0);
+            await store().leavePlayer();
+            await store().tune(channelId);
+            // The skipped episode is behind us; the one we skipped *to* is where
+            // the channel is.
+            expect(store().nowPlaying?.episode.id).toBe(second.episode.id);
+            expect(store().nowPlaying?.episode.id).not.toBe(first.episode.id);
+        });
+
+        it("resumes the promoted episode after a gapless handoff", async () => {
+            await store().tune(channelId);
+            await store().prewarm();
+            await store().advance(true);
+            const promoted = store().nowPlaying!;
+
+            playheadAt(75);
+            await store().leavePlayer();
+            await store().tune(channelId);
+            expect(store().nowPlaying?.episode.id).toBe(promoted.episode.id);
+            expect(store().nowPlaying?.resumeAtS).toBe(75);
+        });
+
+        it("clamps a position at the very end clear of the last seconds", async () => {
+            await store().tune(channelId);
+            const first = store().nowPlaying!;
+            // Past the runtime entirely — a save that landed as the episode ran out.
+            playheadAt(5000);
+            await store().leavePlayer();
+
+            await store().tune(channelId);
+            expect(store().nowPlaying?.episode.id).toBe(first.episode.id);
+            // Not *at* the end: resuming there would play a frame and advance.
+            expect(store().nowPlaying?.resumeAtS).toBe(
+                first.episode.durationS - 5,
+            );
+        });
+
+        it("draws a fresh pick when the saved episode has left the library", async () => {
+            await store().tune(channelId);
+            const first = store().nowPlaying!;
+            playheadAt(300);
+            await store().leavePlayer();
+
+            // What a scan's prune does to a file that has gone away.
+            db.prepare(`DELETE FROM episodes WHERE id = ?`).run(
+                first.episode.id,
+            );
+
+            await store().tune(channelId);
+            expect(store().nowPlaying).not.toBeNull();
+            expect(store().nowPlaying?.episode.id).not.toBe(first.episode.id);
+            expect(store().nowPlaying?.resumeAtS).toBe(0);
+        });
+
+        it("forgets the place when the sleep timer stops the channel", async () => {
+            await store().tune(channelId);
+            playheadAt(600);
+            expireSleepTimer();
+            // The unit boundary: the episode finished and the channel went dark.
+            await store().advance(true);
+            expect(store().screen).toBe("blackout");
+            expect(getPlaybackState(db, channelId)).toBeNull();
+        });
+
+        it("keeps the place when the sleep timer stops a paused episode", async () => {
+            await store().tune(channelId);
+            const first = store().nowPlaying!;
+            playheadAt(600);
+            expireSleepTimer();
+            // The paused branch: nothing finished, so this is a viewer who fell
+            // asleep mid-episode and is coming back to it.
+            await store().sleepNow();
+            expect(store().screen).toBe("blackout");
+
+            await store().tune(channelId);
+            expect(store().nowPlaying?.episode.id).toBe(first.episode.id);
+            expect(store().nowPlaying?.resumeAtS).toBe(600);
+        });
+    });
+
+    describe("inside a multipart arc", () => {
+        beforeEach(() => {
+            const ids = [1, 2, 3].map((episode) => insertEpisode(1, episode));
+            insertArc("Awakening", ids);
+            channelId = createChannel(db, "Test", 3).id;
+            addChannelShow(db, channelId, showId);
+            setChannelShowMode(db, channelId, showId, "sequential");
+        });
+
+        it("returns to the same part without advancing the arc lock", async () => {
+            await store().tune(channelId);
+            await store().advance(true);
+            const partTwo = store().nowPlaying!;
+            expect(partTwo.arc).toMatchObject({ partIndex: 2, partCount: 3 });
+            // Part 2 was handed out, so the lock already points at Part 3.
+            expect(getChannel(db, channelId)?.activePartIndex).toBe(2);
+
+            playheadAt(500);
+            await store().leavePlayer();
+            await store().tune(channelId);
+
+            const resumed = store().nowPlaying!;
+            expect(resumed.episode.id).toBe(partTwo.episode.id);
+            expect(resumed.resumeAtS).toBe(500);
+            // Rebuilt by reading, not by handing anything out — so the banner
+            // still says Part 2, and Part 3 has not been skipped.
+            expect(resumed.arc).toMatchObject({ partIndex: 2, partCount: 3 });
+            expect(getChannel(db, channelId)?.activePartIndex).toBe(2);
+        });
+
+        it("plays on to the next part when the resumed one ends", async () => {
+            await store().tune(channelId);
+            playheadAt(400);
+            await store().leavePlayer();
+            await store().tune(channelId);
+            expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 1 });
+
+            await store().advance(true);
+            expect(store().nowPlaying?.arc).toMatchObject({ partIndex: 2 });
+        });
+    });
+
+    describe("reset progress", () => {
+        beforeEach(() => sequentialChannel(6));
+
+        it("clears the resume point for the show it resets", async () => {
+            await store().tune(channelId);
+            playheadAt(300);
+            await store().leavePlayer();
+            expect(getPlaybackState(db, channelId)).not.toBeNull();
+
+            resetProgress(db, channelId, showId);
+
+            // Rewinding a show to its pilot and then resuming the viewer halfway
+            // through an episode would be the reset visibly not taking.
+            expect(getPlaybackState(db, channelId)).toBeNull();
+            await store().tune(channelId);
+            expect(store().nowPlaying?.resumeAtS).toBe(0);
+        });
     });
 });

@@ -33,6 +33,7 @@ import type {
 import type { Db } from "../db/index.js";
 import * as channelRepo from "../db/repositories/channels.js";
 import * as libraryRepo from "../db/repositories/library.js";
+import * as playbackRepo from "../db/repositories/playback-state.js";
 import { getSettings, setSetting } from "../db/repositories/settings.js";
 import type { LoudnessScanner } from "../library/loudness.js";
 import type { Scanner } from "../library/scanner.js";
@@ -45,7 +46,6 @@ import {
 import {
     discardReserved,
     peekNext,
-    pickNext,
     promoteReserved,
     reserveNext,
     resetProgress,
@@ -64,6 +64,7 @@ import {
     removeManagedFfmpeg,
 } from "../services/ffmpeg-manager.js";
 import { assignUnmatched, getLibraryOverview } from "../services/library.js";
+import { advanceChannel, notePromoted, tuneIn } from "../services/playback.js";
 import {
     discardStagedImport,
     getRestoreReceipt,
@@ -112,25 +113,34 @@ export function broadcast(channel: string, payload?: unknown): void {
  * The `?ch=` parameter is what lets the stream server enforce the plan's
  * "never more than one ffmpeg job per channel" rule — it tells the supervisor
  * which job slot this request belongs to.
+ *
+ * `resumeAtS` is where a resumed channel picks up, and it reaches the element by
+ * one of two routes depending on the path. A piped stream cannot be seeked in
+ * the element, so the seek is baked into the URL as `?t=` and ffmpeg restarts at
+ * `-ss`. A `direct` file is served with range requests and `serveFile` ignores
+ * `?t=` outright, so its URL is left unseeked and the Player moves the element's
+ * own `currentTime` instead. Everything but a resumed tune-in passes 0 and gets
+ * the from-the-top behaviour unchanged.
  */
 function toNowPlaying(
     ctx: HandlerContext,
     channelId: number,
     episodeId: number,
     arc: NowPlaying["arc"],
+    resumeAtS = 0,
 ): NowPlaying | null {
     const channel = channelRepo.getChannel(ctx.db, channelId);
     const episode = toEpisodeView(ctx.db, episodeId);
     if (!channel || !episode) return null;
 
+    const urlSeekS = episode.playbackPath === "direct" ? 0 : resumeAtS;
     return {
         channelId: channel.id,
         channelNumber: channel.number,
         channelName: channel.name,
         episode,
-        // No seek: tuning in always starts an episode from the top
-        // (docs/ui.md, "Player").
-        streamUrl: ctx.stream.urlFor(episodeId, 0, channelId),
+        streamUrl: ctx.stream.urlFor(episodeId, urlSeekS, channelId),
+        resumeAtS,
         arc,
     };
 }
@@ -328,12 +338,20 @@ export function registerHandlers(ctx: HandlerContext): void {
     handle(IPC.player.tune, (channelId: number): NowPlaying | null => {
         // An arc left dangling by a crash mid-airing is validated (and cleared if
         // stale) here, at tune-in — the mitigation for scheduler state corruption
-        // (docs/architecture.md, "Risks, and what answers them").
+        // (docs/architecture.md, "Risks, and what answers them"). It runs ahead of
+        // both branches of `tuneIn`: clearing a lock that points at nothing is
+        // right whether the channel is about to resume or to draw.
         validateActiveArc(db, channelId);
         ctx.stream.releaseChannel(channelId);
-        const pick = pickNext(db, channelId);
-        if (!pick) return null;
-        return toNowPlaying(ctx, channelId, pick.episodeId, pick.arc);
+        const tuned = tuneIn(db, channelId);
+        if (!tuned) return null;
+        return toNowPlaying(
+            ctx,
+            channelId,
+            tuned.episodeId,
+            tuned.arc,
+            tuned.resumeAtS,
+        );
     });
 
     handle(IPC.player.next, (channelId: number): NowPlaying | null => {
@@ -341,9 +359,9 @@ export function registerHandlers(ctx: HandlerContext): void {
         // leaves a second ffmpeg running. Safe to take the whole channel here: the
         // renderer only reaches `next` when it has no prewarm to promote.
         ctx.stream.releaseChannel(channelId);
-        const pick = pickNext(db, channelId);
-        if (!pick) return null;
-        return toNowPlaying(ctx, channelId, pick.episodeId, pick.arc);
+        const tuned = advanceChannel(db, channelId);
+        if (!tuned) return null;
+        return toNowPlaying(ctx, channelId, tuned.episodeId, tuned.arc);
     });
 
     /**
@@ -368,6 +386,10 @@ export function registerHandlers(ctx: HandlerContext): void {
 
     handle(IPC.player.promoteNext, (channelId: number, episodeId: number) => {
         promoteReserved(db, channelId, episodeId);
+        // The standby is the picture now, so it is where this channel resumes. A
+        // crash a second into a handoff would otherwise reopen on the episode that
+        // just finished.
+        notePromoted(db, channelId, episodeId);
     });
 
     handle(IPC.player.peekNext, (channelId: number): EpisodeView | null => {
@@ -384,9 +406,28 @@ export function registerHandlers(ctx: HandlerContext): void {
                 episodeId,
                 completed,
             );
+            // Every way off an episode passes through here, and most of them mean
+            // the viewer is finished with it — it ended, it was skipped, the sleep
+            // timer stopped the channel — so the resume point goes with it. The two
+            // paths that do *not* mean that (leaving the player, changing channel)
+            // call `savePosition` immediately afterwards and put it back. Guarded by
+            // episode id, so a late report cannot wipe a newer pick's row.
+            playbackRepo.clearPlaybackState(db, channelId, episodeId);
             // This episode is done with, so its encoder is too. Only this one: a prewarmed
             // episode's job has to survive the handoff, which is the whole point.
             ctx.stream.releaseEpisode(channelId, episodeId);
+        },
+    );
+
+    handle(
+        IPC.player.savePosition,
+        (channelId: number, episodeId: number, positionS: number) => {
+            playbackRepo.savePlaybackPosition(
+                db,
+                channelId,
+                episodeId,
+                positionS,
+            );
         },
     );
 

@@ -290,6 +290,19 @@ export interface NowPlaying {
     episode: EpisodeView;
     /** Loopback URL the `<video>` element points at. */
     streamUrl: string;
+    /**
+     * Seconds into the episode this should start at — the channel's saved
+     * position, or 0 for a freshly picked episode
+     * (docs/playback.md, "Resuming a channel").
+     *
+     * How it is applied depends on the path, and both halves are already
+     * decided by the time this arrives. On the piped paths `streamUrl` carries
+     * the seek as `?t=`, so the renderer only has to carry the same number as
+     * the slot's display offset. On `direct` the stream server ignores `?t=`
+     * (the file is served with range requests), so the URL is unseeked and the
+     * Player seeks the element itself.
+     */
+    resumeAtS: number;
     /** Arc context, when this episode is part of a multipart arc. */
     arc: { title: string; partIndex: number; partCount: number } | null;
 }

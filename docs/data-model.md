@@ -142,6 +142,25 @@ progress, not configuration, so "reset progress" is a delete on this table and
 never risks touching what you built. `shuffle_bag` is a JSON array of *unit
 keys* (see [scheduler.md](scheduler.md)).
 
+### `channel_playback_state` — where the channel is
+`channel_id · episode_id · position_s · updated_at`
+
+One row per channel: the episode on air and how far into it the viewer got, so
+tuning back in is continuous ([playback.md](playback.md#resuming-a-channel)).
+
+The same split one level down. `channel_show_state` is *scheduling* progress —
+which unit comes next — while this is *playback* progress: where inside the
+current one we are. They are separate rows because different gestures reset
+them. "Reset progress" rewinds a show's cursor and clears any resume point
+belonging to that show, while leaving mid-episode writes here and must not
+disturb a cursor at all.
+
+Keyed by channel rather than by episode, because a channel resumes where *it*
+was: the same episode may legitimately sit at two positions on two channels that
+both air the show. Both foreign keys cascade, so a deleted channel takes its
+resume point with it and a pruned episode retires the row instead of leaving it
+pointing at a file that is gone. Migration 7.
+
 ### `play_log`
 `id · channel_id · episode_id · at · completed`
 

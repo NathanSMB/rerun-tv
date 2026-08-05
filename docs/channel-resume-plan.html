@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Channel resume &amp; autosave — implementation plan</title>
+<style>
+  :root { color-scheme: light dark; }
+
+  .plan-root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11, 11, 11, 0.10);
+    --series-1:       #2a78d6;   /* interval autosave */
+    --series-2:       #eb6834;   /* event-driven flush */
+    --series-3:       #1baf7a;   /* pick-time write */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .plan-root {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255, 255, 255, 0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+    }
+  }
+  :root[data-theme="dark"] .plan-root {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255, 255, 255, 0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  .plan-root {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    min-height: 100vh;
+    padding: 40px 24px 72px;
+  }
+  main { max-width: 1020px; margin: 0 auto; }
+
+  header.doc-head { margin-bottom: 28px; position: relative; }
+  .doc-head h1 { font-size: 27px; font-weight: 650; letter-spacing: -0.015em; margin: 0 0 6px; }
+  .doc-head .sub { color: var(--text-secondary); max-width: 72ch; margin: 0; }
+  .doc-head .meta { color: var(--text-muted); font-size: 13px; margin-top: 10px; }
+  .theme-toggle {
+    position: absolute; top: 2px; right: 0;
+    background: var(--surface-1); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 8px;
+    font: inherit; font-size: 13px; padding: 5px 12px; cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--text-primary); }
+
+  h2 { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin: 44px 0 12px; }
+  h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
+  p  { margin: 0 0 12px; max-width: 78ch; }
+  section > p, section > ol, section > ul { color: var(--text-primary); }
+  code, pre {
+    font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.875em;
+  }
+  code {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  pre {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code { background: none; border: none; padding: 0; white-space: pre; }
+
+  /* ---------- KPI row ---------- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 24px 0 8px;
+  }
+  .stat-tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px 14px;
+  }
+  .stat-tile .label { color: var(--text-secondary); font-size: 13px; margin: 0 0 6px; }
+  .stat-tile .value { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; }
+  .stat-tile .detail { color: var(--text-muted); font-size: 12.5px; margin-top: 6px; }
+
+  /* ---------- Cards & figures ---------- */
+  figure.chart-card, .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  figure.chart-card figcaption {
+    color: var(--text-muted); font-size: 12.5px; margin-top: 10px; max-width: 80ch;
+  }
+  .fig-title { font-size: 14px; font-weight: 650; margin: 0 0 2px; }
+  .fig-sub   { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 12px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 10px; }
+  .legend .item { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .ax-label { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .mk-label { fill: var(--text-secondary); font-size: 11.5px; }
+  .mk-label.strong { fill: var(--text-primary); font-weight: 600; }
+
+  .viz-tooltip {
+    position: fixed; z-index: 10; pointer-events: none;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+    font-size: 12.5px; line-height: 1.45;
+    padding: 7px 10px; max-width: 260px;
+    opacity: 0; transition: opacity 80ms;
+  }
+  .viz-tooltip.show { opacity: 1; }
+  .viz-tooltip .tt-time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  .hit { cursor: default; }
+  .hit:hover .mk { stroke-width: 3px; }
+
+  /* ---------- Tables ---------- */
+  table.data {
+    border-collapse: collapse; width: 100%;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    font-size: 13.5px;
+    margin: 12px 0 4px;
+  }
+  table.data th, table.data td {
+    text-align: left; padding: 9px 14px;
+    border-bottom: 1px solid var(--grid);
+    vertical-align: top;
+  }
+  table.data th { color: var(--text-secondary); font-weight: 600; font-size: 12.5px; }
+  table.data tr:last-child td { border-bottom: none; }
+  table.data td:first-child { white-space: nowrap; }
+
+  /* ---------- Flow diagram ---------- */
+  .flow { margin: 16px 0; }
+  .flow .node {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    max-width: 620px;
+    margin: 0 auto;
+  }
+  .flow .node .t { font-weight: 600; font-size: 13.5px; }
+  .flow .node .d { color: var(--text-secondary); font-size: 12.5px; margin-top: 3px; }
+  .flow .connector { width: 1.5px; height: 20px; background: var(--baseline); margin: 0 auto; }
+  .flow .branches {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    max-width: 860px; margin: 0 auto;
+  }
+  .flow .branches .node { max-width: none; margin: 0; height: 100%; }
+  .flow .branch-resume { border-left: 3px solid var(--series-1); }
+  .flow .branch-fresh  { border-left: 3px solid var(--series-2); }
+  .flow .branch-label {
+    text-align: center; font-size: 12px; color: var(--text-muted); margin: 4px 0;
+  }
+  .flow .split {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 860px; margin: 0 auto;
+  }
+  .flow .split .connector { height: 18px; }
+
+  .callout {
+    border-left: 3px solid var(--series-2);
+    background: var(--surface-1);
+    border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 18px; margin: 16px 0;
+  }
+  .callout .t { font-weight: 650; margin-bottom: 4px; }
+  .callout p { margin: 0 0 8px; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  ol.steps { padding-left: 22px; }
+  ol.steps > li { margin-bottom: 14px; max-width: 80ch; }
+  ol.steps > li strong { font-weight: 650; }
+  ul.tight { margin: 6px 0 0; padding-left: 20px; }
+  ul.tight li { margin-bottom: 5px; }
+  .filepath { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="plan-root" data-palette="#2a78d6,#eb6834,#1baf7a">
+<main>
+
+<header class="doc-head">
+  <button class="theme-toggle" id="themeToggle" type="button">Dark mode</button>
+  <h1>Channel resume &amp; autosave</h1>
+  <p class="sub">Persist each channel's playback position — episode plus offset — so leaving a channel, closing the
+  app, or crashing all bring the viewer back to (or within 30&nbsp;seconds of) where they were. Implements TODO&nbsp;item&nbsp;2.</p>
+  <p class="meta">Rerun TV · plan drafted 2026-08-05 · companion to <code>docs/managed-ffmpeg-plan.html</code></p>
+</header>
+
+<div class="kpi-row">
+  <div class="stat-tile">
+    <p class="label">Loss on any graceful exit</p>
+    <div class="value">0 s</div>
+    <div class="detail">flushed before the channel is released</div>
+  </div>
+  <div class="stat-tile">
+    <p class="label">Worst-case loss after a crash</p>
+    <div class="value">&lt; 30 s</div>
+    <div class="detail">bounded by the autosave interval</div>
+  </div>
+  <div class="stat-tile">
+    <p class="label">New SQLite tables</p>
+    <div class="value">1</div>
+    <div class="detail"><code>channel_playback_state</code> · one appended migration</div>
+  </div>
+  <div class="stat-tile">
+    <p class="label">Quit hooks required</p>
+    <div class="value">0</div>
+    <div class="detail">every save is durable the moment it's written</div>
+  </div>
+</div>
+
+<section>
+  <h2>What the user gets</h2>
+  <p>Every channel remembers its own spot. Tune away to another channel, drop back to the guide, close the
+  window, or lose the app to a crash — when you tune that channel in again, the same episode picks up where it
+  left off (a crash costs at most the last 30&nbsp;seconds). When an episode finishes normally, the channel
+  advances as it does today and the remembered spot moves to the top of the next episode.</p>
+  <p>This deliberately reverses a documented design decision — <code>docs/architecture.md:42</code> says
+  "tuning in starts the next episode from the top" and lists mid-episode resume as out of scope
+  (<code>docs/architecture.md:204-215</code>). The reversal is intentional (it is TODO item&nbsp;2); the docs
+  updates in step&nbsp;7 make the new contract the documented one.</p>
+</section>
+
+<section>
+  <h2>The one constraint that shapes the design</h2>
+  <div class="callout">
+    <div class="t">The scheduler commits at hand-out time, so resume must not pick.</div>
+    <p><code>pickNext</code> (<span class="filepath">src/main/scheduler/scheduler.ts:408-425</span>) runs
+    <code>saveShowState</code> + <code>setActiveArc</code> + <code>logAiring</code> in one transaction the moment an
+    episode is handed out — before a single frame plays. By the time the viewer leaves mid-episode, the sequential
+    cursor already points at the <em>next</em> unit, the shuffle bag has been popped, a multi-part arc lock already
+    points at the <em>next</em> part (<span class="filepath">scheduler.ts:291-313</span>), and a
+    <code>play_log</code> row with <code>completed&nbsp;=&nbsp;0</code> already exists
+    (<span class="filepath">src/main/db/repositories/channels.ts:485-494</span>).</p>
+    <p>A resume that re-tunes through <code>pickNext</code> would therefore double-spend a schedule step and hand
+    back a <em>different</em> episode than the one saved. The resume path must return the saved episode directly,
+    calling <code>pickNext</code> not at all and writing no second <code>play_log</code> row.</p>
+  </div>
+</section>
+
+<section>
+  <h2>When state gets saved</h2>
+  <p>Two write paths, one table. The <strong>main process</strong> writes the row at pick time — whenever an episode is
+  handed out, the row is set to <code>(episode,&nbsp;0&nbsp;s)</code>. The <strong>renderer</strong> then updates the
+  position: every 30&nbsp;seconds on an interval, and immediately on the events that matter (leaving the channel,
+  tuning elsewhere, seeking, the window being hidden or closed). Because every save is a synchronous
+  <code>better-sqlite3</code> upsert completed inside the IPC handler, a save is durable the moment the handler
+  returns — quitting needs no flush, no <code>before-quit</code> hook, and no renderer round-trip.</p>
+
+  <figure class="chart-card">
+    <p class="fig-title">One viewing session, every write to <code>channel_playback_state</code></p>
+    <p class="fig-sub">A 3½-minute session: tune-in, a seek, the window backgrounded, then a clean exit.</p>
+    <div class="legend" role="list">
+      <span class="item" role="listitem"><span class="dot" style="background: var(--series-3)"></span>Pick-time write (main process)</span>
+      <span class="item" role="listitem"><span class="dot" style="background: var(--series-1)"></span>Interval autosave, every 30 s (renderer → IPC)</span>
+      <span class="item" role="listitem"><span class="dot" style="background: var(--series-2)"></span>Event-driven flush (renderer → IPC)</span>
+    </div>
+    <svg viewBox="0 0 920 158" width="100%" role="img"
+         aria-label="Timeline of saves during one session: a pick-time write at 0:00, interval autosaves every 30 seconds, and event flushes at a seek (1:15), window hidden (2:20), and exit (3:25). A crash between 3:00 and 3:25 resumes from 3:00.">
+      <!-- axis -->
+      <line x1="40" y1="95" x2="880" y2="95" stroke="var(--baseline)" stroke-width="1"/>
+      <g class="ax-label" text-anchor="middle">
+        <line x1="40"  y1="95" x2="40"  y2="101" stroke="var(--baseline)"/><text x="40"  y="115">0:00</text>
+        <line x1="160" y1="95" x2="160" y2="101" stroke="var(--baseline)"/><text x="160" y="115">0:30</text>
+        <line x1="280" y1="95" x2="280" y2="101" stroke="var(--baseline)"/><text x="280" y="115">1:00</text>
+        <line x1="400" y1="95" x2="400" y2="101" stroke="var(--baseline)"/><text x="400" y="115">1:30</text>
+        <line x1="520" y1="95" x2="520" y2="101" stroke="var(--baseline)"/><text x="520" y="115">2:00</text>
+        <line x1="640" y1="95" x2="640" y2="101" stroke="var(--baseline)"/><text x="640" y="115">2:30</text>
+        <line x1="760" y1="95" x2="760" y2="101" stroke="var(--baseline)"/><text x="760" y="115">3:00</text>
+        <line x1="880" y1="95" x2="880" y2="101" stroke="var(--baseline)"/><text x="880" y="115">3:30</text>
+      </g>
+
+      <!-- direct labels + leader lines (selective) -->
+      <text class="mk-label strong" x="36" y="38" text-anchor="start">tune-in: fresh pick writes (episode, 0:00)</text>
+      <line x1="40" y1="43" x2="40" y2="86" stroke="var(--grid)" stroke-width="1"/>
+
+      <text class="mk-label" x="160" y="62" text-anchor="middle">autosave every 30 s</text>
+      <line x1="160" y1="67" x2="160" y2="86" stroke="var(--grid)" stroke-width="1"/>
+
+      <text class="mk-label" x="340" y="62" text-anchor="middle">seek committed</text>
+      <line x1="340" y1="67" x2="340" y2="86" stroke="var(--grid)" stroke-width="1"/>
+
+      <text class="mk-label" x="600" y="38" text-anchor="middle">window hidden</text>
+      <line x1="600" y1="43" x2="600" y2="86" stroke="var(--grid)" stroke-width="1"/>
+
+      <text class="mk-label strong" x="874" y="62" text-anchor="end">exit → final flush</text>
+      <line x1="860" y1="67" x2="860" y2="86" stroke="var(--grid)" stroke-width="1"/>
+
+      <!-- worst-case bracket -->
+      <path d="M 760 127 v 5 h 100 v -5" fill="none" stroke="var(--text-muted)" stroke-width="1"/>
+      <text class="ax-label" x="884" y="147" text-anchor="end">crash anywhere here → reopen resumes from 3:00 (≤ 30 s lost)</text>
+
+      <!-- marks: r=6, 2px surface ring; transparent hit targets r=14 -->
+      <g id="marks">
+        <g class="hit" data-tip="<span class='tt-time'>0:00</span> — fresh pick: main upserts (episode, 0 s) inside the tune handler"><circle cx="40" cy="95" r="14" fill="transparent"/><circle class="mk" cx="40" cy="95" r="6" fill="var(--series-3)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>0:30</span> — interval autosave: position = offset + videoTime"><circle cx="160" cy="95" r="14" fill="transparent"/><circle class="mk" cx="160" cy="95" r="6" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>1:00</span> — interval autosave"><circle cx="280" cy="95" r="14" fill="transparent"/><circle class="mk" cx="280" cy="95" r="6" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>1:15</span> — commitSeek flush: the new position is saved immediately, so a crash right after a seek still resumes at the seek target"><circle cx="340" cy="95" r="14" fill="transparent"/><circle class="mk" cx="340" cy="95" r="6" fill="var(--series-2)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>1:30</span> — interval autosave"><circle cx="400" cy="95" r="14" fill="transparent"/><circle class="mk" cx="400" cy="95" r="6" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>2:00</span> — interval autosave"><circle cx="520" cy="95" r="14" fill="transparent"/><circle class="mk" cx="520" cy="95" r="6" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>2:20</span> — visibilitychange → hidden: flush now, because Chromium may throttle the interval while backgrounded"><circle cx="600" cy="95" r="14" fill="transparent"/><circle class="mk" cx="600" cy="95" r="6" fill="var(--series-2)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>2:30</span> — interval autosave"><circle cx="640" cy="95" r="14" fill="transparent"/><circle class="mk" cx="640" cy="95" r="6" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>3:00</span> — interval autosave (the last one before exit — a crash after this point loses at most 25 s)"><circle cx="760" cy="95" r="14" fill="transparent"/><circle class="mk" cx="760" cy="95" r="6" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/></g>
+        <g class="hit" data-tip="<span class='tt-time'>3:25</span> — leavePlayer(): final flush before releaseChannel(), then back to the guide"><circle cx="860" cy="95" r="14" fill="transparent"/><circle class="mk" cx="860" cy="95" r="6" fill="var(--series-2)" stroke="var(--surface-1)" stroke-width="2"/></g>
+      </g>
+    </svg>
+    <figcaption>Hover any mark for detail. Because interval ticks and event flushes interleave, the gap between
+    the last durable write and a crash never exceeds the 30&nbsp;s interval.</figcaption>
+  </figure>
+
+  <h3>Every trigger, exhaustively</h3>
+  <table class="data">
+    <thead><tr><th>Trigger</th><th>Where</th><th>What is written</th></tr></thead>
+    <tbody>
+      <tr><td>Episode handed out</td><td>tune handler &amp; advance path, <span class="filepath">src/main/ipc/handlers.ts:328-337</span></td><td>Main upserts <code>(channel, episode, 0 s)</code> in the same transaction-adjacent moment as <code>pickNext</code>. This also covers "episode ended" — the next pick overwrites the finished episode's row, so no separate clear is needed.</td></tr>
+      <tr><td>30 s interval</td><td>new effect in <span class="filepath">src/renderer/src/screens/Player.tsx</span> (template: <span class="filepath">FfmpegGate.tsx:96-106</span>)</td><td><code>savePosition(channelId, episodeId, offset + videoTime)</code> while an active slot is playing.</td></tr>
+      <tr><td>Seek committed</td><td><code>commitSeek</code>, <span class="filepath">Player.tsx:639-649</span></td><td>Flush the seek target immediately.</td></tr>
+      <tr><td>Leave to guide</td><td><code>leavePlayer()</code>, <span class="filepath">src/renderer/src/store.ts:707-745</span></td><td>Flush before <code>release(channelId)</code>.</td></tr>
+      <tr><td>Tune to another channel</td><td><code>tune()</code>, <span class="filepath">store.ts:588-615</span></td><td>Flush the <em>outgoing</em> channel's position before it is released — each channel keeps its own resume point.</td></tr>
+      <tr><td>Sleep-timer blackout</td><td><code>goDark()</code>, <span class="filepath">store.ts:370-401</span></td><td>Flush before release.</td></tr>
+      <tr><td>Window hidden / closing</td><td><code>visibilitychange</code> → hidden, plus <code>pagehide</code> (best-effort)</td><td>Flush; covers close-button quits and guards against background timer throttling.</td></tr>
+      <tr><td>App quit / restart</td><td><em>nothing new</em> — <span class="filepath">src/main/index.ts:414-423</span> unchanged</td><td>No hook needed: the last IPC save is already durable. This also survives <code>restart()</code>'s <code>app.exit(0)</code> (<span class="filepath">index.ts:197-204</span>), which skips <code>will-quit</code> entirely.</td></tr>
+      <tr><td>PiP floating over the guide</td><td><span class="filepath">Player.tsx:883</span> / <span class="filepath">App.tsx:159-174</span></td><td><em>Not an exit</em> — the Player stays mounted and the interval keeps running.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>How tune-in decides: resume vs. fresh pick</h2>
+  <p>Per the layering rule (<code>docs/architecture.md:171-182</code>), the decision lives in a new
+  <code>services/</code> function — the handler only translates. <code>validateActiveArc</code> still runs first in
+  both branches (it only clears a stale lock; resume makes no pick, so it cannot re-advance anything).</p>
+
+  <div class="flow" role="img" aria-label="Flow: tune leads to reading the saved row; if a valid row exists the resume branch builds NowPlaying from the saved episode without pickNext; otherwise the fresh-pick branch runs pickNext and writes the row at 0 seconds. Both branches converge on toNowPlaying with a resume offset.">
+    <div class="node"><div class="t">store.tune(channelId) → IPC player.tune</div>
+      <div class="d">renderer <span class="filepath">store.ts:588-615</span> → main <span class="filepath">handlers.ts:328-337</span> · <code>validateActiveArc</code> · <code>releaseChannel</code></div></div>
+    <div class="connector"></div>
+    <div class="node"><div class="t">Read <code>channel_playback_state</code> for this channel</div>
+      <div class="d">row exists <em>and</em> its episode is still in the library?</div></div>
+    <div class="branch-label">yes ↙&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↘ no (or stale row)</div>
+    <div class="branches">
+      <div class="node branch-resume"><div class="t">Resume</div>
+        <div class="d">Build <code>NowPlaying</code> from the saved episode directly. <code>resumeAtS = clamp(position, 0, duration − 5)</code>.
+        <strong>No <code>pickNext</code></strong> — cursor, shuffle bag, and arc lock stay untouched.
+        <strong>No new <code>play_log</code> row</strong> — the original <code>completed = 0</code> row already represents this viewing.</div></div>
+      <div class="node branch-fresh"><div class="t">Fresh pick (today's path)</div>
+        <div class="d"><code>pickNext</code> commits cursor + bag + arc + <code>play_log</code> as it does now
+        (<span class="filepath">scheduler.ts:408-425</span>), then upserts the row as <code>(episode, 0 s)</code>.
+        A stale row (deleted episode, deleted channel) is simply overwritten here.</div></div>
+    </div>
+    <div class="split">
+      <div class="connector"></div>
+      <div class="connector"></div>
+    </div>
+    <div class="node"><div class="t">toNowPlaying → <code>streamUrl = ctx.stream.urlFor(episodeId, resumeAtS, channelId)</code></div>
+      <div class="d">the "no seek at tune-in" line at <span class="filepath">handlers.ts:131-133</span> becomes the resume seam; <code>NowPlaying</code> (<span class="filepath">src/shared/types.ts:286-295</span>) gains <code>resumeAtS</code></div></div>
+    <div class="connector"></div>
+    <div class="node"><div class="t">Renderer seeds the slot — mirroring <code>performSeek</code>'s two branches</div>
+      <div class="d">piped (remux/transcode): <code>slotFor(playing, resumeAtS, url)</code> so the slot offset carries the seek
+      (<span class="filepath">src/renderer/src/player/stage.ts:52-68</span>) · direct: offset stays 0 and
+      <code>video.currentTime = resumeAtS</code> after metadata loads (<span class="filepath">Player.tsx:609-637</span>)</div></div>
+  </div>
+
+  <p>The offset machinery, <code>?t=</code> parsing (<span class="filepath">src/main/stream/server.ts:399</span>),
+  and <code>-ss</code>-before-<code>-i</code> input seeking (<span class="filepath">server.ts:751-763</span>) all
+  exist today — resume adds no new streaming code. One accepted consequence carries over: piped seeks are
+  keyframe-coarse (<code>docs/playback.md:74-77</code>), so a resume lands <em>near</em> the saved second, not
+  exactly on it.</p>
+</section>
+
+<section>
+  <h2>Data model</h2>
+  <p>One new table, appended to <code>MIGRATIONS</code> in <span class="filepath">src/main/db/schema.ts</span>
+  (append-only per the file's header — this becomes the seventh entry). It mirrors the existing split that keeps
+  progress out of configuration: <code>channel_show_state</code> is scheduling progress, this is playback progress.
+  Keyed by <strong>channel</strong>, not episode — a channel resumes where <em>it</em> was, and the same episode can
+  sit at different positions on two channels. A <code>settings</code> row was rejected as the wrong grain: this is
+  per-channel state, not a user knob.</p>
+
+  <table class="data">
+    <thead><tr><th>Column</th><th>Type</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>channel_id</code></td><td>INTEGER PK, REFERENCES channels ON DELETE CASCADE</td><td>One row per channel; deleting a channel cleans up its resume point.</td></tr>
+      <tr><td><code>episode_id</code></td><td>INTEGER NOT NULL, REFERENCES episodes ON DELETE CASCADE</td><td>The episode that was playing. If the episode vanishes from the library, the cascade (or the staleness check at tune-in) retires the row.</td></tr>
+      <tr><td><code>position_s</code></td><td>REAL NOT NULL</td><td>Seconds into the episode: <code>slot.offset + videoTime</code> as computed at <span class="filepath">Player.tsx:223-224</span>.</td></tr>
+      <tr><td><code>updated_at</code></td><td>INTEGER NOT NULL</td><td>Epoch ms of the last save; useful for debugging, not consulted by resume logic.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top: 10px;">Repository functions (all SQL stays in <span class="filepath">src/main/db/repositories/</span>):
+  <code>upsertPlaybackState</code>, <code>getPlaybackState</code>, <code>clearPlaybackState</code>. The existing
+  "reset progress" flow that clears <code>channel_show_state</code> should clear this row too — a reset channel
+  starting mid-episode would be a surprise.</p>
+</section>
+
+<section>
+  <h2>IPC surface</h2>
+  <p>One new method, one extended type — the contract discipline in <code>docs/architecture.md:120-129</code> and the
+  type-level assertions in <span class="filepath">tests/renderer/bridge.ts:60-69</span> enforce that all three layers
+  move together:</p>
+  <ul class="tight">
+    <li><code>RerunApi</code> (<span class="filepath">src/shared/ipc.ts</span>) gains
+      <code>player.savePosition(channelId, episodeId, positionS): Promise&lt;void&gt;</code>, plus its entry in the
+      <code>IPC.player</code> channel map and the one-line bridge in <span class="filepath">src/preload/index.ts</span>.
+      No <code>clearPosition</code> over IPC — clearing is a main-process concern (pick-time overwrite, reset-progress).</li>
+    <li><code>NowPlaying</code> (<span class="filepath">src/shared/types.ts:286-295</span>) gains
+      <code>resumeAtS: number</code> (0 for a fresh pick), which the renderer uses to seed the slot.</li>
+    <li>The handler for <code>savePosition</code> validates that <code>(channelId, episodeId)</code> still matches the
+      channel's current row before writing, so a stale flush from a torn-down player can't clobber a newer pick.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Edge cases, decided</h2>
+  <table class="data">
+    <thead><tr><th>Scenario</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Crash right after an episode advances</td><td>No position was autosaved yet for the new episode — but main wrote <code>(new episode, 0 s)</code> at pick time, so reopening resumes the correct episode from the top. No schedule step is double-spent and nothing is skipped.</td></tr>
+      <tr><td>Saved position is in the final seconds</td><td><code>resumeAtS</code> is clamped to <code>duration − 5</code>; playback resumes, plays the tail, and the normal <code>advance()</code> path (<span class="filepath">store.ts:617-672</span>) moves on. No special "almost done" logic.</td></tr>
+      <tr><td>Saved episode deleted from the library</td><td>Staleness check fails → fresh-pick branch; the row is overwritten by the new pick. The FK cascade covers the DB-level cleanup.</td></tr>
+      <tr><td>Crash during the prewarm window</td><td>Standby reservations live in an in-memory <code>WeakMap</code> (<span class="filepath">scheduler.ts:457-466</span>) and vanish by design; the saved row still points at the <em>current</em> episode, which is the correct recovery.</td></tr>
+      <tr><td>Window backgrounded (timer throttling)</td><td>The sleep-timer precedent (<span class="filepath">store.ts:258-266</span>) warns that intervals drift when backgrounded — hence the <code>visibilitychange</code> flush at the moment of hiding, which is exactly when position stops changing for a paused/hidden player. With video still playing (PiP), <code>timeupdate</code>-driven state keeps the interval's reads fresh.</td></tr>
+      <tr><td>Resume + multi-part arc</td><td>Resume never touches <code>active_part_index</code>; leaving mid-part-2 and returning resumes part 2, and the lock still points at part 3 for the <em>next</em> natural advance — exactly the committed state.</td></tr>
+      <tr><td>Sleep timer setting precedent</td><td><code>sleepTimerDefaultMin</code>'s comment (<span class="filepath">types.ts:496-499</span>) says an armed countdown must not survive a restart. Unchanged — resume restores <em>position</em>, never timer state.</td></tr>
+      <tr><td>Position ≈ 0 (left almost immediately)</td><td>Still resume the saved episode (from ~0). Falling through to <code>pickNext</code> would double-spend; there is no threshold below which resume becomes a re-pick.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Implementation steps</h2>
+  <ol class="steps">
+    <li><strong>Migration + repository.</strong> Append the <code>channel_playback_state</code> migration in
+      <span class="filepath">src/main/db/schema.ts</span>; add
+      <span class="filepath">src/main/db/repositories/playback-state.ts</span> with
+      <code>upsertPlaybackState</code> / <code>getPlaybackState</code> / <code>clearPlaybackState</code>; hook
+      <code>clearPlaybackState</code> into the existing reset-progress flow.</li>
+    <li><strong>Shared contract.</strong> Add <code>resumeAtS</code> to <code>NowPlaying</code>
+      (<span class="filepath">src/shared/types.ts</span>); add <code>player.savePosition</code> to
+      <code>RerunApi</code> + <code>IPC.player</code> (<span class="filepath">src/shared/ipc.ts</span>) and the
+      preload bridge (<span class="filepath">src/preload/index.ts</span>). Typecheck failures walk you to every
+      site that must change.</li>
+    <li><strong>Resume decision in main.</strong> New <code>services/</code> function
+      (e.g. <code>resolveTuneIn(db, channelId)</code>) implementing the resume/fresh-pick branch; the
+      <code>player.tune</code> handler (<span class="filepath">src/main/ipc/handlers.ts:328-337</span>) calls it and
+      threads <code>resumeAtS</code> into <code>toNowPlaying</code> → <code>urlFor(episodeId, resumeAtS, channelId)</code>
+      at <span class="filepath">handlers.ts:131-133</span>. Add the pick-time upsert wherever <code>pickNext</code>
+      hands out an episode (tune + advance paths), and the <code>savePosition</code> handler with its
+      stale-flush guard.</li>
+    <li><strong>Renderer seeding.</strong> On tune, build the initial slot with
+      <code>slotFor(playing, playing.resumeAtS, playing.streamUrl)</code> for piped modes; for direct mode set
+      <code>currentTime</code> after <code>loadedmetadata</code> — the same two-branch shape as
+      <code>performSeek</code> (<span class="filepath">Player.tsx:609-637</span>). Note the in-render
+      <code>videoTime</code> reset at <span class="filepath">Player.tsx:173-179</span> already handles the
+      episode-change case.</li>
+    <li><strong>Renderer autosave.</strong> New <code>Player.tsx</code> effect: 30 s <code>setInterval</code> writing
+      <code>offset + videoTime</code> (teardown-safe, per the <span class="filepath">FfmpegGate.tsx:96-106</span>
+      template); flush calls in <code>leavePlayer</code> / <code>tune</code> / <code>goDark</code> (before each
+      <code>release</code>), in <code>commitSeek</code>, and on <code>visibilitychange</code>-hidden /
+      <code>pagehide</code>.</li>
+    <li><strong>Tests.</strong> Scheduler-side: resume leaves cursor / shuffle bag / <code>active_part_index</code> /
+      <code>play_log</code> untouched; stale-row fallback; pick-time upsert (extend
+      <span class="filepath">tests/scheduler.test.ts</span> and <span class="filepath">tests/handoff.test.ts</span>).
+      Renderer-side: interval + flush behavior and slot seeding in
+      <span class="filepath">tests/renderer/player-decisions.test.tsx</span>, with the new bridge method stubbed in
+      <span class="filepath">tests/renderer/bridge.ts</span> / <span class="filepath">harness.tsx</span>.</li>
+    <li><strong>Docs.</strong> Update <code>docs/architecture.md</code> (channel model at :42; strike mid-episode
+      resume from out-of-scope at :204-215), <code>docs/data-model.md</code> (new table beside
+      <code>channel_show_state</code>), <code>docs/playback.md</code> (resume + coarse-seek note), and
+      <code>docs/ui.md</code>'s "Player" section, which <span class="filepath">handlers.ts:131-133</span> cites for
+      the old from-the-top rule.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Explicitly out of scope</h2>
+  <p>Cross-episode "continue watching" lists, per-<em>show</em> resume (this is per-channel), frame-accurate seeking
+  on piped paths, and any persistence of the sleep timer. The <code>play_log</code> semantics
+  (<code>docs/playback.md:177-184</code>: one row per viewing, <code>completed</code> flipped only by
+  <code>markLastAiringCompleted</code>, <span class="filepath">channels.ts:500-514</span>) are deliberately
+  unchanged — resume neither adds rows nor flips flags.</p>
+</section>
+
+</main>
+</div>
+
+<div class="viz-tooltip" id="tooltip" role="status"></div>
+
+<script>
+  // Theme toggle — stamps data-theme on :root; the :not() guard in CSS lets it beat the OS setting.
+  const btn = document.getElementById("themeToggle");
+  const root = document.documentElement;
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+  function currentMode() {
+    return root.dataset.theme || (prefersDark.matches ? "dark" : "light");
+  }
+  function paintButton() {
+    btn.textContent = currentMode() === "dark" ? "Light mode" : "Dark mode";
+  }
+  btn.addEventListener("click", () => {
+    root.dataset.theme = currentMode() === "dark" ? "light" : "dark";
+    paintButton();
+  });
+  prefersDark.addEventListener("change", paintButton);
+  paintButton();
+
+  // Per-mark hover tooltips on the timeline.
+  const tip = document.getElementById("tooltip");
+  document.querySelectorAll(".hit").forEach((g) => {
+    g.addEventListener("pointerenter", () => {
+      tip.innerHTML = g.dataset.tip;
+      tip.classList.add("show");
+    });
+    g.addEventListener("pointermove", (e) => {
+      const pad = 14;
+      const w = tip.offsetWidth, h = tip.offsetHeight;
+      let x = e.clientX + pad, y = e.clientY - h - pad;
+      if (x + w > window.innerWidth - 8) x = e.clientX - w - pad;
+      if (y < 8) y = e.clientY + pad;
+      tip.style.left = x + "px";
+      tip.style.top = y + "px";
+    });
+    g.addEventListener("pointerleave", () => tip.classList.remove("show"));
+  });
+</script>
+</body>
+</html>

@@ -72,7 +72,7 @@ import {
 import VideoSurface, {
     type VideoSurfaceHandle,
 } from "../player/VideoSurface.js";
-import { endsPlayableUnit, useStore } from "../store.js";
+import { endsPlayableUnit, providePosition, useStore } from "../store.js";
 import "./Player.css";
 
 /**
@@ -101,6 +101,17 @@ const SEEK_COMMIT_MS = 250;
 
 /** Mouse-move reveals are throttled so a moving pointer doesn't re-render 60×/s. */
 const ACTIVITY_THROTTLE_MS = 150;
+
+/**
+ * How often the playhead is written to the database
+ * (docs/playback.md, "Resuming a channel").
+ *
+ * This number *is* the promise: an app that goes away without warning — a
+ * crash, a kill, a power cut — costs the viewer at most this much of the
+ * episode. Every graceful exit flushes on its own way out, so thirty seconds
+ * bounds the ungraceful ones only.
+ */
+const POSITION_SAVE_MS = 30_000;
 
 const clamp = (value: number, max: number): number =>
     Math.min(max, Math.max(0, value));
@@ -149,6 +160,7 @@ export default function Player({
     const advance = useStore((s) => s.advance);
     const prewarm = useStore((s) => s.prewarm);
     const leavePlayer = useStore((s) => s.leavePlayer);
+    const savePosition = useStore((s) => s.savePosition);
     const navigate = useStore((s) => s.navigate);
     const setPipActive = useStore((s) => s.setPipActive);
     const armSleep = useStore((s) => s.armSleep);
@@ -226,6 +238,73 @@ export default function Player({
     const chromeVisible = osdVisible || failed;
     const showBanner = bannerFlash || chromeVisible;
     const inUpNextWindow = remainingS <= UP_NEXT_WINDOW_S && remainingS > 0;
+
+    // ---- saving where we are ------------------------------------------------
+
+    /**
+     * A resumed `direct` episode has to be seeked in the element.
+     *
+     * The piped paths arrive already positioned — their `?t=` restarted ffmpeg
+     * at the offset, and the slot carries that offset for display — but the
+     * stream server ignores `?t=` for a file it serves with range requests, so
+     * for those the resume is this screen's job. The same split `performSeek`
+     * makes, and for the same reason.
+     */
+    const resumeAtS = nowPlaying?.resumeAtS ?? 0;
+    const needsNativeResume =
+        resumeAtS > 0 && nowPlaying?.episode.playbackPath === "direct";
+
+    /**
+     * The playhead, readable without a render.
+     *
+     * Two callers want the number and neither wants a re-render: the autosave
+     * interval, which must not re-bind four times a second, and the store's
+     * exits, which need the position as it is *now* rather than as it was on
+     * the last tick (see `providePosition`).
+     */
+    const positionRef = useRef(0);
+    useEffect(() => {
+        positionRef.current = position;
+    }, [position]);
+
+    useEffect(
+        () =>
+            providePosition(() =>
+                useStore.getState().nowPlaying === null
+                    ? null
+                    : positionRef.current,
+            ),
+        [],
+    );
+
+    /**
+     * The autosave, plus the two events that make it trustworthy.
+     *
+     * The interval on its own is not enough. Chromium throttles timers in a
+     * backgrounded window, which is precisely when the app is most likely to be
+     * closed or killed, so hiding the window flushes immediately rather than
+     * waiting out a tick that may never come. `pagehide` covers the window being
+     * closed outright: the renderer goes away before the main process reaches
+     * `will-quit`, and a save that has already crossed the bridge is durable
+     * without either of them — which is why quitting needs no hook of its own.
+     */
+    useEffect(() => {
+        if (episodeId == null) return;
+        const save = (): void => {
+            void savePosition();
+        };
+        const onVisibility = (): void => {
+            if (document.visibilityState === "hidden") save();
+        };
+        const id = window.setInterval(save, POSITION_SAVE_MS);
+        document.addEventListener("visibilitychange", onVisibility);
+        window.addEventListener("pagehide", save);
+        return () => {
+            window.clearInterval(id);
+            document.removeEventListener("visibilitychange", onVisibility);
+            window.removeEventListener("pagehide", save);
+        };
+    }, [episodeId, savePosition]);
 
     // ---- sleep timer --------------------------------------------------------
 
@@ -618,6 +697,10 @@ export default function Player({
                 setScrubPreview(null);
                 setVideoTime(target);
                 video.currentTime = target;
+                // Passed explicitly: `positionRef` is a render behind the seek that
+                // just happened, so a crash right after scrubbing would otherwise
+                // resume at where the viewer scrubbed *from*.
+                void savePosition(target);
                 return;
             }
 
@@ -632,8 +715,9 @@ export default function Player({
                     slotFor(nowPlaying, at, withSeek(nowPlaying.streamUrl, at)),
                 ),
             );
+            void savePosition(at);
         },
-        [activeVideo, nowPlaying, totalS],
+        [activeVideo, nowPlaying, totalS, savePosition],
     );
 
     const commitSeek = useCallback(
@@ -954,6 +1038,15 @@ export default function Player({
                 onLoadStart={() => setVideoTime(0)}
                 onLoadedMetadata={(video) => {
                     applyVolume(video);
+                    // The first moment a `direct` file will accept a position. Only
+                    // the surface on air: a standby is buffering a *fresh* pick,
+                    // which by definition starts at the top. A Retry re-runs this
+                    // and lands back on the resume point, which is what the piped
+                    // paths do too — their URL still carries the same `?t=`.
+                    if (isActive && needsNativeResume) {
+                        video.currentTime = resumeAtS;
+                        setVideoTime(resumeAtS);
+                    }
                     if (wantsPlayRef.current)
                         void video.play().catch(() => undefined);
                 }}

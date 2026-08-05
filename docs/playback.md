@@ -503,6 +503,92 @@ The renderer translates a scrub into whichever mechanism the path supports:
   changes. The MediaSource is told `episode.durationS - offset`, so the scrub bar
   no longer has to guess at the length of a pipe.
 
+## Resuming a channel
+
+Every channel remembers the episode it was playing and how far into it you got,
+in `channel_playback_state` ([data-model.md](data-model.md)). Tuning back in
+returns you there; a channel with no saved place picks fresh and starts at the
+top, which is what every channel does the first time.
+
+### Why a resume must not go through the scheduler
+
+This is the whole shape of the feature, and it comes from one fact:
+**`pickNext` commits at hand-out time, not at completion**
+([scheduler.md](scheduler.md)). The cursor advance, the shuffle-bag pop, the arc
+lock and the play-log row all land the moment an episode is handed out, before a
+frame plays. So by the time you leave halfway through an episode, the schedule
+has already moved past it.
+
+A resume that re-tuned through `pickNext` would therefore spend a *second*
+schedule step and hand back a different episode than the one being resumed: a
+sequential cursor would skip an episode, a shuffle bag would lose a unit from its
+cycle, a three-parter would jump from Part 2 to Part 3, and the play log would
+show two airings for one episode watched — the same corruption the gapless
+handoff is built to avoid, arriving from a different direction.
+
+So `tuneIn` (`services/playback.ts`) branches before the scheduler. The resume
+branch calls it not at all: it returns the saved episode, rebuilds the arc
+context by *reading* (through `buildUnits`, so it agrees with `planNext` by
+construction), and leaves cursor, bag, arc lock and play log exactly as the
+original hand-out left them. Only the fresh branch picks.
+
+### When the position is written
+
+Two writers, and the split is what makes a crash cheap:
+
+- **At pick time**, in the main process: every commit — tune-in, advance, and the
+  promotion of a prewarmed standby — points the row at the new episode at 0. A
+  crash a second into an episode still reopens on the episode that was genuinely
+  on air.
+- **From the renderer**, via `player.savePosition`: every 30 seconds while an
+  episode plays, and immediately on a committed seek, on the window being hidden
+  or closed, and at every graceful exit.
+
+The interval alone would not be enough, because Chromium throttles timers in a
+backgrounded window — which is exactly when the app is most likely to be closed
+or killed — hence the `visibilitychange` and `pagehide` flushes beside it.
+
+**Quitting needs no hook.** Each save is a synchronous SQLite upsert completed
+inside its IPC handler, so it is durable the moment the call resolves. There is
+no `before-quit` handler and nothing for the renderer to flush on the way down;
+this also means the database-import restart path, which uses `app.exit(0)` and
+skips `will-quit` entirely, loses nothing.
+
+### Clearing, and the ordering that depends on it
+
+`player.reportEnded` **clears** the channel's resume point. Every way off an
+episode passes through it, and most of them mean you are finished with it: it
+ended, you skipped it, the sleep timer stopped the channel at a unit boundary.
+The two paths that mean the opposite — leaving the player, and changing channel —
+call `savePosition` immediately *after* `reportEnded`, which puts the point back.
+
+The order is load-bearing in that direction only: save first and the clear would
+wipe it. Stating it this way keeps one rule ("finishing with an episode forgets
+it") and makes the exceptions say so explicitly, rather than making `reportEnded`
+guess which kind of ending it is being told about.
+
+### The edges
+
+- **Position near the end** is clamped to five seconds clear of the runtime.
+  Resuming *at* the end would play a frame and advance. There is deliberately no
+  "close enough to finished, pick something new" threshold — that would be a
+  second rule about when the schedule moves on.
+- **A saved episode that has left the library** (a scan pruned it) fails the
+  staleness check and falls through to a fresh pick; the foreign key cascade
+  handles the row.
+- **Seeks are coarse on the piped paths** — `-ss` is keyframe-aligned — so a
+  resume lands *near* the saved second, not exactly on it. The same accepted
+  trade-off as scrubbing ([architecture.md](architecture.md#risks-and-what-answers-them)).
+- **`direct` files resume differently.** The stream server ignores `?t=` for a
+  file it serves with range requests, so their URL is unseeked and the Player
+  moves the element's own `currentTime` on `loadedmetadata`. The piped paths
+  carry the seek in the URL and the slot's offset accounts for it. Getting this
+  split wrong makes the timecode wrong for the rest of the episode, which is why
+  both halves are pinned in `tests/renderer/player-decisions.test.tsx`.
+- **Resume state is per channel**, so flipping between two channels resumes both.
+- **The sleep timer is never persisted** — only position is. An armed countdown
+  surviving a restart would be a surprise, not a convenience.
+
 ## The soak harness
 
 `scripts/soak.mjs` is the rig that found the stall bug, kept as a regression test.

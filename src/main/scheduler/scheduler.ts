@@ -55,6 +55,7 @@ import {
     saveShowState,
     setActiveArc,
 } from "../db/repositories/channels.js";
+import { clearPlaybackStateForShow } from "../db/repositories/playback-state.js";
 import { buildUnits, unitKeyForArc } from "./units.js";
 
 /** A pick — committed to the database, or held by a prewarm reservation. */
@@ -541,10 +542,16 @@ export function discardReserved(
  * Reset a show's progress in a channel: cursor back to the pilot, bag emptied
  * so the next draw deals a fresh cycle. Progress only — the lineup entry (mode,
  * weight, position) is configuration and is deliberately untouched.
+ *
+ * A resume point belonging to this show goes too. Rewinding a show to its pilot
+ * and then resuming the viewer halfway through the episode they were on would
+ * be the reset visibly not taking; other shows on the channel are none of this
+ * reset's business, so the clear is scoped to `showId` rather than the channel.
  */
 export function resetProgress(db: Db, channelId: number, showId: number): void {
     db.transaction(() => {
         resetShowState(db, channelId, showId);
+        clearPlaybackStateForShow(db, channelId, showId);
     })();
 }
 

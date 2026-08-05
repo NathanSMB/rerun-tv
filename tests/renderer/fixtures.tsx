@@ -37,6 +37,12 @@ export type BridgeCall =
           episodeId: number;
           completed: boolean;
       }
+    | {
+          call: "savePosition";
+          channelId: number;
+          episodeId: number;
+          positionS: number;
+      }
     | { call: "release"; channelId: number; episodeId: number | null };
 
 export interface ScriptedBridge {
@@ -44,7 +50,10 @@ export interface ScriptedBridge {
     calls: BridgeCall[];
 }
 
-function episodeView(index: number): EpisodeView {
+function episodeView(
+    index: number,
+    playbackPath: EpisodeView["playbackPath"] = "remux",
+): EpisodeView {
     const episode = index + 1;
     return {
         id: 100 + episode,
@@ -56,19 +65,32 @@ function episodeView(index: number): EpisodeView {
         title: `Episode ${episode}`,
         code: `S01E${String(episode).padStart(2, "0")}`,
         durationS: EPISODE_DURATION_S,
-        // The majority path in a real library, and the one that cannot be seeked
-        // natively — so the Player's URL-reload seek is the one under test.
-        playbackPath: "remux",
+        // Defaults to the majority path in a real library, and the one that
+        // cannot be seeked natively — so the Player's URL-reload seek is what is
+        // under test unless a fixture asks for `direct`.
+        playbackPath,
     };
 }
 
-function playing(episode: EpisodeView, arc: NowPlaying["arc"]): NowPlaying {
+function playing(
+    episode: EpisodeView,
+    arc: NowPlaying["arc"],
+    resumeAtS = 0,
+): NowPlaying {
     return {
         channelId: CHANNEL_ID,
         channelNumber: CHANNEL_NUMBER,
         channelName: "Test",
         episode,
-        streamUrl: `http://127.0.0.1:9/stream/${episode.id}?ch=${CHANNEL_ID}`,
+        streamUrl:
+            `http://127.0.0.1:9/stream/${episode.id}?ch=${CHANNEL_ID}` +
+            // What `toNowPlaying` mints: a resumed *piped* episode carries its
+            // seek in the URL, and the slot's offset has to agree with it. A
+            // `direct` one never does — `serveFile` ignores `?t=`.
+            (resumeAtS > 0 && episode.playbackPath !== "direct"
+                ? `&t=${resumeAtS}`
+                : ""),
+        resumeAtS,
         arc,
     };
 }
@@ -77,6 +99,32 @@ function playing(episode: EpisodeView, arc: NowPlaying["arc"]): NowPlaying {
 export function standaloneDeck(count: number): NowPlaying[] {
     return Array.from({ length: count }, (_, index) =>
         playing(episodeView(index), null),
+    );
+}
+
+/**
+ * The same deck, but tuning in lands partway through the first episode — what
+ * the main process hands back when a channel is resumed
+ * (docs/playback.md, "Resuming a channel"). Only the first: everything after it
+ * is a fresh pick and starts at the top.
+ *
+ * `playbackPath` is the axis that matters here, because the two paths resume by
+ * different mechanisms. A piped episode arrives already positioned (its `?t=`
+ * restarted ffmpeg at the offset, and the slot carries that offset for
+ * display); a `direct` file arrives at zero and the Player has to seek the
+ * element itself.
+ */
+export function resumedDeck(
+    count: number,
+    resumeAtS: number,
+    playbackPath: EpisodeView["playbackPath"] = "remux",
+): NowPlaying[] {
+    return Array.from({ length: count }, (_, index) =>
+        playing(
+            episodeView(index, playbackPath),
+            null,
+            index === 0 ? resumeAtS : 0,
+        ),
     );
 }
 
@@ -140,6 +188,14 @@ export function scriptedBridge(deck: NowPlaying[]): ScriptedBridge {
                 channelId,
                 episodeId,
                 completed,
+            });
+        },
+        savePosition: async (channelId, episodeId, positionS) => {
+            calls.push({
+                call: "savePosition",
+                channelId,
+                episodeId,
+                positionS,
             });
         },
         release: async (channelId, episodeId) => {
