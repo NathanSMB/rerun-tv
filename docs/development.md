@@ -460,11 +460,14 @@ part of the repo:
   binaries are named after the product (`Rerun TV.exe`, `Rerun TV.app`).
 
 **Check the release page after the run.** electron-builder's GitHub publisher
-creates the release if it does not exist and otherwise attaches to it — but two
-runners finishing the build at the same moment can *each* create one, and
-GitHub happily holds two releases on the same tag, each with a partial asset
-set. That happened on 0.1.2. `gh release view` shows only one of them, so
-verify with:
+creates the release if it does not exist and otherwise attaches to it — but
+that check-then-create is not atomic, so two runners finishing at the same
+moment can *each* create one, and GitHub happily holds two releases on the same
+tag, each with a partial asset set. That happened on both 0.1.2 and 0.2.0,
+which is why the workflow now has a serial `create-release` job the matrix
+depends on: every platform job finds the release already existing and only ever
+attaches. Should a split still somehow occur, `gh release view` shows only one
+of the two, so verify with:
 
 ```sh
 gh api repos/NathanSMB/rerun-tv/releases \

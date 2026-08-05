@@ -21,16 +21,35 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    # electron-builder's publisher creates the release if it does not exist yet
+    # and otherwise attaches to it — but that check-then-create is not atomic,
+    # and on both 0.1.2 and 0.2.0 two platform jobs each created a release for
+    # the same tag, splitting the assets across them. Creating the release here,
+    # in a single job the matrix depends on, means every platform job finds it
+    # already existing and only ever attaches.
+    create-release:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - name: Create the release the matrix uploads to
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                      gh release create "$GITHUB_REF_NAME" \
+                          --repo "$GITHUB_REPOSITORY" \
+                          --title "${GITHUB_REF_NAME#v}" \
+                          --notes ""
+                  fi
+
     release:
+        needs: create-release
         # One job per platform; each builds and uploads only its own targets
         # (Linux AppImage, macOS dmg+zip, Windows NSIS installer), so the jobs
-        # never touch each other's artifacts. electron-builder's publisher
-        # creates the release if it does not exist yet and otherwise attaches
-        # to it — but that check-then-create is not atomic, and on 0.1.2 two
-        # jobs each created a release for the same tag, splitting the assets
-        # across them. After every release, verify the tag has exactly one
-        # release with all 14 assets (see docs/development.md, "CI and
-        # releases") and merge them if it happened again.
+        # never touch each other's artifacts. They all attach to the release
+        # created above. After every release, verify the tag has all 14 assets
+        # (see docs/development.md, "CI and releases").
         strategy:
             # A macOS packaging failure should not cancel a Linux upload that
             # is already half done — let each platform finish or fail alone.
