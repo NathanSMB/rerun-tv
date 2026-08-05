@@ -848,6 +848,22 @@ export default function Player({
         }));
     }, []);
 
+    /**
+     * The clickable way back — the chevron beside the channel banner. Same
+     * split as the Esc map: with the picture floating this is "go and browse"
+     * (the channel plays on in its corner window), with nothing floating it
+     * ends the session, and `leavePlayer` writes the resume point on the way
+     * out. The one deliberate difference from Esc is fullscreen: Chromium
+     * spends the first Esc leaving fullscreen, but a viewer *clicking* a button
+     * labelled "guide" means the destination, so both happen in one press.
+     */
+    const backToGuide = useCallback(() => {
+        if (document.fullscreenElement)
+            void document.exitFullscreen().catch(() => undefined);
+        if (pipFloating) navigate("guide");
+        else void leavePlayer();
+    }, [pipFloating, navigate, leavePlayer]);
+
     // ---- fullscreen ---------------------------------------------------------
 
     const toggleFullscreen = useCallback(() => {
@@ -1071,13 +1087,31 @@ export default function Player({
             {surface("a")}
             {surface("b")}
 
-            <div className={`banner${showBanner ? "" : " is-hidden"}`}>
-                <span className="b-num">{dial}</span>
-                <span>
-                    <span className="b-show">{episode.showTitle}</span>
-                    <br />
-                    <span className="b-ep">{episodeLine}</span>
-                </span>
+            {/*
+        The back button rides with the banner rather than the OSD: it shows on
+        the tune-in flash too, so a mis-dialled channel can be left the moment
+        the number appears, without first waking the chrome.
+      */}
+            <div className={`topbar${showBanner ? "" : " is-hidden"}`}>
+                <button
+                    type="button"
+                    className="back-btn"
+                    aria-label="Back to the guide"
+                    title="Back to the guide (Esc)"
+                    onClick={backToGuide}
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                    </svg>
+                </button>
+                <div className="banner">
+                    <span className="b-num">{dial}</span>
+                    <span>
+                        <span className="b-show">{episode.showTitle}</span>
+                        <br />
+                        <span className="b-ep">{episodeLine}</span>
+                    </span>
+                </div>
             </div>
 
             <span className={`onair${chromeVisible ? "" : " is-hidden"}`}>

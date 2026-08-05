@@ -69,7 +69,7 @@
 
 /* ---- fade ---- */
 
-.stage .banner,
+.stage .topbar,
 .stage .onair,
 .stage .osd {
     transition: opacity 220ms ease;
@@ -81,7 +81,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .stage .banner,
+    .stage .topbar,
     .stage .onair,
     .stage .osd {
         transition: none;
@@ -90,11 +90,47 @@
 
 /* ---- banner & on-air ---- */
 
-.stage .banner {
+/* The back button and the banner fade as one — everything `showBanner` owns. */
+.stage .topbar {
     position: absolute;
     top: 22px;
     left: 22px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
     max-width: calc(100% - 220px);
+}
+
+/*
+ * The way back, drawn in the corner where every player keeps it. The same dark
+ * glass as the banner beside it so the pair reads as one cluster; the chevron
+ * is the verb, the channel card next to it is what you'd be leaving.
+ */
+.back-btn {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: rgba(5, 7, 12, 0.82);
+    backdrop-filter: blur(6px);
+    color: var(--white);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.back-btn:hover {
+    background: rgba(240, 239, 230, 0.12);
+    border-color: var(--steel-dim);
+}
+
+.back-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: currentColor;
 }
 
 .stage .onair {
@@ -470,7 +506,7 @@
  * lower specificity, and a `.stage`-scoped rule placed before them would be the
  * descending-specificity trap that quietly kills whichever rule loses.
  */
-.stage .banner,
+.stage .topbar,
 .stage .onair,
 .stage .toast,
 .stage .sleep-panel,

@@ -276,6 +276,32 @@ describe("resuming a channel", () => {
         );
     });
 
+    it("leaves for the guide from the banner's back button too", async () => {
+        const sc = await open(standaloneDeck(3));
+        await sc.at(612);
+
+        await sc.clickBack();
+
+        // The clickable Esc: same action, same flush, same destination.
+        expect(sc.actions).toEqual(["leavePlayer"]);
+        expect(saved(sc)).toEqual([612]);
+        expect(sc.state().screen).toBe("guide");
+        expect(sc.state().nowPlaying).toBeNull();
+    });
+
+    it("browses rather than leaving when the picture is floating", async () => {
+        const sc = await open(standaloneDeck(3));
+        await sc.clickPip();
+
+        await sc.clickBack();
+
+        // With the picture in its corner window the button is "go and browse",
+        // not "stop watching": no store action fires, the channel plays on.
+        expect(sc.actions).toEqual([]);
+        expect(sc.state().screen).toBe("guide");
+        expect(sc.state().nowPlaying).not.toBeNull();
+    });
+
     it("flushes when the window is hidden, not only on the interval", async () => {
         const sc = await open(standaloneDeck(3));
         await sc.at(300);

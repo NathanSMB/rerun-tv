@@ -195,6 +195,13 @@ Keyboard map: `Space` play/pause · `↑`/`↓` volume · `→` skip · `F`
 fullscreen · `Esc` back to the guide · `M` mute · `S` sleep timer · `P`
 picture-in-picture.
 
+`Esc` also has a clickable twin: a back chevron beside the channel banner,
+shown whenever the banner is — including the tune-in flash, so a mis-dialled
+channel can be left the moment the number appears. It follows the same PiP
+split as `Esc` (below); the one difference is fullscreen, which it exits *and*
+leaves in a single press, where Chromium spends the first `Esc` on fullscreen
+alone.
+
 ### Picture-in-picture — the channel follows you
 
 A PiP button in the OSD row, or `P`, floats the picture in an always-on-top

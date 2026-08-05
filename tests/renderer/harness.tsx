@@ -471,6 +471,8 @@ export interface Scenario {
      * whether the player's window-level map sees it at all.
      */
     press(key: string): Promise<void>;
+    /** The ← button beside the channel banner — the clickable Esc. */
+    clickBack(): Promise<void>;
     /** Press the moon button in the OSD row. */
     clickSleep(): Promise<void>;
     /** A wheel notch over an element: `up` adds time, `down` takes it away. */
@@ -750,6 +752,8 @@ export async function openPlayer(
 
         viewerPause: () => click("Pause"),
         viewerPlay: () => click("Play"),
+
+        clickBack: () => click("Back to the guide"),
 
         /**
          * Keystrokes go to `document.activeElement`, never to `window` directly, and
