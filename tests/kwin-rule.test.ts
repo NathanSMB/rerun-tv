@@ -163,7 +163,11 @@ describe("removing the rule", () => {
     });
 });
 
-describe("knowing when to keep out of it", () => {
+// isKwinSession and ensureKwinPipRule refuse to act off Linux, so these
+// suites only mean anything there.
+const describeLinux = describe.runIf(process.platform === "linux");
+
+describeLinux("knowing when to keep out of it", () => {
     it("is KDE-only — nobody else has this file or this concept", () => {
         expect(
             isKwinSession({ XDG_CURRENT_DESKTOP: "KDE" } as NodeJS.ProcessEnv),
@@ -197,7 +201,7 @@ describe("knowing when to keep out of it", () => {
  * enforces the rule, so nothing about it depends on the protocol we spoke to get
  * a window. These cases pin exactly that.
  */
-describe("installing it at boot", () => {
+describeLinux("installing it at boot", () => {
     const KDE_WAYLAND = {
         XDG_CURRENT_DESKTOP: "KDE",
         XDG_SESSION_TYPE: "wayland",
