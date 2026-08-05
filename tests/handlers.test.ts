@@ -23,7 +23,7 @@ import type { LoudnessScanner } from "@main/library/loudness.js";
 import type { Scanner } from "@main/library/scanner.js";
 import type { StreamServer } from "@main/stream/server.js";
 import { EVENTS, IPC } from "@shared/ipc.js";
-import type { ChannelDetail, NowPlaying } from "@shared/types.js";
+import type { ChannelDetail, FfmpegState, NowPlaying } from "@shared/types.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { seedFlatShow } from "./helpers/db.js";
 import {
@@ -110,6 +110,9 @@ function makeContext(): HandlerContext {
             nvenc: "failed",
             vaapiDevice: null,
         }),
+        onFfmpegChanged: () => {
+            calls.push("onFfmpegChanged");
+        },
         restart: async () => {
             calls.push("restart");
         },
@@ -317,6 +320,49 @@ describe("settings handlers", () => {
             invoke(IPC.settings.set, "lastRestoreReceipt", "hi"),
         ).rejects.toThrow(/Unknown setting/);
         expect(getSettings(db)).not.toHaveProperty("lastRestoreReceipt");
+    });
+});
+
+describe("managed ffmpeg handlers", () => {
+    /**
+     * The two answers must be reported separately, because they genuinely
+     * disagree: `RERUN_FFMPEG_PATH` is set on this very test run, so the active
+     * binary is the system's while a managed copy could still be sitting on disk.
+     * A card that folded them together would tell someone with an update waiting
+     * that nothing was installed.
+     */
+    it("reports the active binary and the managed copy as separate facts", async () => {
+        const state = (await invoke(IPC.system.getFfmpegState)) as FfmpegState;
+
+        expect(state).toMatchObject({
+            source: expect.stringMatching(/^(managed|system|bundled|missing)$/),
+        });
+        expect(state).toHaveProperty("managed");
+        expect(state).toHaveProperty("downloadable");
+    });
+
+    /**
+     * The gate polls this every five seconds while it is open. Re-probing on
+     * every tick would spawn two ffmpeg processes a second behind the modal, so
+     * the notification is conditional on the path having actually moved — and on
+     * a machine where nothing changed, it must not fire at all.
+     */
+    it("does not re-probe when a re-check finds the same binary", async () => {
+        await invoke(IPC.system.recheckFfmpeg);
+        expect(calls).not.toContain("onFfmpegChanged");
+    });
+
+    it("tells the app to re-probe after removing the managed copy", async () => {
+        await invoke(IPC.system.removeManagedFfmpeg);
+        // Unconditional here, unlike the re-check: removal always changes which
+        // binary the next spawn will use, even when it changes it to nothing.
+        expect(calls).toContain("onFfmpegChanged");
+    });
+
+    it("cancelling with nothing running is a no-op rather than an error", async () => {
+        await expect(
+            invoke(IPC.system.cancelFfmpegInstall),
+        ).resolves.toBeUndefined();
     });
 });
 

@@ -47,8 +47,16 @@ const CONSOLE_LOG: LoudnessLog = {
 
 export interface LoudnessScannerOptions {
     db: Db;
-    /** Null when no ffmpeg was found; the job then simply never runs. */
-    ffmpegPath: string | null;
+    /**
+     * Where ffmpeg is *right now*, or null when there is none.
+     *
+     * A getter rather than a captured path for the same reason the scanner takes
+     * one: this job is constructed at boot, and "there was no ffmpeg at boot"
+     * must not become "there is no ffmpeg this session" once the user installs
+     * a managed copy. Re-read at the top of every pass, so an install that lands
+     * mid-session is picked up by the next `start()`.
+     */
+    ffmpegPath: () => string | null;
     /** Read at every step, so switching the setting off stops the pass mid-list. */
     getSettings: () => AppSettings;
     /**
@@ -72,7 +80,7 @@ const BETWEEN_FILES_MS = 1_000;
 
 export class LoudnessScanner {
     readonly #db: Db;
-    readonly #ffmpegPath: string | null;
+    readonly #ffmpegPath: () => string | null;
     readonly #getSettings: () => AppSettings;
     readonly #isBusy: () => boolean;
     readonly #busyRecheckMs: number;
@@ -119,7 +127,7 @@ export class LoudnessScanner {
      * one behind it, which is how episodes added mid-pass get picked up.
      */
     start(): void {
-        if (this.#disposed || !this.#ffmpegPath) return;
+        if (this.#disposed || this.#ffmpegPath() === null) return;
         if (!this.#getSettings().loudnessEq) return;
         this.#queue = this.#queue.then(() => this.#run());
     }
@@ -168,7 +176,7 @@ export class LoudnessScanner {
      * added while the pass runs is picked up by the `#stale` loop above.
      */
     async #pass(signal: AbortSignal): Promise<void> {
-        const ffmpegPath = this.#ffmpegPath;
+        const ffmpegPath = this.#ffmpegPath();
         if (!ffmpegPath) return;
 
         const pending = listEpisodesNeedingLoudness(this.#db).filter(

@@ -41,6 +41,7 @@ import {
     stagedImportMetaPath,
     stagedImportPath,
 } from "./paths.js";
+import { cleanupManagedFfmpeg } from "./services/ffmpeg-manager.js";
 import { applyStagedImport, recordRestoreReceipt } from "./services/restore.js";
 import { checkCodecs, resolveFfmpeg } from "./stream/ffmpeg.js";
 import { probeHardwareAccel } from "./stream/hwaccel.js";
@@ -230,6 +231,54 @@ function removeXwaylandLeftovers(db: Db): void {
     }
 }
 
+/**
+ * The two startup probes: can this ffmpeg produce the stream shape the player
+ * needs, and does this machine have a GPU encoder to do it on?
+ *
+ * Both are fire-and-forget and both are non-fatal — a failure just means
+ * everything runs on software, or that unplayable files stay unplayable. Called
+ * once at boot, and again whenever the binary underneath changes (a managed
+ * install, an update, or a removal), because both answers belong to the binary
+ * rather than to the session: an install that lands on a machine with no ffmpeg
+ * would otherwise leave Settings reporting a codec check that failed against
+ * nothing at all.
+ */
+function probeFfmpeg(ffmpegPath: string | null): void {
+    codecStatus = "pending";
+    hwAccelStatus = PENDING_HW_ACCEL;
+
+    void checkCodecs(ffmpegPath)
+        .then((result) => {
+            codecStatus = result;
+        })
+        .catch(() => {
+            codecStatus = "failed";
+        });
+
+    // Same contract as the codec check: non-fatal, never blocks the window, and
+    // until it answers every transcode runs on software (`effectiveAccel`).
+    void probeHardwareAccel(ffmpegPath)
+        .then((report) => {
+            hwAccelStatus = report;
+            const found = [
+                report.vaapi === "ok" ? `vaapi (${report.vaapiDevice})` : null,
+                report.nvenc === "ok" ? "nvenc" : null,
+            ].filter(Boolean);
+            console.log(
+                found.length > 0
+                    ? `[hwaccel] available: ${found.join(", ")}`
+                    : "[hwaccel] no hardware encoder available; transcodes run on libx264",
+            );
+        })
+        .catch(() => {
+            hwAccelStatus = {
+                vaapi: "failed",
+                nvenc: "failed",
+                vaapiDevice: null,
+            };
+        });
+}
+
 async function bootstrap(): Promise<void> {
     // Before anything opens the database: if an import is staged, this is the one
     // moment nothing holds a handle on the file, so the swap is safe here.
@@ -264,6 +313,14 @@ async function bootstrap(): Promise<void> {
             ? quoteExecArg(process.env.APPIMAGE)
             : `${quoteExecArg(process.execPath)} ${quoteExecArg(app.getAppPath())}`,
     );
+    // Abandoned staging dirs and superseded versions, swept before anything
+    // resolves against them — the other half of side-by-side updates, and the one
+    // moment nothing from the last session can still be holding a binary open.
+    cleanupManagedFfmpeg();
+
+    // Resolved here only for the two background probes below. Everything with a
+    // longer life asks again when it needs a path (`resolveFfmpeg` is cached, and
+    // an install drops that cache) — see the getters handed to the scanners.
     const ffmpeg = resolveFfmpeg();
 
     streamServer = await startStreamServer({
@@ -274,7 +331,7 @@ async function bootstrap(): Promise<void> {
 
     scanner = new Scanner({
         db,
-        ffprobePath: ffmpeg.ffprobePath ?? "ffprobe",
+        ffprobePath: () => resolveFfmpeg().ffprobePath ?? "ffprobe",
         onProgress: (status) => broadcast(EVENTS.scanProgress, status),
         onLibraryChanged: () => {
             broadcast(EVENTS.libraryChanged);
@@ -286,7 +343,7 @@ async function bootstrap(): Promise<void> {
 
     loudnessScanner = new LoudnessScanner({
         db,
-        ffmpegPath: ffmpeg.ffmpegPath,
+        ffmpegPath: () => resolveFfmpeg().ffmpegPath,
         getSettings: () => getSettings(db),
         // "Busy" is anything the user would hear or watch stutter: a live encoder on
         // any channel, or a library scan already spending the disk.
@@ -302,6 +359,16 @@ async function bootstrap(): Promise<void> {
         stream: streamServer,
         codecCheck: () => codecStatus,
         hwAccel: () => hwAccelStatus,
+        // The binary changed under us — a managed copy was installed, updated or
+        // removed. Everything that resolves per use already follows the new
+        // pointer; what needs saying explicitly is that both probes describe the
+        // *old* binary and have to be taken again.
+        onFfmpegChanged: () => {
+            probeFfmpeg(resolveFfmpeg().ffmpegPath);
+            // New paths mean new work for the measuring job, which may have been
+            // sitting idle all session because there was no ffmpeg to run it.
+            loudnessScanner?.start();
+        },
         restart,
     });
 
@@ -309,36 +376,7 @@ async function bootstrap(): Promise<void> {
     createWindow();
 
     // Background work, after the window is on its way.
-    void checkCodecs(ffmpeg.ffmpegPath)
-        .then((result) => {
-            codecStatus = result;
-        })
-        .catch(() => {
-            codecStatus = "failed";
-        });
-
-    // Same contract as the codec check: non-fatal, never blocks the window, and
-    // until it answers every transcode runs on software (`effectiveAccel`).
-    void probeHardwareAccel(ffmpeg.ffmpegPath)
-        .then((report) => {
-            hwAccelStatus = report;
-            const found = [
-                report.vaapi === "ok" ? `vaapi (${report.vaapiDevice})` : null,
-                report.nvenc === "ok" ? "nvenc" : null,
-            ].filter(Boolean);
-            console.log(
-                found.length > 0
-                    ? `[hwaccel] available: ${found.join(", ")}`
-                    : "[hwaccel] no hardware encoder available; transcodes run on libx264",
-            );
-        })
-        .catch(() => {
-            hwAccelStatus = {
-                vaapi: "failed",
-                nvenc: "failed",
-                vaapiDevice: null,
-            };
-        });
+    probeFfmpeg(ffmpeg.ffmpegPath);
 
     if (settings.watchFolders) scanner.startWatching();
     void scanner

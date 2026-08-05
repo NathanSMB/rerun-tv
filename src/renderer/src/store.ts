@@ -33,6 +33,8 @@ import type {
     ChannelDetail,
     ChannelSummary,
     EpisodeView,
+    FfmpegInstallProgress,
+    FfmpegState,
     LibraryOverview,
     NowPlaying,
     ScanRoot,
@@ -193,6 +195,19 @@ interface AppState {
     roots: ScanRoot[] | null;
     scan: ScanStatus;
     system: SystemInfo | null;
+    /**
+     * What ffmpeg the app is running on, or null while the first answer is in
+     * flight.
+     *
+     * Separate from `system` because it changes on its own schedule: `system` is
+     * a snapshot taken at boot, while this is re-read whenever the gate polls, an
+     * install finishes, or Settings removes the managed copy. Two screens read it
+     * — the gate decides whether to exist from `source`, Settings renders the
+     * version tracker from all of it — which is exactly the store's remit.
+     */
+    ffmpeg: FfmpegState | null;
+    /** The install in flight, or null. Drives the gate's bar and Settings' card. */
+    ffmpegInstall: FfmpegInstallProgress | null;
     settings: AppSettings;
     ready: boolean;
     /**
@@ -266,6 +281,17 @@ interface AppState {
     refreshLibrary(): Promise<void>;
     refreshRoots(): Promise<void>;
     refreshChannelDetail(channelId?: number): Promise<void>;
+    /** Re-read `SystemInfo` — after anything that changes what's underneath. */
+    refreshSystem(): Promise<void>;
+    /**
+     * Ask again where ffmpeg is.
+     *
+     * `recheck: true` drops the main process's resolver cache first, which is
+     * what makes an install done outside the app (a package manager in another
+     * window) close the gate. The plain read is for after an action that already
+     * invalidated the cache itself.
+     */
+    refreshFfmpeg(recheck?: boolean): Promise<FfmpegState | null>;
 
     /** Clear `lastError` — the viewer has seen it. */
     dismissError(): void;
@@ -386,6 +412,8 @@ export const useStore = create<AppState>((set, get) => ({
     roots: null,
     scan: EMPTY_SCAN,
     system: null,
+    ffmpeg: null,
+    ffmpegInstall: null,
     settings: DEFAULT_SETTINGS,
     ready: false,
     lastError: null,
@@ -413,17 +441,29 @@ export const useStore = create<AppState>((set, get) => ({
         api.events.onChannelsChanged(() => {
             void get().refreshChannels();
         });
+        api.events.onFfmpegProgress((progress) => {
+            set({ ffmpegInstall: progress });
+            // A finished install changes the binary underneath, and the two
+            // things that describe it — the gate's reason to exist, and the
+            // System section — are both stale the moment it lands.
+            if (progress.phase === "done") {
+                void get().refreshFfmpeg();
+                void get().refreshSystem();
+            }
+        });
 
-        const [settings, system, scan] = await Promise.all([
+        const [settings, system, scan, ffmpeg] = await Promise.all([
             api.settings.getAll(),
             api.system.getInfo(),
             api.library.getScanStatus(),
+            api.system.getFfmpegState(),
         ]);
 
         set({
             settings,
             system,
             scan,
+            ffmpeg,
             volume: settings.rememberVolume
                 ? settings.volume
                 : DEFAULT_SETTINGS.volume,
@@ -517,6 +557,32 @@ export const useStore = create<AppState>((set, get) => ({
             .channels.get(id)
             .catch(rethrowReported);
         set({ channelDetail });
+    },
+
+    async refreshSystem() {
+        const system = await bridge().system.getInfo().catch(rethrowReported);
+        set({ system });
+    },
+
+    /**
+     * Deliberately *not* through `rethrowReported`.
+     *
+     * The gate polls this on a timer while it is open, and on a machine with no
+     * ffmpeg every one of those polls is expected to come back saying so. A
+     * transient failure here would paint the shell's error strip over and over
+     * behind a modal whose whole job is already to explain the problem.
+     */
+    async refreshFfmpeg(recheck = false) {
+        try {
+            const api = bridge().system;
+            const ffmpeg = await (recheck
+                ? api.recheckFfmpeg()
+                : api.getFfmpegState());
+            set({ ffmpeg });
+            return ffmpeg;
+        } catch {
+            return get().ffmpeg;
+        }
     },
 
     tune(channelId) {

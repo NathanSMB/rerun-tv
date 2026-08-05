@@ -20,6 +20,9 @@ import type {
     CreateChannelInput,
     Episode,
     EpisodeView,
+    FfmpegInstallProgress,
+    FfmpegState,
+    FfmpegUpdateCheck,
     LibraryOverview,
     NowPlaying,
     PlayMode,
@@ -155,6 +158,28 @@ export interface RerunApi {
          * the picker or the confirm; true means the app is on its way down.
          */
         importDb(): Promise<boolean>;
+
+        /**
+         * What ffmpeg the app is running, and what managed copy exists.
+         *
+         * Cheap and side-effect-free, so the gate is free to poll it while it is
+         * on screen — that is how an ffmpeg installed in another window makes the
+         * modal go away without anyone pressing anything.
+         */
+        getFfmpegState(): Promise<FfmpegState>;
+        /** Drop the resolver's cache and look again — the gate's re-check. */
+        recheckFfmpeg(): Promise<FfmpegState>;
+        /**
+         * Download, verify and activate the build published for this machine.
+         * Resolves with the installed version; rejects with a readable reason,
+         * having left nothing behind. Progress arrives on `ffmpegProgress`.
+         */
+        installManagedFfmpeg(): Promise<string>;
+        /** Abort a running install. Safe to call when nothing is running. */
+        cancelFfmpegInstall(): Promise<void>;
+        checkFfmpegUpdate(): Promise<FfmpegUpdateCheck>;
+        /** Delete the managed copy; the app falls back to the system binary. */
+        removeManagedFfmpeg(): Promise<FfmpegState>;
     };
 
     /** Push channels from main. Each returns an unsubscribe function. */
@@ -162,6 +187,10 @@ export interface RerunApi {
         onScanProgress(cb: (status: ScanStatus) => void): () => void;
         onLibraryChanged(cb: () => void): () => void;
         onChannelsChanged(cb: () => void): () => void;
+        /** Phase and byte counts while a managed ffmpeg is being installed. */
+        onFfmpegProgress(
+            cb: (progress: FfmpegInstallProgress) => void,
+        ): () => void;
     };
 }
 
@@ -216,6 +245,12 @@ export const IPC = {
         pickFolder: "system:pickFolder",
         backupDb: "system:backupDb",
         importDb: "system:importDb",
+        getFfmpegState: "system:getFfmpegState",
+        recheckFfmpeg: "system:recheckFfmpeg",
+        installManagedFfmpeg: "system:installManagedFfmpeg",
+        cancelFfmpegInstall: "system:cancelFfmpegInstall",
+        checkFfmpegUpdate: "system:checkFfmpegUpdate",
+        removeManagedFfmpeg: "system:removeManagedFfmpeg",
     },
 } as const;
 
@@ -224,4 +259,5 @@ export const EVENTS = {
     scanProgress: "event:scanProgress",
     libraryChanged: "event:libraryChanged",
     channelsChanged: "event:channelsChanged",
+    ffmpegProgress: "event:ffmpegProgress",
 } as const;

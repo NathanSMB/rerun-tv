@@ -22,6 +22,8 @@ import type {
     CreateArcInput,
     CreateChannelInput,
     EpisodeView,
+    FfmpegState,
+    FfmpegUpdateCheck,
     NowPlaying,
     PlayMode,
     ScanStatus,
@@ -54,13 +56,25 @@ import {
     listChannelSummaries,
     toEpisodeView,
 } from "../services/channels.js";
+import {
+    cancelFfmpegInstall,
+    checkFfmpegUpdate,
+    installManagedFfmpeg,
+    managedFfmpegAvailable,
+    removeManagedFfmpeg,
+} from "../services/ffmpeg-manager.js";
 import { assignUnmatched, getLibraryOverview } from "../services/library.js";
 import {
     discardStagedImport,
     getRestoreReceipt,
     inspectAndStage,
 } from "../services/restore.js";
-import { resolveFfmpeg } from "../stream/ffmpeg.js";
+import {
+    managedVersionDir,
+    readManagedRecord,
+    resetFfmpegCache,
+    resolveFfmpeg,
+} from "../stream/ffmpeg.js";
 import type { StreamServer } from "../stream/server.js";
 
 export interface HandlerContext {
@@ -73,6 +87,14 @@ export interface HandlerContext {
     codecCheck: () => SystemInfo["codecCheck"];
     /** Likewise for the GPU probe — `pending` reads as "use software for now". */
     hwAccel: () => SystemInfo["hwAccel"];
+    /**
+     * The ffmpeg binary underneath changed — installed, updated or removed.
+     *
+     * Everything that resolves per use already follows the new pointer on its
+     * own; this is for the two answers that were computed *about the old binary*
+     * and have to be taken again (`index.ts` re-runs the codec and GPU probes).
+     */
+    onFfmpegChanged: () => void;
     /** Tear down every subsystem and relaunch — how an import is finished. */
     restart: () => Promise<void>;
 }
@@ -511,6 +533,70 @@ export function registerHandlers(ctx: HandlerContext): void {
         // process goes away, or the caller sees a dead-channel error instead.
         void ctx.restart();
         return true;
+    });
+
+    // ---- system · managed ffmpeg -------------------------------------------
+
+    /**
+     * The gate and the Settings card both render from this one shape.
+     *
+     * `managed` is reported even when something else is active, because those two
+     * genuinely disagree when `RERUN_FFMPEG_PATH` is set — and a card that said
+     * "not installed" while an update sat on disk would be lying.
+     */
+    const ffmpegState = async (): Promise<FfmpegState> => {
+        const ff = resolveFfmpeg();
+        const record = readManagedRecord();
+        return {
+            path: ff.ffmpegPath,
+            ffprobePath: ff.ffprobePath,
+            version: ff.version,
+            source: ff.source,
+            managed:
+                record == null
+                    ? null
+                    : {
+                          version: record.version,
+                          installedAt: record.installedAt,
+                          dir: managedVersionDir(record.version),
+                      },
+            downloadable: await managedFfmpegAvailable(),
+        };
+    };
+
+    handle(IPC.system.getFfmpegState, ffmpegState);
+
+    handle(IPC.system.recheckFfmpeg, async (): Promise<FfmpegState> => {
+        const before = resolveFfmpeg().ffmpegPath;
+        resetFfmpegCache();
+        const state = await ffmpegState();
+        // Only when it actually changed: the gate polls this every few seconds
+        // while it is open, and re-probing the same binary on every tick would
+        // spawn two ffmpeg processes a second for as long as the modal is up.
+        if (state.path !== before) ctx.onFfmpegChanged();
+        return state;
+    });
+
+    handle(IPC.system.installManagedFfmpeg, () =>
+        installManagedFfmpeg({
+            onProgress: (progress) =>
+                broadcast(EVENTS.ffmpegProgress, progress),
+            onInstalled: () => ctx.onFfmpegChanged(),
+        }),
+    );
+
+    handle(IPC.system.cancelFfmpegInstall, () => {
+        cancelFfmpegInstall();
+    });
+
+    handle(
+        IPC.system.checkFfmpegUpdate,
+        (): Promise<FfmpegUpdateCheck> => checkFfmpegUpdate(),
+    );
+
+    handle(IPC.system.removeManagedFfmpeg, async (): Promise<FfmpegState> => {
+        removeManagedFfmpeg(() => ctx.onFfmpegChanged());
+        return await ffmpegState();
     });
 }
 

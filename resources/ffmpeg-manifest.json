@@ -1,0 +1,101 @@
+{
+    "schema": 1,
+    "updatedAt": "2026-08-05",
+    "note": "Pinned upstream FFmpeg builds Rerun TV offers to download. Rerun TV never redistributes ffmpeg — it fetches these unmodified artifacts from their publishers at the user's request and runs them as a separate process. Every entry pins an immutable release asset and its sha256, so a download that does not hash to the value here is discarded. Edit this file in the repo to point at newer builds; the app re-fetches it from the default branch and needs no release to follow along.",
+    "builds": {
+        "linux-x64": {
+            "version": "n8.1.2-34-g9b6c8969e0",
+            "source": "BtbN/FFmpeg-Builds",
+            "sourceUrl": "https://github.com/BtbN/FFmpeg-Builds",
+            "parts": [
+                {
+                    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-04-21-26/ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz",
+                    "sha256": "81724cce39cd991f69b7b54cd5784d752b74acafca636deb3b3aab795f0ff0b2",
+                    "sizeBytes": 124928500,
+                    "format": "tar.xz"
+                }
+            ]
+        },
+        "linux-arm64": {
+            "version": "n8.1.2-34-g9b6c8969e0",
+            "source": "BtbN/FFmpeg-Builds",
+            "sourceUrl": "https://github.com/BtbN/FFmpeg-Builds",
+            "parts": [
+                {
+                    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-04-21-26/ffmpeg-n8.1.2-34-g9b6c8969e0-linuxarm64-gpl-8.1.tar.xz",
+                    "sha256": "e4cf92c8bce654fcbb7b2ce227be2ae3dcdedc9d117b8fd1161ea9816db4d0d8",
+                    "sizeBytes": 107006844,
+                    "format": "tar.xz"
+                }
+            ]
+        },
+        "win32-x64": {
+            "version": "n8.1.2-34-g9b6c8969e0",
+            "source": "BtbN/FFmpeg-Builds",
+            "sourceUrl": "https://github.com/BtbN/FFmpeg-Builds",
+            "parts": [
+                {
+                    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-04-21-26/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1.zip",
+                    "sha256": "b7f08f5b4975e6ceecb9785584e559cfed0968fae701db92abd968e7a2ae0402",
+                    "sizeBytes": 167382255,
+                    "format": "zip"
+                }
+            ]
+        },
+        "win32-arm64": {
+            "version": "n8.1.2-34-g9b6c8969e0",
+            "source": "BtbN/FFmpeg-Builds",
+            "sourceUrl": "https://github.com/BtbN/FFmpeg-Builds",
+            "parts": [
+                {
+                    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-04-21-26/ffmpeg-n8.1.2-34-g9b6c8969e0-winarm64-gpl-8.1.zip",
+                    "sha256": "d1ff7ee1c7fc23b13b93f8279fb2206676a31f81b122b24cd146a119fd22c427",
+                    "sizeBytes": 111996635,
+                    "format": "zip"
+                }
+            ]
+        },
+        "darwin-arm64": {
+            "version": "6.1.1",
+            "source": "eugeneware/ffmpeg-static",
+            "sourceUrl": "https://github.com/eugeneware/ffmpeg-static",
+            "parts": [
+                {
+                    "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64",
+                    "sha256": "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
+                    "sizeBytes": 45568216,
+                    "format": "binary",
+                    "binary": "ffmpeg"
+                },
+                {
+                    "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64",
+                    "sha256": "bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64",
+                    "sizeBytes": 45528808,
+                    "format": "binary",
+                    "binary": "ffprobe"
+                }
+            ]
+        },
+        "darwin-x64": {
+            "version": "6.1.1",
+            "source": "eugeneware/ffmpeg-static",
+            "sourceUrl": "https://github.com/eugeneware/ffmpeg-static",
+            "parts": [
+                {
+                    "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64",
+                    "sha256": "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894",
+                    "sizeBytes": 78862176,
+                    "format": "binary",
+                    "binary": "ffmpeg"
+                },
+                {
+                    "url": "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-x64",
+                    "sha256": "fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0",
+                    "sizeBytes": 78780408,
+                    "format": "binary",
+                    "binary": "ffprobe"
+                }
+            ]
+        }
+    }
+}

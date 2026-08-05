@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Managed FFmpeg — implementation plan · Rerun TV</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;   /* blue — new / managed path */
+    --series-2:       #eb6834;   /* orange — decision points */
+    --series-3:       #1baf7a;   /* aqua — success / end states */
+    --seq-250:        #86b6ef;
+    --seq-400:        #3987e5;
+    --seq-450:        #2a78d6;
+    --seq-550:        #1c5cab;
+    --status-good:    #0ca30c;
+    --status-warn:    #fab219;
+    --status-serious: #ec835a;
+    --status-crit:    #d03b3b;
+    --delta-good:     #006300;
+    --wash:           rgba(42,120,214,0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --seq-250:        #86b6ef;
+      --seq-400:        #3987e5;
+      --seq-450:        #2a78d6;
+      --seq-550:        #1c5cab;
+      --delta-good:     #0ca30c;
+      --wash:           rgba(57,135,229,0.12);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --seq-250:        #86b6ef;
+    --seq-400:        #3987e5;
+    --seq-450:        #2a78d6;
+    --seq-550:        #1c5cab;
+    --delta-good:     #0ca30c;
+    --wash:           rgba(57,135,229,0.12);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 40px 24px 96px; }
+
+  header.doc { margin-bottom: 8px; }
+  .kicker { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+  h1 { font-size: 32px; line-height: 1.2; margin: 6px 0 8px; letter-spacing: -0.01em; }
+  .lede { color: var(--text-secondary); font-size: 16px; max-width: 70ch; margin: 0; }
+  .meta { color: var(--text-muted); font-size: 13px; margin-top: 10px; }
+
+  h2 { font-size: 21px; margin: 48px 0 4px; letter-spacing: -0.01em; }
+  h2 .no { color: var(--text-muted); font-weight: 600; font-variant-numeric: tabular-nums; margin-right: 8px; }
+  h3 { font-size: 16px; margin: 26px 0 6px; }
+  p  { max-width: 76ch; }
+  p, li { color: var(--text-primary); }
+  .sub { color: var(--text-secondary); margin-top: 0; }
+  a { color: var(--series-1); }
+  code, pre {
+    font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+    font-size: 13px;
+  }
+  code { background: var(--wash); padding: 1px 5px; border-radius: 4px; }
+  pre {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin: 16px 0;
+  }
+  figure { margin: 20px 0; }
+  figcaption { color: var(--text-muted); font-size: 13px; margin-top: 8px; }
+
+  /* ---- KPI row ---- */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 24px 0 8px; }
+  .kpi {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .kpi .v { font-size: 30px; font-weight: 650; letter-spacing: -0.01em; }
+  .kpi .l { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+
+  /* ---- tables ---- */
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14px; }
+  th { text-align: left; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--baseline); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  td code { overflow-wrap: anywhere; }
+  td:first-child, th:first-child { padding-left: 0; }
+  tr:last-child td { border-bottom: none; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600;
+    padding: 2px 9px; border-radius: 99px;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    white-space: nowrap;
+  }
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .risk-ic { font-weight: 700; margin-right: 2px; }
+
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .svg-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 8px 8px; overflow-x: auto; }
+  .svg-wrap svg { display: block; margin: 0 auto; min-width: 640px; width: 100%; height: auto; }
+
+  /* ---- effort chart ---- */
+  .bar-hit { cursor: default; }
+  .bar-hit:hover .bar-fill { filter: brightness(1.12); }
+  #tooltip {
+    position: fixed; z-index: 10; pointer-events: none;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+    padding: 8px 11px; font-size: 13px; line-height: 1.45;
+    max-width: 300px; opacity: 0; transition: opacity .1s;
+  }
+  #tooltip .t { font-weight: 600; }
+  #tooltip .d { color: var(--text-secondary); }
+
+  /* theme toggle */
+  .theme-toggle {
+    position: fixed; top: 14px; right: 14px;
+    background: var(--surface-1); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 99px;
+    font: 600 12px system-ui, sans-serif; padding: 6px 12px; cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--text-primary); }
+
+  details.table-view { margin: 10px 0 0; }
+  details.table-view summary { color: var(--text-muted); font-size: 13px; cursor: pointer; }
+
+  @media print {
+    .theme-toggle { display: none; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body data-palette="#2a78d6,#eb6834,#1baf7a">
+<button class="theme-toggle" id="themeToggle" aria-pressed="false">◐ Theme</button>
+<div id="tooltip" role="tooltip" aria-hidden="true"></div>
+
+<main>
+<header class="doc">
+  <div class="kicker">Rerun TV · Implementation plan</div>
+  <h1>Managed FFmpeg</h1>
+  <p class="lede">Let Rerun TV download and own a private copy of FFmpeg — first-launch gate when none exists, a version tracker with update checks in Settings, and every spawn routed to the managed binary when one is installed. Never added to <code>PATH</code>; never bundled with the app.</p>
+  <p class="meta">Drafted 2026-08-05 · targets the codebase at <code>main</code> (0e05e86) · companion to <code>docs/architecture.md</code></p>
+</header>
+
+<div class="kpis">
+  <div class="kpi"><div class="v">1</div><div class="l">resolver chokepoint today (<code>resolveFfmpeg()</code>) — every consumer flows through it</div></div>
+  <div class="kpi"><div class="v">2</div><div class="l">consumers that capture the path once at boot and need a getter seam</div></div>
+  <div class="kpi"><div class="v">6</div><div class="l">new IPC methods on the existing <code>system</code> namespace</div></div>
+  <div class="kpi"><div class="v">0</div><div class="l">new npm dependencies (Electron <code>net</code> + system <code>tar</code> + <code>node:crypto</code>)</div></div>
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">01</span>Why this shape</h2>
+<p>Today the app resolves FFmpeg once per need through a single function, <code>resolveFfmpeg()</code> in <code>src/main/stream/ffmpeg.ts</code>, with precedence <em>env override → PATH → bundled dirs</em>. There is no bundled binary in real builds (no <code>extraResources</code>), so in practice it is "system or nothing" — and <code>docs/architecture.md</code> deliberately promises never to bundle one, which keeps the app clear of the GPL-distribution question.</p>
+<p>A <strong>managed download</strong> keeps that promise: the app never <em>distributes</em> FFmpeg, it fetches an official upstream build at the user's request into the app's own data directory. That directory is private to Rerun TV (<code>~/.local/share/rerun-tv/ffmpeg/</code>), never touches <code>PATH</code>, and slots into the existing resolver as a new precedence tier.</p>
+
+<h3>Goals</h3>
+<ul>
+  <li>First-launch modal when no valid FFmpeg exists: one-click download, or a link to install it yourself; auto-dismisses the moment a valid binary appears.</li>
+  <li>Settings → System: show the active FFmpeg (source, version, path); download a managed copy; check for and install updates; remove it.</li>
+  <li>All FFmpeg/ffprobe calls prefer the managed copy over the system one when both exist.</li>
+</ul>
+<h3>Non-goals</h3>
+<ul>
+  <li>Bundling FFmpeg in the installer, or adding anything to the user's <code>PATH</code>.</li>
+  <li>Auto-downloading without consent, or background auto-updates (update checks are user-initiated).</li>
+  <li>A "prefer system over managed" toggle — deliberate simplification; removing the managed copy <em>is</em> the toggle. Easy to add later if wanted.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2><span class="no">02</span>Resolver: one new tier</h2>
+<p class="sub">The whole routing requirement collapses into one edit, because every consumer already funnels through <code>resolveFfmpeg()</code>.</p>
+
+<figure>
+  <div class="svg-wrap">
+  <svg viewBox="0 0 880 372" role="img" aria-labelledby="resolver-title">
+    <title id="resolver-title">Resolver precedence: env override, then managed install (new), then system PATH, then bundled dirs, then missing</title>
+    <!-- legend -->
+    <g font-size="12" fill="var(--text-secondary)">
+      <rect x="588" y="6" width="12" height="12" rx="3" fill="var(--series-1)"/>
+      <text x="606" y="16">new in this plan</text>
+      <rect x="716" y="6" width="12" height="12" rx="3" fill="none" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="734" y="16">exists today</text>
+    </g>
+    <!-- tiers -->
+    <g font-size="13.5">
+      <!-- tier 1 -->
+      <rect x="30" y="34" width="380" height="52" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="52" y="56" fill="var(--text-primary)" font-weight="600">1 · Env override</text>
+      <text x="52" y="74" fill="var(--text-muted)" font-size="12">RERUN_FFMPEG_PATH / RERUN_FFPROBE_PATH — dev &amp; tests</text>
+      <!-- tier 2 (new) -->
+      <rect x="30" y="102" width="380" height="52" rx="10" fill="var(--wash)" stroke="var(--series-1)" stroke-width="2"/>
+      <text x="52" y="124" fill="var(--text-primary)" font-weight="600">2 · Managed install</text>
+      <text x="52" y="142" fill="var(--text-muted)" font-size="12">&lt;dataDir&gt;/ffmpeg/versions/&lt;v&gt;/ per managed.json — NEW</text>
+      <!-- tier 3 -->
+      <rect x="30" y="170" width="380" height="52" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="52" y="192" fill="var(--text-primary)" font-weight="600">3 · System PATH walk</text>
+      <text x="52" y="210" fill="var(--text-muted)" font-size="12">findOnPath() — hand-rolled, no shell-out</text>
+      <!-- tier 4 -->
+      <rect x="30" y="238" width="380" height="52" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="52" y="260" fill="var(--text-primary)" font-weight="600">4 · Bundled dirs</text>
+      <text x="52" y="278" fill="var(--text-muted)" font-size="12">resourcesPath — empty in real builds, kept as-is</text>
+      <!-- tier 5 -->
+      <rect x="30" y="306" width="380" height="52" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="52" y="328" fill="var(--text-primary)" font-weight="600">5 · Missing</text>
+      <text x="52" y="346" fill="var(--text-muted)" font-size="12">source: "missing" → renderer shows the first-launch gate</text>
+      <!-- connectors -->
+      <g stroke="var(--baseline)" stroke-width="1.5" fill="none">
+        <path d="M220 86 v16"/><path d="M220 154 v16"/><path d="M220 222 v16"/><path d="M220 290 v16"/>
+      </g>
+      <g fill="var(--baseline)">
+        <path d="M220 102 l-4.5,-7 h9 z"/><path d="M220 170 l-4.5,-7 h9 z"/><path d="M220 238 l-4.5,-7 h9 z"/><path d="M220 306 l-4.5,-7 h9 z"/>
+      </g>
+    </g>
+    <!-- consumers box -->
+    <g font-size="12.5">
+      <rect x="470" y="52" width="380" height="286" rx="10" fill="var(--surface-1)" stroke="var(--border)"/>
+      <text x="492" y="80" fill="var(--text-primary)" font-weight="600" font-size="13.5">Consumers (all downstream of the resolver)</text>
+      <g fill="var(--text-secondary)">
+        <text x="492" y="108">stream/server.ts — re-resolves per request ✓</text>
+        <text x="492" y="132">ipc/handlers.ts — re-resolves per call ✓</text>
+        <text x="492" y="156">stream/hwaccel.ts, checkCodecs — boot probes ✓</text>
+        <text x="492" y="188" fill="var(--series-2)" font-weight="600">library/scanner.ts — captures path at construction</text>
+        <text x="492" y="212" fill="var(--series-2)" font-weight="600">library/loudness.ts — captures path at construction</text>
+        <text x="492" y="240" fill="var(--text-muted)">▲ the two orange rows get a getter seam</text>
+        <text x="492" y="258" fill="var(--text-muted)">(() =&gt; string | null) so a fresh install is</text>
+        <text x="492" y="276" fill="var(--text-muted)">picked up without reconstructing them</text>
+        <text x="492" y="310" fill="var(--text-muted)">After install: resetFfmpegCache() + re-resolve;</text>
+        <text x="492" y="328" fill="var(--text-muted)">per-request consumers pick it up automatically.</text>
+      </g>
+      <path d="M410 128 h44" stroke="var(--series-1)" stroke-width="2" fill="none"/>
+      <path d="M470 128 l-8,-4.5 v9 z" fill="var(--series-1)"/>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Fig 1 — New precedence order. The managed tier sits <em>above</em> the system PATH (the requirement: managed wins when present) but below the env override, which stays the dev/test escape hatch (<code>tests/stream-jobs.test.ts</code> already relies on it).</figcaption>
+</figure>
+
+<div class="card">
+  <strong>Concrete edits</strong>
+  <ul>
+    <li><code>ffmpeg.ts</code>: add <code>"managed"</code> to the <code>source</code> union; insert a <code>findManaged()</code> step reading <code>&lt;dataDir&gt;/ffmpeg/managed.json</code> (validated with the existing <code>isExecutable()</code> + <code>readVersion()</code>). Keep the module-level cache; the install flow calls the existing <code>resetFfmpegCache()</code> when it finishes.</li>
+    <li><code>index.ts</code>: pass <code>Scanner</code> and <code>LoudnessScanner</code> a getter (<code>() =&gt; resolveFfmpeg().ffprobePath</code>-style) instead of a captured string; the classes call it per operation. <code>server.ts</code> and <code>handlers.ts</code> already re-resolve per use and need no change.</li>
+    <li>No <code>AppSettings</code> key is needed at all — managed state lives in <code>managed.json</code> inside the managed dir, so the <code>setSetting()</code> whitelist in <code>db/repositories/settings.ts</code> is untouched.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">03</span>Download &amp; install pipeline</h2>
+<p class="sub">A new main-process module, <code>src/main/services/ffmpeg-manager.ts</code> — the app's first outbound HTTP client. Modeled on the existing long-running-job patterns (<code>scanner.ts</code> progress broadcasts, <code>loudness.ts</code> AbortSignal cancellation).</p>
+
+<figure>
+  <div class="svg-wrap">
+  <svg viewBox="0 0 880 268" role="img" aria-labelledby="pipe-title">
+    <title id="pipe-title">Install pipeline: fetch manifest, download, verify checksum, extract, smoke test, activate, rebind. Any failure cleans staging and reports an error.</title>
+    <g font-size="13">
+      <!-- row 1 -->
+      <rect x="20"  y="30" width="196" height="58" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="36" y="54" font-weight="600" fill="var(--text-primary)">Fetch manifest</text>
+      <text x="36" y="72" fill="var(--text-muted)" font-size="11.5">pinned URLs + sha256 per platform</text>
+
+      <rect x="252" y="30" width="196" height="58" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="268" y="54" font-weight="600" fill="var(--text-primary)">Download → staging</text>
+      <text x="268" y="72" fill="var(--text-muted)" font-size="11.5">net.request, streamed, progress %</text>
+
+      <rect x="484" y="30" width="180" height="58" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="500" y="54" font-weight="600" fill="var(--text-primary)">Verify sha256</text>
+      <text x="500" y="72" fill="var(--text-muted)" font-size="11.5">node:crypto, vs manifest</text>
+
+      <rect x="700" y="30" width="160" height="58" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="716" y="54" font-weight="600" fill="var(--text-primary)">Extract</text>
+      <text x="716" y="72" fill="var(--text-muted)" font-size="11.5">system tar (all 3 OSes)</text>
+
+      <!-- row 2 (right to left) -->
+      <rect x="700" y="140" width="160" height="58" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="716" y="164" font-weight="600" fill="var(--text-primary)">Smoke test</text>
+      <text x="716" y="182" fill="var(--text-muted)" font-size="11.5">readVersion + checkCodecs</text>
+
+      <rect x="484" y="140" width="180" height="58" rx="10" fill="var(--wash)" stroke="var(--series-1)" stroke-width="2"/>
+      <text x="500" y="164" font-weight="600" fill="var(--text-primary)">Activate</text>
+      <text x="500" y="182" fill="var(--text-muted)" font-size="11.5">move to versions/, flip pointer</text>
+
+      <rect x="252" y="140" width="196" height="58" rx="10" fill="var(--wash)" stroke="var(--series-1)" stroke-width="2"/>
+      <text x="268" y="164" font-weight="600" fill="var(--text-primary)">Rebind</text>
+      <text x="268" y="182" fill="var(--text-muted)" font-size="11.5">resetFfmpegCache() + broadcast</text>
+
+      <rect x="20" y="140" width="196" height="58" rx="10" fill="var(--surface-1)" stroke="var(--series-3)" stroke-width="2"/>
+      <text x="36" y="164" font-weight="600" fill="var(--text-primary)">Done</text>
+      <text x="36" y="182" fill="var(--text-muted)" font-size="11.5">gate closes / Settings refreshes</text>
+
+      <!-- arrows row1 -->
+      <g stroke="var(--baseline)" stroke-width="1.5" fill="none">
+        <path d="M216 59 h22"/><path d="M448 59 h22"/><path d="M664 59 h22"/>
+        <path d="M780 88 v38"/>
+        <path d="M700 169 h-22"/><path d="M484 169 h-22"/><path d="M252 169 h-22"/>
+      </g>
+      <g fill="var(--baseline)">
+        <path d="M252 59 l-8,-4.5 v9 z"/><path d="M484 59 l-8,-4.5 v9 z"/><path d="M700 59 l-8,-4.5 v9 z"/>
+        <path d="M780 140 l-4.5,-8 h9 z"/>
+        <path d="M664 169 l8,-4.5 v9 z"/><path d="M448 169 l8,-4.5 v9 z"/><path d="M216 169 l8,-4.5 v9 z"/>
+      </g>
+      <!-- failure note -->
+      <text x="20" y="230" fill="var(--text-muted)" font-size="12">Any step failing (or AbortSignal cancel) → delete <tspan font-family="ui-monospace, monospace">.staging-&lt;id&gt;/</tspan>, broadcast <tspan font-family="ui-monospace, monospace">phase:"error"</tspan> with a readable message.</text>
+      <text x="20" y="248" fill="var(--text-muted)" font-size="12">Nothing partial is ever activated.</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Fig 2 — Install pipeline. Blue steps are the atomic hand-off: nothing under <code>versions/</code> exists until the archive has been checksum-verified <em>and</em> the binary has actually transcoded a test clip via the existing <code>checkCodecs()</code>.</figcaption>
+</figure>
+
+<h3>On-disk layout</h3>
+<pre><code>~/.local/share/rerun-tv/ffmpeg/          # join(dataDir(), "ffmpeg") — same shape as backupsDir()
+├── managed.json                          # { version, urls, sha256, installedAt, platform, arch }
+├── versions/
+│   └── n7.1-latest/                      # one dir per installed version
+│       ├── ffmpeg(.exe)
+│       └── ffprobe(.exe)
+└── .staging-&lt;uuid&gt;/                      # transient; deleted on completion, failure, or next boot</code></pre>
+<ul>
+  <li><strong>No symlinks.</strong> <code>managed.json</code> is the pointer (its <code>version</code> names the active dir under <code>versions/</code>). Symlinks need care on Windows; a JSON pointer works identically everywhere and is already the resolver's read path.</li>
+  <li><strong>Updates are side-by-side.</strong> A new version installs into its own dir, then the pointer flips. FFmpeg processes already spawned from the old dir keep their open file handles; stale <code>versions/</code> dirs are garbage-collected at next boot (alongside leftover <code>.staging-*</code>), so an update never yanks a binary out from under an in-flight stream.</li>
+  <li><strong>Never on PATH</strong> — nothing outside the app reads this directory, and the resolver only consults it explicitly.</li>
+</ul>
+
+<h3>Where the binaries come from</h3>
+<table>
+  <thead><tr><th>Platform</th><th>Source (official static builds)</th><th>Artifact</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Linux x64</td><td>BtbN/FFmpeg-Builds (GitHub releases)</td><td><code>ffmpeg-n*-linux64-gpl.tar.xz</code></td><td>ffmpeg + ffprobe in one archive; release-branch builds, not master</td></tr>
+    <tr><td>Windows x64</td><td>BtbN/FFmpeg-Builds</td><td><code>ffmpeg-n*-win64-gpl.zip</code></td><td>same repo, same versioning as Linux</td></tr>
+    <tr><td>macOS arm64 / x64</td><td>martin-riedl.de builds</td><td>separate <code>ffmpeg.zip</code> + <code>ffprobe.zip</code></td><td>BtbN doesn't build macOS; publishes sha256; evermeet.cx is the x64-only fallback</td></tr>
+  </tbody>
+</table>
+<p><strong>The manifest indirection:</strong> the app never scrapes those sites at runtime. A small <code>ffmpeg-manifest.json</code> lives in the <code>NathanSMB/rerun-tv</code> repo (fetched raw from GitHub over HTTPS) pinning exact download URLs and sha256 checksums per platform/arch, vetted by you when you bump it — optionally automated later by a CI job that watches upstream releases. A snapshot of the manifest is baked into the app as a fallback so a first install works even if the raw fetch fails. "Check for updates" = fetch manifest, compare its <code>version</code> to <code>managed.json</code>. This means an FFmpeg update never requires an app release, but users only ever download bytes whose hash the repo has signed off on.</p>
+<p><strong>Extraction without new dependencies:</strong> spawn the system <code>tar</code> — GNU tar on Linux handles <code>.tar.xz</code>, bsdtar ships with macOS and with Windows 10+ (<code>tar.exe</code> reads zip archives too). One guarded code path per archive kind; if <code>tar</code> is somehow absent, the error message routes the user to the manual-install link. (Fallback option if this proves flaky on Windows: PowerShell <code>Expand-Archive</code>, or a tiny <code>yauzl</code> dep — decision deferred until Phase 2 touches a real Windows runner.)</p>
+
+<!-- ============================================================ -->
+<h2><span class="no">04</span>First-launch gate</h2>
+<p class="sub">Rendered by a new <code>FfmpegGate.tsx</code> as a true modal overlay (scrim + centered dialog) mounted in <code>App.tsx</code> whenever system info reports <code>source: "missing"</code>. The focus trap, Escape handling, and <code>role="dialog" aria-modal</code> pattern lift straight from <code>SleepPanel.tsx</code> — the only existing dialog — with new full-screen scrim CSS.</p>
+
+<figure>
+  <div class="svg-wrap">
+  <svg viewBox="0 0 880 300" role="img" aria-labelledby="gate-title">
+    <title id="gate-title">Gate state machine: missing leads to downloading or waiting for manual install; both converge on valid, which closes the gate. Errors return to missing with a message.</title>
+    <g font-size="13">
+      <!-- missing -->
+      <rect x="20" y="106" width="232" height="84" rx="10" fill="var(--surface-1)" stroke="var(--series-2)" stroke-width="2"/>
+      <text x="38" y="132" font-weight="600" fill="var(--text-primary)">missing</text>
+      <text x="38" y="152" fill="var(--text-muted)" font-size="11.5">"FFmpeg is required" — two actions:</text>
+      <text x="38" y="168" fill="var(--text-muted)" font-size="11.5">[Download for me] [Install myself ↗]</text>
+
+      <!-- downloading -->
+      <rect x="330" y="30" width="220" height="66" rx="10" fill="var(--wash)" stroke="var(--series-1)" stroke-width="2"/>
+      <text x="348" y="56" font-weight="600" fill="var(--text-primary)">downloading / installing</text>
+      <text x="348" y="76" fill="var(--text-muted)" font-size="11.5">progress + phase label · [Cancel]</text>
+
+      <!-- watching -->
+      <rect x="330" y="196" width="220" height="66" rx="10" fill="var(--surface-1)" stroke="var(--baseline)" stroke-width="1.5"/>
+      <text x="348" y="222" font-weight="600" fill="var(--text-primary)">watching for manual install</text>
+      <text x="348" y="242" fill="var(--text-muted)" font-size="11.5">focus + 5s re-check · [Check again]</text>
+
+      <!-- valid -->
+      <rect x="650" y="106" width="210" height="84" rx="10" fill="var(--surface-1)" stroke="var(--series-3)" stroke-width="2"/>
+      <text x="668" y="134" font-weight="600" fill="var(--text-primary)">valid</text>
+      <text x="668" y="154" fill="var(--text-muted)" font-size="11.5">a working binary resolves</text>
+      <text x="668" y="170" fill="var(--text-muted)" font-size="11.5">→ gate unmounts, app proceeds</text>
+
+      <!-- arrows -->
+      <g stroke="var(--baseline)" stroke-width="1.5" fill="none">
+        <path d="M252 126 C 292 110, 296 78, 322 66"/>
+        <path d="M252 170 C 292 186, 296 218, 322 228"/>
+        <path d="M550 60 C 610 70, 620 100, 648 122"/>
+        <path d="M550 232 C 610 222, 620 192, 648 172"/>
+        <path d="M330 84 C 300 96, 292 106, 260 112" stroke-dasharray="5 4"/>
+      </g>
+      <g fill="var(--baseline)">
+        <path d="M326 64 l-9,-1 5,8 z"/>
+        <path d="M326 230 l-9,1 5,-8 z"/>
+        <path d="M652 124 l-9,-1.5 4,8 z"/>
+        <path d="M652 170 l-9,1.5 4,-8 z"/>
+        <path d="M256 111 l9,-2 -4,8 z"/>
+      </g>
+      <g fill="var(--text-muted)" font-size="11.5">
+        <text x="314" y="56" text-anchor="end">Download for me</text>
+        <text x="318" y="286" text-anchor="end">Install it myself ↗</text>
+        <text x="566" y="94">smoke test passes</text>
+        <text x="566" y="212">re-check finds it</text>
+        <text x="266" y="100" fill="var(--series-2)">error (msg shown)</text>
+      </g>
+    </g>
+  </svg>
+  </div>
+  <figcaption>Fig 3 — Gate states. Both routes converge on the same condition: <code>resolveFfmpeg()</code> (after a cache reset) returning a working binary. There is no "dismiss" path — the spec says required — but the manual route keeps the user in control and the poll/focus re-check makes an out-of-band <code>pacman -S ffmpeg</code> close the modal by itself within seconds.</figcaption>
+</figure>
+
+<div class="card">
+  <strong>Behavior details</strong>
+  <ul>
+    <li><strong>When it shows:</strong> the store's existing <code>init()</code> already fetches <code>SystemInfo</code>; the gate mounts when <code>ffmpeg.source === "missing"</code>. It renders <em>over</em> the app shell (not replacing it) so boot continues normally behind it — consistent with the existing design note in <code>App.tsx</code> that errors shouldn't take the window, while still honoring "modal popup" for this genuinely blocking prerequisite.</li>
+    <li><strong>"Install it myself"</strong> calls <code>shell.openExternal("https://ffmpeg.org/download.html")</code> via the existing IPC pattern, and flips the gate into the watching state.</li>
+    <li><strong>Re-checking</strong> is a cheap main-process call: <code>resetFfmpegCache()</code> + <code>resolveFfmpeg()</code> + <code>readVersion()</code>. Triggered by window focus, a 5-second interval while the gate is visible, the [Check again] button, and install completion. On success the getter-seam consumers (Scanner, LoudnessScanner) start working on their next operation; the boot-time codec/hwaccel probes re-run via the same fire-and-forget pattern.</li>
+    <li><strong>"Valid"</strong> means executable + version parses; the codec smoke test runs after, in the background, surfacing in Settings like today rather than blocking the gate.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">05</span>Settings integration</h2>
+<p class="sub">Extends the existing FFmpeg row in the System section of <code>Settings.tsx</code> (currently a read-only status line) into a small card. Reuses the section's own helpers: <code>run()</code> for busy-locking buttons, <code>StatusDot</code>, and the rail status logic.</p>
+
+<pre><code>┌─ 04 · System ────────────────────────────────────────────────┐
+│  FFmpeg                                                      │
+│  ● Managed  ·  n7.1  ·  ~/.local/share/rerun-tv/ffmpeg/…     │
+│                                                              │
+│  [ Check for updates ]   [ Remove managed version ]          │
+│    └─ "Up to date (n7.1)"  /  "n7.2 available → [ Update ]"  │
+│                                                              │
+│  — or, when running on the system binary —                   │
+│  ● System  ·  7.1.1  ·  /usr/bin/ffmpeg                      │
+│  [ Download managed version ]                                │
+│    └─ Rerun TV will keep its own copy and prefer it.         │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+<ul>
+  <li>The version tracker line always shows <strong>source badge · version · path</strong> for the <em>active</em> binary, plus the managed install's version when one exists but is shadowed by the env override.</li>
+  <li>Download/update progress renders inline in the card (same progress event the gate consumes); the rail's status dot goes "pending" during an install.</li>
+  <li>"Remove managed version" deletes the managed dir and re-resolves — the app falls back to the system binary, or the gate reappears if there is none. Confirmation runs through the <code>HandlerContext</code> dialog seam (not a bare <code>dialog.showMessageBox</code>) so <code>handlers.test.ts</code> stays green.</li>
+  <li>The renderer store gains the missing <code>refreshSystem()</code> action (system info is currently fetched only once in <code>init()</code>) plus a subscription to the progress event.</li>
+</ul>
+
+<h3>IPC contract additions</h3>
+<p class="sub">All on the existing <code>system</code> namespace — <code>RerunApi</code> + <code>IPC</code> map + preload + <code>registerHandlers</code>, so both processes fail typecheck until the contract is complete (the codebase's own safety net).</p>
+<table>
+  <thead><tr><th>Method / event</th><th>Shape</th><th>Used by</th></tr></thead>
+  <tbody>
+    <tr><td><code>system.getFfmpegState()</code></td><td>→ <code>{ active: {path, version, source}, managed: {version, installedAt} | null }</code></td><td>gate + Settings card</td></tr>
+    <tr><td><code>system.installManagedFfmpeg()</code></td><td>starts the pipeline; resolves when done or throws readable error</td><td>gate "Download", Settings "Download/Update"</td></tr>
+    <tr><td><code>system.cancelFfmpegInstall()</code></td><td>aborts via AbortSignal, cleans staging</td><td>gate/Settings Cancel</td></tr>
+    <tr><td><code>system.checkFfmpegUpdate()</code></td><td>→ <code>{ installed, latest, updateAvailable }</code></td><td>Settings "Check for updates"</td></tr>
+    <tr><td><code>system.removeManagedFfmpeg()</code></td><td>deletes managed dir, re-resolves</td><td>Settings</td></tr>
+    <tr><td><code>system.recheckFfmpeg()</code></td><td>cache reset + re-resolve → fresh state</td><td>gate poll / focus / button</td></tr>
+    <tr><td><code>EVENTS.ffmpegProgress</code> <span class="badge">push</span></td><td><code>{ phase: "manifest" | "downloading" | "verifying" | "extracting" | "testing" | "done" | "error", received?, total?, message? }</code></td><td>gate + Settings, via <code>broadcast()</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2><span class="no">06</span>Build order &amp; effort</h2>
+<p class="sub">Six phases, each landing green on its own. Rough sizing in focused days — ~10½ total.</p>
+
+<figure>
+  <div class="svg-wrap">
+    <svg id="effortChart" viewBox="0 0 880 356" role="img" aria-labelledby="effort-title">
+      <title id="effort-title">Estimated effort by phase, in days. Download and install manager is largest at 3 days; IPC contract smallest at 1 day.</title>
+    </svg>
+  </div>
+  <figcaption>Fig 4 — Estimated effort per phase (days). Hover a bar for what's inside it. Phase 2 dominates because it carries all the platform-specific work; phases 4 and 5 are independent of each other and can land in either order.</figcaption>
+  <details class="table-view">
+    <summary>Table view</summary>
+    <table id="effortTable">
+      <thead><tr><th>Phase</th><th class="num">Days</th><th>Scope</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </details>
+</figure>
+
+<!-- ============================================================ -->
+<h2><span class="no">07</span>Risks</h2>
+<table>
+  <thead><tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Upstream artifact URLs or naming drift (BtbN / martin-riedl reorganize releases)</td>
+      <td><span class="badge"><span class="dot" style="background:var(--status-serious)"></span><span class="risk-ic" style="color:var(--status-serious)">▲</span>Serious</span></td>
+      <td>The manifest indirection absorbs it — fix the manifest in the repo, no app release needed. Baked-in fallback manifest covers offline-manifest failures.</td>
+    </tr>
+    <tr>
+      <td>Windows extraction: relying on bundled <code>tar.exe</code> reading zip</td>
+      <td><span class="badge"><span class="dot" style="background:var(--status-warn)"></span><span class="risk-ic" style="color:var(--status-warn)">▲</span>Warning</span></td>
+      <td>Verify on the real Windows CI runner in Phase 2 (the cross-platform release run gives precedent); fallback options pre-picked: <code>Expand-Archive</code> or a tiny <code>yauzl</code> dep.</td>
+    </tr>
+    <tr>
+      <td>macOS refusing to exec the downloaded binary (Gatekeeper/quarantine)</td>
+      <td><span class="badge"><span class="dot" style="background:var(--status-warn)"></span><span class="risk-ic" style="color:var(--status-warn)">▲</span>Warning</span></td>
+      <td>Files written by the app itself don't carry the quarantine xattr, so this should be a non-issue — but the Phase 2 smoke test (<code>readVersion</code> + <code>checkCodecs</code>) catches it deterministically before activation, and the error path offers the manual-install link.</td>
+    </tr>
+    <tr>
+      <td>Update swaps the binary under an in-flight stream or scan</td>
+      <td><span class="badge"><span class="dot" style="background:var(--status-good)"></span><span class="risk-ic" style="color:var(--status-good)">✓</span>Handled</span></td>
+      <td>Versioned side-by-side dirs: old files stay on disk until next-boot GC; running processes keep their handles; new spawns resolve the new pointer.</td>
+    </tr>
+    <tr>
+      <td>Corrupt or tampered download</td>
+      <td><span class="badge"><span class="dot" style="background:var(--status-good)"></span><span class="risk-ic" style="color:var(--status-good)">✓</span>Handled</span></td>
+      <td>HTTPS + sha256 pinned in the repo-controlled manifest, verified before extraction; smoke test before activation; staging dir never becomes active on any failure.</td>
+    </tr>
+    <tr>
+      <td>Disk cost (~90–130 MB per platform archive + extracted)</td>
+      <td><span class="badge"><span class="dot" style="background:var(--status-good)"></span><span class="risk-ic" style="color:var(--status-good)">✓</span>Accepted</span></td>
+      <td>User-initiated download with size shown up front; archive deleted after extraction; only one stale version survives until next boot.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2><span class="no">08</span>Test plan</h2>
+<ul>
+  <li><strong>Resolver precedence</strong> (Vitest, node env): fake executable stubs on a temp dir — the shebang-stub trick <code>tests/stream-jobs.test.ts</code> already uses — asserting env &gt; managed &gt; PATH &gt; bundled &gt; missing, plus cache-reset behavior.</li>
+  <li><strong>ffmpeg-manager</strong>: pipeline against a local fixture archive and a mocked <code>net</code> (the Electron stub in <code>tests/helpers/electron.ts</code> grows a <code>net.request</code> shim): happy path, bad checksum, cancel mid-download, extraction failure — each asserting staging cleanup and that <code>managed.json</code> only appears on full success. Progress events observed via the stub's <code>sentEvents</code>.</li>
+  <li><strong>Handlers</strong>: new channels registered once, readable error rewrap, dialog routed through the <code>HandlerContext</code> seam (the stub throws on direct <code>dialog.*</code> — by design).</li>
+  <li><strong>Renderer</strong> (happy-dom + <code>makeBridge</code>): gate renders on <code>source:"missing"</code>, download button drives progress states, gate unmounts when a re-check returns valid; Settings card per source state, update-check flows. Template: <code>tests/renderer/settings-hwaccel.test.tsx</code>. <code>makeBridge</code> derives its roll-call from the <code>IPC</code> map, so the new methods can't be silently unmocked.</li>
+  <li><strong>CI</strong>: the manager suite must pass on all three OS runners (extraction is the platform-sensitive part); keep <code>RERUN_REQUIRE_FFMPEG</code> semantics — managed-download tests never hit the network, fixtures only.</li>
+  <li><strong>Docs</strong>: update <code>docs/architecture.md</code>'s "never bundles ffmpeg" paragraph to state the new stance precisely: still never bundled or distributed; optionally downloaded from upstream at the user's request.</li>
+</ul>
+
+<h2><span class="no">09</span>Decisions taken (flag if you disagree)</h2>
+<ul>
+  <li><strong>Managed beats system PATH</strong> whenever installed (the spec's routing rule); env vars stay above both as the dev escape hatch. No preference toggle in v1.</li>
+  <li><strong>Gate is non-dismissible</strong> ("FFmpeg is required") but overlays a live app shell rather than replacing it, and self-dismisses via focus/poll re-check the moment any valid install appears.</li>
+  <li><strong>Repo-hosted pinned manifest</strong> over live upstream-API queries: updates without app releases, but every byte checksum-vetted by the repo. In-app fallback snapshot for resilience.</li>
+  <li><strong>GPL builds</strong> (not LGPL) from BtbN — the library is 85% H.264+AC3 and the streamer needs libx264; downloading at user request keeps the no-distribution stance intact.</li>
+  <li><strong>No new dependencies</strong> for v1: Electron <code>net</code> (proxy-aware) + <code>node:crypto</code> + system <code>tar</code>. Revisit only if Windows extraction misbehaves on CI.</li>
+</ul>
+
+</main>
+
+<script type="module">
+  // ---------- theme toggle ----------
+  const root = document.documentElement;
+  const btn = document.getElementById("themeToggle");
+  btn.addEventListener("click", () => {
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const cur = root.dataset.theme || (dark ? "dark" : "light");
+    root.dataset.theme = cur === "dark" ? "light" : "dark";
+    btn.setAttribute("aria-pressed", String(root.dataset.theme === "dark"));
+  });
+
+  // ---------- effort chart ----------
+  const PHASES = [
+    { n: 1, name: "Resolver & rebind seam",     days: 1.5, detail: "Managed tier in resolveFfmpeg(), \"managed\" source, getter seam for Scanner/LoudnessScanner, precedence tests." },
+    { n: 2, name: "Download / install manager", days: 3,   detail: "ffmpeg-manager.ts: manifest fetch, streamed download, sha256, extraction on all 3 OSes, smoke test, atomic activate, cancel, next-boot GC." },
+    { n: 3, name: "IPC contract & store",       days: 1,   detail: "6 system.* methods + progress event through shared/ipc.ts, preload, handlers; refreshSystem() store action." },
+    { n: 4, name: "First-launch gate modal",    days: 1.5, detail: "FfmpegGate.tsx overlay + scrim, focus trap from SleepPanel, download/manual/watching states, focus + 5s re-check." },
+    { n: 5, name: "Settings card",              days: 1.5, detail: "Version tracker (source · version · path), download/update/remove actions, inline progress, rail status." },
+    { n: 6, name: "Cross-platform CI, docs",    days: 2,   detail: "3-OS runner passes for extraction, fixture-only network tests, architecture.md GPL-stance update, TODO.md item 2 closed." },
+  ];
+
+  const svg = document.getElementById("effortChart");
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 880, LABEL_W = 250, CHART_X = LABEL_W + 10, CHART_W = W - CHART_X - 70;
+  const ROW_H = 44, TOP = 26, BAR_H = 20;
+  const MAX = 3; // scale to longest phase
+  const el = (t, at, parent) => {
+    const e = document.createElementNS(NS, t);
+    for (const k in at) e.setAttribute(k, at[k]);
+    parent.appendChild(e); return e;
+  };
+  // gridlines at 0..3 days
+  for (let d = 0; d <= MAX; d++) {
+    const x = CHART_X + (d / MAX) * CHART_W;
+    el("line", { x1: x, y1: TOP - 8, x2: x, y2: TOP + PHASES.length * ROW_H, stroke: d === 0 ? "var(--baseline)" : "var(--grid)", "stroke-width": 1 }, svg);
+    const t = el("text", { x, y: TOP + PHASES.length * ROW_H + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--text-muted)" }, svg);
+    t.textContent = d === 0 ? "0" : d + "d";
+  }
+  PHASES.forEach((p, i) => {
+    const y = TOP + i * ROW_H;
+    const g = el("g", { class: "bar-hit", tabindex: 0, role: "img",
+      "aria-label": `Phase ${p.n}, ${p.name}: ${p.days} days` }, svg);
+    g.dataset.tipTitle = `Phase ${p.n} · ${p.name} — ${p.days}d`;
+    g.dataset.tipBody = p.detail;
+    const lbl = el("text", { x: LABEL_W, y: y + BAR_H - 4, "text-anchor": "end", "font-size": 13, fill: "var(--text-primary)" }, g);
+    lbl.textContent = `${p.n} · ${p.name}`;
+    const w = (p.days / MAX) * CHART_W;
+    // thin bar, rounded data-end only (flat at baseline via overdraw)
+    el("rect", { x: CHART_X, y: y + BAR_H - 18, width: w, height: BAR_H - 2, rx: 4, fill: "var(--series-1)", class: "bar-fill" }, g);
+    el("rect", { x: CHART_X, y: y + BAR_H - 18, width: Math.min(6, w), height: BAR_H - 2, fill: "var(--series-1)", class: "bar-fill" }, g);
+    const v = el("text", { x: CHART_X + w + 8, y: y + BAR_H - 4, "font-size": 13, "font-weight": 600, fill: "var(--text-secondary)" }, g);
+    v.textContent = p.days + "d";
+    // invisible full-row hit target (bigger than the mark)
+    el("rect", { x: 0, y: y - 6, width: W, height: ROW_H - 2, fill: "transparent" }, g);
+  });
+  // total note
+  const total = PHASES.reduce((s, p) => s + p.days, 0);
+  const tt = el("text", { x: CHART_X, y: TOP + PHASES.length * ROW_H + 40, "font-size": 12.5, fill: "var(--text-muted)" }, svg);
+  tt.textContent = `Total ≈ ${total} focused days.`;
+
+  // table view
+  const tbody = document.querySelector("#effortTable tbody");
+  for (const p of PHASES) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${p.n} · ${p.name}</td><td class="num">${p.days}</td><td>${p.detail}</td>`;
+    tbody.appendChild(tr);
+  }
+
+  // tooltip
+  const tip = document.getElementById("tooltip");
+  const show = (g, x, y) => {
+    tip.innerHTML = `<div class="t"></div><div class="d"></div>`;
+    tip.querySelector(".t").textContent = g.dataset.tipTitle;
+    tip.querySelector(".d").textContent = g.dataset.tipBody;
+    tip.style.opacity = 1; tip.setAttribute("aria-hidden", "false");
+    const r = tip.getBoundingClientRect();
+    tip.style.left = Math.min(x + 14, innerWidth - r.width - 10) + "px";
+    tip.style.top = Math.min(y + 14, innerHeight - r.height - 10) + "px";
+  };
+  const hide = () => { tip.style.opacity = 0; tip.setAttribute("aria-hidden", "true"); };
+  svg.querySelectorAll(".bar-hit").forEach(g => {
+    g.addEventListener("mousemove", e => show(g, e.clientX, e.clientY));
+    g.addEventListener("mouseleave", hide);
+    g.addEventListener("focus", () => { const r = g.getBoundingClientRect(); show(g, r.left + 40, r.top + 20); });
+    g.addEventListener("blur", hide);
+  });
+</script>
+</body>
+</html>

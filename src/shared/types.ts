@@ -338,13 +338,89 @@ export const PENDING_HW_ACCEL: HwAccelReport = {
     vaapiDevice: null,
 };
 
+/**
+ * Where the ffmpeg the app is actually running came from.
+ *
+ * `managed` is the copy Rerun TV downloaded into its own data directory at the
+ * user's request and keeps up to date; it outranks `system` when both exist.
+ * `bundled` means a build sitting beside the app — nothing ships one, but the
+ * resolver still looks, so an unpacked build can carry its own.
+ */
+export type FfmpegSource = "managed" | "system" | "bundled" | "missing";
+
+/** The managed install, as Settings reports it. */
+export interface ManagedFfmpegInfo {
+    /** Upstream release name, e.g. `n8.1.2-34-g9b6c8969e0`. */
+    version: string;
+    /** ISO timestamp of the install; empty on a record written by an older build. */
+    installedAt: string;
+    /** Directory holding the two binaries — shown so "where did that go?" has an answer. */
+    dir: string;
+}
+
+/**
+ * Everything the gate and the Settings card need to say what ffmpeg is going on.
+ *
+ * `active` and `managed` are separate because they can disagree: a managed copy
+ * is installed *and* `RERUN_FFMPEG_PATH` is pinning something else. Reporting
+ * only the winner would make the Settings card claim nothing is installed while
+ * an update sits on disk.
+ */
+export interface FfmpegState {
+    path: string | null;
+    ffprobePath: string | null;
+    version: string | null;
+    source: FfmpegSource;
+    /** Non-null whenever a managed copy exists, active or shadowed. */
+    managed: ManagedFfmpegInfo | null;
+    /**
+     * Whether the pinned manifest offers a build for this platform and
+     * architecture at all. False means the only route is a manual install.
+     */
+    downloadable: boolean;
+}
+
+/** How far along an install is. `error` and `cancelled` are both terminal. */
+export type FfmpegInstallPhase =
+    | "manifest"
+    | "downloading"
+    | "verifying"
+    | "extracting"
+    | "testing"
+    | "done"
+    | "cancelled"
+    | "error";
+
+/** Pushed to every window while an install runs (`EVENTS.ffmpegProgress`). */
+export interface FfmpegInstallProgress {
+    phase: FfmpegInstallPhase;
+    /** Bytes in and expected, during `downloading` only. Null elsewhere. */
+    receivedBytes: number | null;
+    totalBytes: number | null;
+    /** The version being installed, once the manifest has been read. */
+    version: string | null;
+    /** A readable line for the UI — the failure reason on `error`. */
+    message: string | null;
+}
+
+/** The answer to "is there a newer build than the one I have?". */
+export interface FfmpegUpdateCheck {
+    /** The managed version on disk, or null when none is installed. */
+    installed: string | null;
+    /** What the manifest offers for this platform, or null when it offers nothing. */
+    latest: string | null;
+    updateAvailable: boolean;
+    /** Who publishes the offered build, for the "downloaded from" line. */
+    source: string | null;
+}
+
 export interface SystemInfo {
     appVersion: string;
     ffmpegPath: string | null;
     ffprobePath: string | null;
     ffmpegVersion: string | null;
-    /** Whether ffmpeg came from PATH (`system`) or the bundled fallback. */
-    ffmpegSource: "system" | "bundled" | "missing";
+    /** Where the active binary came from — managed copy, PATH, or beside the app. */
+    ffmpegSource: FfmpegSource;
     /** H.264/AAC decode asserted against an embedded test asset at startup. */
     codecCheck: "ok" | "failed" | "pending";
     /** What the startup hardware probe found, per backend. */

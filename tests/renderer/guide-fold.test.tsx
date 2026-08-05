@@ -36,7 +36,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppBar from "../../src/renderer/src/components/AppBar.js";
 import Guide from "../../src/renderer/src/screens/Guide.js";
 import { useStore } from "../../src/renderer/src/store.js";
-import { inertEvents, makeBridge, systemInfo } from "./bridge.js";
+import { ffmpegState, inertEvents, makeBridge, systemInfo } from "./bridge.js";
 
 declare global {
     var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -205,7 +205,10 @@ function bridge(): RerunApi {
         channels: channelsApi,
         library,
         settings: { getAll: async () => settings, set: async () => settings },
-        system: { getInfo: async () => systemInfo() },
+        system: {
+            getInfo: async () => systemInfo(),
+            getFfmpegState: async () => ffmpegState(),
+        },
         events: inertEvents,
     });
 }

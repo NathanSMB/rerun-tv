@@ -18,10 +18,13 @@ concurrency:
 jobs:
     check:
         runs-on: ubuntu-latest
-        # `contents: write` exists solely for the badge commit below. Fork PRs get
-        # a read-only token regardless, which is why that step skips them.
+        # `contents: write` exists solely for the badge commit below, and
+        # `statuses: write` solely to carry this job's own result onto it. Fork
+        # PRs get a read-only token regardless, which is why both of the steps
+        # that use them skip forks.
         permissions:
             contents: write
+            statuses: write
         env:
             # Several suites gate themselves on a real ffmpeg and skip silently
             # without one. This makes that skip a hard failure here, so a broken
@@ -89,10 +92,23 @@ jobs:
             #
             # Skipped for fork PRs, whose token cannot push. Pushes made with
             # GITHUB_TOKEN do not trigger workflows, so this cannot loop.
+            #
+            # That same property is why the step has to report a status for
+            # itself afterwards. The badge commit becomes the PR head, and no run
+            # will ever happen on it — not by the token rule, not with `[skip ci]`
+            # on it — so the `check` context main's branch protection requires
+            # would never report there and the PR would sit on "Expected —
+            # waiting for status to be reported" forever, with no named check to
+            # click into. Carrying the result forward is honest: this job is that
+            # check, and the only difference between the two commits is one
+            # string in the README.
             - name: Update coverage badge
               if: >-
                   github.event_name == 'pull_request' &&
                   github.event.pull_request.head.repo.full_name == github.repository
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
               run: |
                   node scripts/coverage-badge.mjs --write
                   if git diff --quiet -- README.md; then
@@ -105,6 +121,15 @@ jobs:
                   git commit -q -m "Update coverage badge [skip ci]"
                   # A non-fast-forward here means the contributor pushed while we
                   # were running; their push will produce a run that writes the
-                  # badge again. Not worth failing an otherwise green job over.
-                  git push -q origin "HEAD:${{ github.event.pull_request.head.ref }}" ||
+                  # badge again. Not worth failing an otherwise green job over —
+                  # and the status below must not be written either, since the
+                  # head is then a commit this job never saw.
+                  if ! git push -q origin "HEAD:${{ github.event.pull_request.head.ref }}"; then
                       echo "Branch moved on; the badge will update on the next run"
+                      exit 0
+                  fi
+                  gh api "repos/${{ github.repository }}/statuses/$(git rev-parse HEAD)" \
+                      -f state=success \
+                      -f context=check \
+                      -f target_url="$RUN_URL" \
+                      -f description="Passed on the commit this badge update sits on" >/dev/null

@@ -71,6 +71,18 @@ export const shell = {
     openExternal: refuse("shell.openExternal"),
 };
 
+/**
+ * Electron's proxy-aware fetch, which the ffmpeg install manager reaches for.
+ *
+ * Refusing rather than stubbing is the same rule as `dialog`: a suite that
+ * genuinely downloads something must inject its own fetch (`ManagerDeps`), and
+ * one that reaches this by accident should fail here rather than quietly hit the
+ * network from a unit test.
+ */
+export const net = {
+    fetch: refuse("net.fetch"),
+};
+
 // ---------------------------------------------------------------------------
 // Test-side controls
 // ---------------------------------------------------------------------------

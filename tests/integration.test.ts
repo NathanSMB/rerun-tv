@@ -117,7 +117,7 @@ describe.skipIf(noFfmpeg)("scan → schedule → stream", () => {
 
         const scanner = new Scanner({
             db,
-            ffprobePath: ff.ffprobePath as string,
+            ffprobePath: () => ff.ffprobePath as string,
             onProgress: () => {},
             onLibraryChanged: () => {},
         });
