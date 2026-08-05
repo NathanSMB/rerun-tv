@@ -26,7 +26,11 @@ jobs:
         # (Linux AppImage, macOS dmg+zip, Windows NSIS installer), so the jobs
         # never touch each other's artifacts. electron-builder's publisher
         # creates the release if it does not exist yet and otherwise attaches
-        # to it, so whichever job finishes first wins that race harmlessly.
+        # to it — but that check-then-create is not atomic, and on 0.1.2 two
+        # jobs each created a release for the same tag, splitting the assets
+        # across them. After every release, verify the tag has exactly one
+        # release with all 14 assets (see docs/development.md, "CI and
+        # releases") and merge them if it happened again.
         strategy:
             # A macOS packaging failure should not cancel a Linux upload that
             # is already half done — let each platform finish or fail alone.

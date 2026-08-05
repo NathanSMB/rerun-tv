@@ -109,7 +109,11 @@ describe("renderDesktopEntry", () => {
     });
 });
 
-describe("ensureDesktopEntry", () => {
+// ensureDesktopEntry refuses to act off Linux, so this suite only means
+// anything there.
+const describeLinux = describe.runIf(process.platform === "linux");
+
+describeLinux("ensureDesktopEntry", () => {
     it("writes the entry and copies the icon on first boot", () => {
         const wrote = ensureDesktopEntry(
             iconSource,

@@ -1,6 +1,6 @@
 {
     "name": "rerun-tv",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Turn a local media library into lean-back TV channels",
     "author": "Nathan Burchill",
     "license": "MIT",
@@ -48,7 +48,7 @@
         "@vitest/coverage-v8": "^3.2.7",
         "babel-plugin-react-compiler": "^1.0.0",
         "electron": "^43.2.0",
-        "electron-builder": "^25.1.8",
+        "electron-builder": "^26.15.7",
         "electron-vite": "^4.0.0",
         "happy-dom": "^20.11.1",
         "husky": "^9.1.7",
@@ -123,6 +123,7 @@
         "better-sqlite3@12.11.1": true,
         "electron@43.2.0": true,
         "esbuild@0.25.12": true,
-        "esbuild@0.28.1": true
+        "esbuild@0.28.1": true,
+        "electron-winstaller@5.4.0": true
     }
 }

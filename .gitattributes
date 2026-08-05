@@ -1,0 +1,3 @@
+# Biome enforces LF, so a CRLF checkout (git's Windows default) fails lint
+# before it ever reaches a formatter. Normalize everything git considers text.
+* text=auto eol=lf
