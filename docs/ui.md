@@ -470,6 +470,18 @@ to software at stream time. The System section reports both backends' verdicts
 and the render node VAAPI proved out. See
 [playback.md](playback.md#hardware-encode--decode).
 
+**The ffmpeg rows** answer three questions in order: which binary is running
+(version, path, and whether it is the managed copy, the system one, or nothing),
+whether a managed copy exists, and whether there is a newer one. The two are
+reported separately because they can disagree — a managed copy is installed and
+`RERUN_FFMPEG_PATH` is pinning something else — and a card that showed only the
+winner would tell someone with an update on disk that nothing was installed.
+Download / Reinstall / Check for updates / ✕ sit on the managed row, with an
+inline progress line while one runs. The download deliberately does **not** take
+the screen's shared busy lock, unlike every other action here: nobody should be
+unable to change their transcode preset for the three minutes a 120 MB transfer
+takes. Removing the managed copy is the only destructive one and asks first.
+
 **Loudness equalization** is the one Playback toggle that changes what a file
 costs rather than only how it is encoded: turning it on takes direct-play files
 down the remux pipe and gives up the audio stream copy on the rest, because a
@@ -479,6 +491,35 @@ between quiet and loud scenes — and mentions that episodes are measured in the
 background while nothing is playing, since that measuring is the only visible
 sign the feature is doing anything before the audio changes. See
 [playback.md](playback.md#loudness-equalization).
+
+### The ffmpeg gate — the one modal
+
+The app's only modal, and the only thing that ever blocks the window. It appears
+when the resolver reports no ffmpeg at all, because that is the one state no
+screen can usefully render: the guide would list channels that cannot be tuned
+and the library would find nothing to scan.
+
+Three decisions:
+
+- **It overlays rather than replaces.** The shell keeps rendering behind the
+  scrim, boot proceeds normally, and nothing about the app's structure is
+  special-cased on "no ffmpeg" — mounting it is one line in `App`.
+- **It closes by itself.** There is no dismiss button, because the problem is
+  real. But it re-checks every five seconds *and* on window focus, so a
+  `pacman -S ffmpeg` in another terminal makes the modal go away without anyone
+  coming back to tell it. Alt-tabbing in from a package manager is exactly the
+  moment the answer changed, which is why focus is the second trigger.
+- **Both routes are offered, in that order.** "Download it for me" fetches the
+  managed copy with a progress bar and a Cancel; "Install it myself" opens
+  ffmpeg.org in the real browser. The download button disables itself, with an
+  explanation, on a platform the manifest has no build for.
+
+The phases with no byte count of their own — unpacking, the encode test — get an
+indeterminate sweep rather than a bar frozen at 100%, which reads as a hang.
+Pinned by `tests/renderer/ffmpeg-gate.test.tsx`, including the case that matters
+most: the gate must not flash up while the *first* answer is still in flight,
+since most machines have ffmpeg and a modal that appears and vanishes on every
+launch would be worse than none.
 
 ## Accessibility
 

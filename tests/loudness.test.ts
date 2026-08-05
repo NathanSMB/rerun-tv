@@ -545,7 +545,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
         seed(2);
         const scanner = new LoudnessScanner({
             db,
-            ffmpegPath: ffmpeg.ffmpegPath,
+            ffmpegPath: () => ffmpeg.ffmpegPath,
             // The job's real pacing is deliberate politeness; a test should not sit
             // through it.
             busyRecheckMs: 25,
@@ -569,7 +569,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
         seed(2);
         const scanner = new LoudnessScanner({
             db,
-            ffmpegPath: ffmpeg.ffmpegPath,
+            ffmpegPath: () => ffmpeg.ffmpegPath,
             // The job's real pacing is deliberate politeness; a test should not sit
             // through it.
             busyRecheckMs: 25,
@@ -597,7 +597,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
         let busy = true;
         const scanner = new LoudnessScanner({
             db,
-            ffmpegPath: ffmpeg.ffmpegPath,
+            ffmpegPath: () => ffmpeg.ffmpegPath,
             // The job's real pacing is deliberate politeness; a test should not sit
             // through it.
             busyRecheckMs: 25,
@@ -625,7 +625,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
 
         const scanner = new LoudnessScanner({
             db,
-            ffmpegPath: ffmpeg.ffmpegPath,
+            ffmpegPath: () => ffmpeg.ffmpegPath,
             // The job's real pacing is deliberate politeness; a test should not sit
             // through it.
             busyRecheckMs: 25,
@@ -659,7 +659,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
         let on = true;
         const scanner = new LoudnessScanner({
             db,
-            ffmpegPath: ffmpeg.ffmpegPath,
+            ffmpegPath: () => ffmpeg.ffmpegPath,
             busyRecheckMs: 25,
             betweenFilesMs: 0,
             getSettings: () => (on ? ON : OFF),
@@ -683,7 +683,7 @@ describe.skipIf(noFfmpeg)("LoudnessScanner", () => {
         seed(2);
         const scanner = new LoudnessScanner({
             db,
-            ffmpegPath: ffmpeg.ffmpegPath,
+            ffmpegPath: () => ffmpeg.ffmpegPath,
             // The job's real pacing is deliberate politeness; a test should not sit
             // through it.
             busyRecheckMs: 25,

@@ -9,7 +9,7 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import { EVENTS, IPC, type RerunApi } from "../shared/ipc.js";
-import type { ScanStatus } from "../shared/types.js";
+import type { FfmpegInstallProgress, ScanStatus } from "../shared/types.js";
 
 /** Subscribe to a main→renderer push channel; returns an unsubscribe function. */
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -110,6 +110,16 @@ const api: RerunApi = {
         pickFolder: () => ipcRenderer.invoke(IPC.system.pickFolder),
         backupDb: () => ipcRenderer.invoke(IPC.system.backupDb),
         importDb: () => ipcRenderer.invoke(IPC.system.importDb),
+        getFfmpegState: () => ipcRenderer.invoke(IPC.system.getFfmpegState),
+        recheckFfmpeg: () => ipcRenderer.invoke(IPC.system.recheckFfmpeg),
+        installManagedFfmpeg: () =>
+            ipcRenderer.invoke(IPC.system.installManagedFfmpeg),
+        cancelFfmpegInstall: () =>
+            ipcRenderer.invoke(IPC.system.cancelFfmpegInstall),
+        checkFfmpegUpdate: () =>
+            ipcRenderer.invoke(IPC.system.checkFfmpegUpdate),
+        removeManagedFfmpeg: () =>
+            ipcRenderer.invoke(IPC.system.removeManagedFfmpeg),
     },
     events: {
         onScanProgress: (cb) => subscribe<ScanStatus>(EVENTS.scanProgress, cb),
@@ -117,6 +127,8 @@ const api: RerunApi = {
             subscribe<void>(EVENTS.libraryChanged, () => cb()),
         onChannelsChanged: (cb) =>
             subscribe<void>(EVENTS.channelsChanged, () => cb()),
+        onFfmpegProgress: (cb) =>
+            subscribe<FfmpegInstallProgress>(EVENTS.ffmpegProgress, cb),
     },
 };
 

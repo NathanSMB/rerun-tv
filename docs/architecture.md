@@ -42,7 +42,8 @@ enough that changing it would be a rewrite rather than a refactor.
 | Channel model | **Lean-back playlist** | Tuning in starts the next episode from the top and auto-plays forever. Durations and a play log are recorded anyway, so a simulated-live schedule can layer on later without rework. |
 | Storage | **SQLite (`better-sqlite3`)** | One file, a synchronous API in the main process, trivial backup. The synchronous part is what makes every scheduler transition atomic without await points. |
 | UI stack | **React + TypeScript + Vite** | Fast iteration in the renderer, typed IPC through a preload bridge. |
-| Packaging | **AppImage (electron-builder)** | Runs on Arch without a package-manager dance. Uses the system ffmpeg (`pacman -S ffmpeg`) and never bundles one — which is also why shipping this raises no GPL question. |
+| Packaging | **AppImage (electron-builder)** | Runs on Arch without a package-manager dance. Never bundles ffmpeg — see below. |
+| ffmpeg supply | **System binary, or a managed download** | The app ships no ffmpeg and distributes none. It prefers a copy it fetched, at the user's request, from the publisher who already distributes it (`services/ffmpeg-manager.ts`), then falls back to whatever is on `PATH`. Both are spawned as separate processes, so shipping this still raises no GPL question. |
 
 ## The three processes
 
@@ -55,15 +56,47 @@ interleave with.
 
 Boot order in `index.ts` is deliberate: XDG data dir → **apply a staged database
 import, if one is waiting** → open and migrate the database → install the desktop
-entry and, on KDE, the picture-in-picture window rule → resolve ffmpeg and
-start the stream server → construct the scanner and the background loudness job →
-register IPC handlers → open the window. The codec check and the hardware-encoder
-probe both run *after* the window is on its way, because a failure in either is
-non-fatal: anything unplayable just routes to the transcode path, and an
-unavailable backend degrades to software.
+entry and, on KDE, the picture-in-picture window rule → sweep the managed-ffmpeg
+leftovers → resolve ffmpeg and start the stream server → construct the scanner
+and the background loudness job → register IPC handlers → open the window. The
+codec check and the hardware-encoder probe both run *after* the window is on its
+way, because a failure in either is non-fatal: anything unplayable just routes to
+the transcode path, and an unavailable backend degrades to software.
 
 The import step comes first because it's the only moment nothing holds a handle
-on the database file — see [backup-restore.md](backup-restore.md).
+on the database file — see [backup-restore.md](backup-restore.md). The ffmpeg
+sweep comes before anything resolves against it for the same class of reason: it
+is the only moment nothing from the previous session can still be holding a
+binary open.
+
+### Which ffmpeg runs
+
+`resolveFfmpeg()` picks one, once per process, in this order:
+
+1. `RERUN_FFMPEG_PATH` / `RERUN_FFPROBE_PATH` — the escape hatch, and what the
+   test suites drive;
+2. the **managed** install under `~/.local/share/rerun-tv/ffmpeg/`, the copy the
+   user asked the app to download. It outranks the system binary deliberately:
+   someone who went and got one did so because the system copy was missing or
+   wrong, and removing the managed copy is how you go back;
+3. `PATH`;
+4. a build sitting beside the app (nothing ships one).
+
+The managed directory is never added to `PATH` — only this resolver looks there.
+The answer is cached; an install, update or removal drops that cache, and
+everything that resolves per use (the stream server, the IPC handlers) picks up
+the new binary with no further wiring. The two consumers constructed once at boot
+— the scanner and the loudness job — take a *getter* rather than a captured path
+for exactly this reason, so "there was no ffmpeg at boot" never hardens into
+"there is no ffmpeg this session".
+
+Installing is staged and atomic: download → sha256 against a checksum pinned in
+`resources/ffmpeg-manifest.json` → unpack → prove the binary can actually mux
+H.264/AAC (`checkCodecs`) → `rename` into `versions/<version>/` → write the
+one-line pointer. Nothing outside the staging directory is touched until every
+one of those has passed. Updates land side by side and the superseded version is
+swept at the *next* launch, so an update can never pull a binary out from under
+an encoder that is mid-episode. See [managed-ffmpeg-plan.html](managed-ffmpeg-plan.html).
 
 ### Preload (`src/preload/index.ts`)
 

@@ -1,0 +1,149 @@
+/*
+ * The ffmpeg gate (docs/ui.md).
+ *
+ * The app's only modal, so it is also the only full-screen scrim. It sits on the
+ * same card surface as the sleep panel and the up-next toast — a card the
+ * broadcast puts over everything — but centred and opaque, because unlike those
+ * it is not something you look past.
+ */
+
+.ffg-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(4, 6, 10, 0.72);
+    backdrop-filter: blur(3px);
+}
+
+.ffg-dialog {
+    width: 560px;
+    max-width: 100%;
+    padding: 26px 28px 22px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 24px 60px var(--shadow);
+    outline: none;
+}
+
+.ffg-kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--amber);
+}
+
+.ffg-dialog h2 {
+    font-family: var(--display);
+    font-size: 24px;
+    margin: 6px 0 10px;
+}
+
+.ffg-body {
+    color: var(--steel);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0 0 18px;
+}
+
+.ffg-body code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--white);
+}
+
+/* ---- progress ---- */
+
+.ffg-progress {
+    margin: 0 0 16px;
+}
+
+.ffg-track {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(141, 151, 184, 0.24);
+    overflow: hidden;
+}
+
+.ffg-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--amber);
+    transition: width 0.2s linear;
+}
+
+/*
+ * The phases with no byte count of their own — unpacking, the encode test —
+ * still get a moving bar, because a bar frozen at 100% reads as a hang.
+ */
+.ffg-fill.is-indeterminate {
+    width: 34%;
+    animation: ffg-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes ffg-sweep {
+    0% {
+        margin-left: 0;
+    }
+    50% {
+        margin-left: 66%;
+    }
+    100% {
+        margin-left: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ffg-fill.is-indeterminate {
+        width: 100%;
+        animation: none;
+        opacity: 0.5;
+    }
+}
+
+.ffg-phase {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--steel);
+    font-variant-numeric: tabular-nums;
+}
+
+.ffg-error {
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    background: rgba(229, 103, 75, 0.12);
+    border: 1px solid rgba(229, 103, 75, 0.32);
+    color: var(--danger);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ---- actions ---- */
+
+.ffg-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.ffg-actions .linkbtn {
+    /* An anchor and a button side by side must not disagree about their box. */
+    padding: 0;
+    background: none;
+    border: none;
+    text-decoration: none;
+}
+
+.ffg-note {
+    margin: 14px 0 0;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--steel-dim);
+}

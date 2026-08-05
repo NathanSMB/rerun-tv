@@ -28,6 +28,7 @@
 import type { CSSProperties, ErrorInfo, JSX, ReactNode } from "react";
 import { Component, useEffect, useState } from "react";
 import AppBar from "./components/AppBar.js";
+import FfmpegGate from "./components/FfmpegGate.js";
 import Blackout from "./screens/Blackout.js";
 import Guide from "./screens/Guide.js";
 import Library from "./screens/Library.js";
@@ -182,6 +183,31 @@ export function PlayerSlot(): JSX.Element | null {
  * rather than a modal: playback problems already have the Player's failure card,
  * and nothing here should take the window.
  */
+/**
+ * The one prerequisite worth taking the window for.
+ *
+ * Rendered from the shell rather than from a screen because it outranks all of
+ * them: with no ffmpeg there is nothing to play from any of them. It is mounted
+ * over whatever is showing rather than instead of it — see `FfmpegGate` — so
+ * boot proceeds normally behind the scrim and the modal simply unmounts when a
+ * working binary turns up.
+ *
+ * Exported for the same reason `PlayerSlot` is: the decision of *whether* the
+ * gate exists is the half that lives here, and a copy of this rule in a test
+ * harness would let the gate suite pass while the app never showed it.
+ */
+export function FfmpegGateSlot(): JSX.Element | null {
+    const source = useStore((s) => s.ffmpeg?.source);
+    // Undefined means the first answer hasn't arrived; a gate that flashed up
+    // before the app knew would be wrong more often than right.
+    if (source !== "missing") return null;
+    return (
+        <ScreenErrorBoundary key="ffmpeg-gate">
+            <FfmpegGate />
+        </ScreenErrorBoundary>
+    );
+}
+
 function ErrorBanner(): JSX.Element | null {
     const lastError = useStore((s) => s.lastError);
     const dismissError = useStore((s) => s.dismissError);
@@ -260,6 +286,7 @@ export default function App(): JSX.Element {
     return (
         <>
             <PlayerSlot />
+            <FfmpegGateSlot />
             {/*
         The Player owns the entire window when it is the screen: full-bleed
         video, no chrome around it, so fullscreen handoffs never have to escape a

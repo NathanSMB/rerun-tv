@@ -9,9 +9,12 @@
  * never leaves an encoder running.
  *
  * Packaging note (docs/architecture.md, "The decisions everything else
- * assumes"): the AppImage deliberately prefers the system binary
- * (`pacman -S ffmpeg`) so the image stays small and the codec set tracks the
- * distro; a bundled static build is only a fallback for machines without one.
+ * assumes"): nothing here is ever *shipped* with the app. The binary is either
+ * one the machine already had, or one the user asked Rerun TV to fetch from its
+ * upstream publisher into the app's own data directory
+ * (`services/ffmpeg-manager.ts`) — the "managed" install, which this module
+ * prefers over the system copy when it exists and which is never added to
+ * `PATH`.
  */
 
 import {
@@ -19,15 +22,33 @@ import {
     spawn as spawnProcess,
     spawnSync,
 } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import type { FfmpegSource } from "../../shared/types.js";
+import { managedFfmpegRecordPath, managedFfmpegVersionsDir } from "../paths.js";
 
 /** Where ffmpeg came from, and what it reported — surfaced verbatim in Settings → System. */
 export interface FfmpegBinaries {
     ffmpegPath: string | null;
     ffprobePath: string | null;
     version: string | null;
-    source: "system" | "bundled" | "missing";
+    source: FfmpegSource;
+}
+
+/**
+ * What `managed.json` says about the copy Rerun TV installed.
+ *
+ * `version` doubles as the directory name under `versions/`, which is what makes
+ * the pointer a single small file rather than a symlink — symlinks need special
+ * care on Windows, and every reader here wants the version string anyway.
+ */
+export interface ManagedFfmpegRecord {
+    version: string;
+    /** ISO timestamp of the install, for the Settings line. */
+    installedAt: string;
+    /** `process.platform`/`process.arch` at install time, to catch a copied profile. */
+    platform: string;
+    arch: string;
 }
 
 /** Names of the two binaries we need, with the platform's executable suffix. */
@@ -80,6 +101,84 @@ function findBundled(name: string): string | null {
     return null;
 }
 
+/**
+ * A version string is about to become a directory name, so it may not be able to
+ * leave `versions/`.
+ *
+ * `managed.json` is written by this app into a directory only this app uses, so
+ * a hostile value there is not a threat model anyone is under — but the file is
+ * plain JSON in the user's home, and turning whatever it holds into a path
+ * without looking is the kind of thing that is only ever noticed afterwards.
+ */
+function isSafeVersion(version: string): boolean {
+    return (
+        version.length > 0 &&
+        version.length < 128 &&
+        !version.includes("/") &&
+        !version.includes("\\") &&
+        !version.includes("\0") &&
+        version !== "." &&
+        version !== ".."
+    );
+}
+
+/** The directory holding one installed version's two binaries. */
+export function managedVersionDir(version: string): string {
+    return join(managedFfmpegVersionsDir(), version);
+}
+
+/**
+ * Read the managed install's pointer, or null when there isn't one.
+ *
+ * Every failure mode — no file, unreadable, not JSON, missing the one field that
+ * matters — is the same answer: nothing is installed. A managed copy that cannot
+ * be described is a managed copy that cannot be run.
+ */
+export function readManagedRecord(): ManagedFfmpegRecord | null {
+    let parsed: Partial<ManagedFfmpegRecord>;
+    try {
+        parsed = JSON.parse(
+            readFileSync(managedFfmpegRecordPath(), "utf8"),
+        ) as Partial<ManagedFfmpegRecord>;
+    } catch {
+        return null;
+    }
+    if (typeof parsed.version !== "string" || !isSafeVersion(parsed.version))
+        return null;
+    return {
+        version: parsed.version,
+        installedAt:
+            typeof parsed.installedAt === "string" ? parsed.installedAt : "",
+        platform: typeof parsed.platform === "string" ? parsed.platform : "",
+        arch: typeof parsed.arch === "string" ? parsed.arch : "",
+    };
+}
+
+/**
+ * The managed pair, if one is installed *and* still executable.
+ *
+ * The executability check is what makes the pointer safe to trust: a version
+ * directory deleted by hand, or a profile copied between machines, leaves
+ * `managed.json` behind describing binaries that are not there. Treating that as
+ * "nothing installed" drops the app back to the system copy instead of handing
+ * every spawn a path that fails.
+ */
+function findManaged(): {
+    ffmpegPath: string;
+    ffprobePath: string | null;
+} | null {
+    const record = readManagedRecord();
+    if (!record) return null;
+    const dir = managedVersionDir(record.version);
+    const ffmpegPath = join(dir, exeName("ffmpeg"));
+    if (!isExecutable(ffmpegPath)) return null;
+    const ffprobePath = join(dir, exeName("ffprobe"));
+    return {
+        ffmpegPath,
+        ffprobePath: isExecutable(ffprobePath) ? ffprobePath : null,
+    };
+}
+
 /** `ffmpeg version n8.1.2 Copyright …` → `n8.1.2`. Null if the binary won't run. */
 function readVersion(ffmpegPath: string): string | null {
     try {
@@ -100,13 +199,24 @@ let cached: FfmpegBinaries | null = null;
 /**
  * Resolve the ffmpeg/ffprobe pair once per process.
  *
- * Order: explicit env override (`RERUN_FFMPEG_PATH` / `RERUN_FFPROBE_PATH`, the
- * escape hatch for odd installs and for tests), then `PATH`, then a bundled
- * build. Cached because this stats a dozen directories and every stream request
- * asks for it.
+ * Order:
+ *   1. the explicit env override (`RERUN_FFMPEG_PATH` / `RERUN_FFPROBE_PATH`),
+ *      the escape hatch for odd installs and the one the tests drive;
+ *   2. the **managed** install — the copy the user asked Rerun TV to download,
+ *      which wins over the system binary on purpose: someone who went and got a
+ *      managed copy did so because the system one was missing or wrong, and the
+ *      way to go back to the system binary is to remove the managed one;
+ *   3. `PATH`;
+ *   4. a build sitting beside the app.
+ *
+ * Cached because this stats a dozen directories and every stream request asks
+ * for it. `resetFfmpegCache()` is what an install, an update or a removal calls
+ * to make the next resolve see the new answer.
  *
  * A missing ffprobe is not fatal here — only the scanner needs it, and the two
  * halves are reported separately so Settings can say precisely what is absent.
+ * Each half falls down the tiers independently, so a managed install still
+ * supplies ffprobe to an ffmpeg pinned by the env override.
  */
 export function resolveFfmpeg(): FfmpegBinaries {
     if (cached) return cached;
@@ -114,20 +224,35 @@ export function resolveFfmpeg(): FfmpegBinaries {
     const envFfmpeg = process.env.RERUN_FFMPEG_PATH;
     const envFfprobe = process.env.RERUN_FFPROBE_PATH;
 
-    let source: FfmpegBinaries["source"] = "system";
-    let ffmpegPath =
-        envFfmpeg && isExecutable(envFfmpeg) ? envFfmpeg : findOnPath("ffmpeg");
-    let ffprobePath =
-        envFfprobe && isExecutable(envFfprobe)
-            ? envFfprobe
-            : findOnPath("ffprobe");
+    let ffmpegPath: string | null =
+        envFfmpeg && isExecutable(envFfmpeg) ? envFfmpeg : null;
+    let ffprobePath: string | null =
+        envFfprobe && isExecutable(envFfprobe) ? envFfprobe : null;
+    // An env-pinned binary is "the system's" as far as Settings is concerned:
+    // it's a path the machine supplied, not one we installed.
+    let source: FfmpegBinaries["source"] = ffmpegPath ? "system" : "missing";
+
+    const managed = findManaged();
+    if (managed) {
+        if (!ffmpegPath) {
+            ffmpegPath = managed.ffmpegPath;
+            source = "managed";
+        }
+        ffprobePath ??= managed.ffprobePath;
+    }
 
     if (!ffmpegPath) {
-        // Nothing on PATH: fall back to whatever we shipped alongside the app.
+        ffmpegPath = findOnPath("ffmpeg");
+        if (ffmpegPath) source = "system";
+    }
+    ffprobePath ??= findOnPath("ffprobe");
+
+    if (!ffmpegPath) {
+        // Nothing anywhere else: fall back to whatever sits beside the app.
         ffmpegPath = findBundled("ffmpeg");
-        ffprobePath = ffprobePath ?? findBundled("ffprobe");
         source = ffmpegPath ? "bundled" : "missing";
     }
+    ffprobePath ??= findBundled("ffprobe");
 
     cached = {
         ffmpegPath,
@@ -138,7 +263,14 @@ export function resolveFfmpeg(): FfmpegBinaries {
     return cached;
 }
 
-/** Drop the cache — only useful for tests that manipulate `PATH`. */
+/**
+ * Drop the cache so the next resolve looks again.
+ *
+ * Called by the tests that manipulate `PATH`, and — the reason it is no longer
+ * only a test hook — by the install manager the moment a managed copy appears
+ * or is removed. Everything that re-resolves per use (the stream server, the IPC
+ * handlers) picks the new binary up with no further wiring.
+ */
 export function resetFfmpegCache(): void {
     cached = null;
 }

@@ -45,8 +45,16 @@ import { deriveShowTitle, isVideoFile, parseEpisodeFilename } from "./parse.js";
 
 export interface ScannerOptions {
     db: Db;
-    /** Resolved ffprobe binary — system PATH or the bundled fallback. */
-    ffprobePath: string;
+    /**
+     * Where ffprobe is *right now* — asked per file rather than captured once.
+     *
+     * The scanner is constructed at boot, and on a machine with no ffmpeg that is
+     * before the user has had the chance to install one. A captured string would
+     * pin the answer from a moment when there was no answer, so a managed
+     * download (or a `pacman -S ffmpeg` in another window) would not take effect
+     * until the next launch. The getter costs one cached lookup per probe.
+     */
+    ffprobePath: () => string;
     /** Throttled progress sink; wired to the `scanProgress` IPC event. */
     onProgress: (status: ScanStatus) => void;
     /** Fired when the library actually changed, so the UI can refetch. */
@@ -85,7 +93,7 @@ interface Candidate {
 
 export class Scanner {
     readonly #db: Db;
-    readonly #ffprobePath: string;
+    readonly #ffprobePath: () => string;
     readonly #onProgress: (status: ScanStatus) => void;
     readonly #onLibraryChanged: () => void;
     readonly #probe: (
@@ -403,7 +411,7 @@ export class Scanner {
 
         let probe: ProbeResult;
         try {
-            probe = await this.#probe(filePath, this.#ffprobePath);
+            probe = await this.#probe(filePath, this.#ffprobePath());
             this.#status.probed++;
         } catch (err) {
             addUnmatched(

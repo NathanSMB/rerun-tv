@@ -13,13 +13,19 @@
  * what keeps every section one click away without it.
  */
 
-import type { AppSettings, ScanRoot, SystemInfo } from "@shared/types.js";
+import type {
+    AppSettings,
+    FfmpegInstallProgress,
+    FfmpegState,
+    ScanRoot,
+    SystemInfo,
+} from "@shared/types.js";
 import { SLEEP_MAX_MIN } from "@shared/types.js";
 import { type ReactElement, useRef, useState } from "react";
 import Toggle from "../components/Toggle.js";
 import { useTunedSection } from "../hooks/useTunedSection.js";
 import { useStore } from "../store.js";
-import { useBusyAction } from "../utils.js";
+import { errorText, useBusyAction } from "../utils.js";
 import "./Settings.css";
 
 /**
@@ -121,6 +127,48 @@ function formatMb(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** What the badge beside the version says the binary *is*. */
+const FFMPEG_SOURCE_LABEL: Record<FfmpegState["source"], string> = {
+    managed: "managed by Rerun TV",
+    system: "installed on this system",
+    bundled: "shipped beside the app",
+    missing: "not found",
+};
+
+/** …and the sentence under the label explaining what that means. */
+const FFMPEG_SOURCE_HINT: Record<FfmpegState["source"], string> = {
+    managed:
+        "Rerun TV's own copy, kept in its data folder and never added to your PATH",
+    system: "Found on this machine's PATH; a managed copy would take precedence",
+    bundled: "Found beside the application itself",
+    missing:
+        "Nothing to play with — download a managed copy, or install ffmpeg",
+};
+
+/** The Settings card's one-line echo of an install in flight. */
+function installLabel(progress: FfmpegInstallProgress): string {
+    switch (progress.phase) {
+        case "manifest":
+            return "Looking up the build for this machine…";
+        case "downloading":
+            return progress.receivedBytes != null && progress.totalBytes
+                ? `Downloading — ${Math.round((progress.receivedBytes / progress.totalBytes) * 100)}%`
+                : "Downloading…";
+        case "verifying":
+            return "Verifying the checksum…";
+        case "extracting":
+            return "Unpacking…";
+        case "testing":
+            return "Testing that it can encode…";
+        case "done":
+            return progress.message ?? "Installed.";
+        case "cancelled":
+            return "Download cancelled.";
+        case "error":
+            return progress.message ?? "The download failed.";
+    }
+}
+
 function baseName(path: string): string {
     return path.slice(path.lastIndexOf("/") + 1) || path;
 }
@@ -177,14 +225,20 @@ function probeStatus(value: string | null | undefined): "ok" | "warn" | "bad" {
 export default function Settings(): ReactElement {
     const settings = useStore((s) => s.settings);
     const system = useStore((s) => s.system);
+    const ffmpeg = useStore((s) => s.ffmpeg);
+    const ffmpegInstall = useStore((s) => s.ffmpegInstall);
     const setSetting = useStore((s) => s.setSetting);
     const refreshLibrary = useStore((s) => s.refreshLibrary);
+    const refreshSystem = useStore((s) => s.refreshSystem);
+    const refreshFfmpeg = useStore((s) => s.refreshFfmpeg);
     const roots = useStore((s) => s.roots);
     const refreshRoots = useStore((s) => s.refreshRoots);
 
-    const { busy, error, run: runAction } = useBusyAction();
+    const { busy, error, run: runAction, setError } = useBusyAction();
     /** A one-line confirmation after an action that produced no visible change. */
     const [note, setNote] = useState<string | null>(null);
+    /** The ffmpeg download's own lock; see `onInstallFfmpeg` for why it isn't the shared one. */
+    const [installing, setInstalling] = useState(false);
 
     const bodyRef = useRef<HTMLDivElement | null>(null);
     const tuned = useTunedSection(bodyRef, SECTIONS);
@@ -296,15 +350,98 @@ export default function Settings(): ReactElement {
         });
     }
 
+    /**
+     * Download (or re-download) the managed copy.
+     *
+     * Deliberately *not* through `run()`, which every other action on this screen
+     * uses. The shared lock disables the whole screen for the length of an
+     * action, which is right for a folder picker and wrong for a 120 MB
+     * download — nobody should be unable to change their transcode preset for
+     * three minutes because a download is running. Its own `installing` flag
+     * guards only the buttons that would misbehave, and the card reports itself
+     * through the progress event.
+     */
+    function onInstallFfmpeg(): void {
+        setNote(null);
+        setError(null);
+        setInstalling(true);
+        void window.rerun.system
+            .installManagedFfmpeg()
+            .then(async (version) => {
+                await refreshFfmpeg();
+                await refreshSystem();
+                setNote(
+                    `ffmpeg ${version} installed. Rerun TV is using it now.`,
+                );
+            })
+            .catch((err: unknown) => setError(errorText(err)))
+            .finally(() => setInstalling(false));
+    }
+
+    function onCancelFfmpeg(): void {
+        void window.rerun.system.cancelFfmpegInstall();
+    }
+
+    function onCheckFfmpegUpdate(): void {
+        void run("ffmpegUpdate", async () => {
+            const check = await window.rerun.system.checkFfmpegUpdate();
+            if (check.latest == null)
+                return "No managed build is published for this platform.";
+            return check.updateAvailable
+                ? `${check.latest} is available — press Reinstall to update from ${check.installed}.`
+                : `Up to date (${check.installed}).`;
+        });
+    }
+
+    function onRemoveFfmpeg(): void {
+        const ok = window.confirm(
+            "Remove Rerun TV's own copy of ffmpeg?\n\nPlayback falls back to the ffmpeg installed on this system, if there is one. Nothing else on your machine is touched.",
+        );
+        if (!ok) return;
+        void run("ffmpegRemove", async () => {
+            const state = await window.rerun.system.removeManagedFfmpeg();
+            await refreshFfmpeg();
+            await refreshSystem();
+            return state.source === "missing"
+                ? "Removed. There is no other ffmpeg on this machine."
+                : `Removed. Rerun TV is using the ${FFMPEG_SOURCE_LABEL[state.source]} binary now.`;
+        });
+    }
+
     const qualityKey = `${settings.transcodePreset}:${settings.transcodeCrf}`;
     const knownQuality = QUALITY_PRESETS.some(
         (q) => `${q.preset}:${q.crf}` === qualityKey,
     );
 
-    const ffmpegOk =
-        system != null &&
-        system.ffmpegPath != null &&
-        system.ffmpegSource !== "missing";
+    const ffmpegOk = ffmpeg != null && ffmpeg.source !== "missing";
+
+    /**
+     * True while an install is genuinely in flight.
+     *
+     * Both halves are needed. `installing` covers the gap between the click and
+     * the first progress event, which is where a second click would land; the
+     * phase covers an install started from the *gate*, which this screen never
+     * saw begin but must still not offer to start again.
+     */
+    const ffmpegBusy =
+        installing ||
+        (ffmpegInstall != null &&
+            ffmpegInstall.phase !== "done" &&
+            ffmpegInstall.phase !== "error" &&
+            ffmpegInstall.phase !== "cancelled");
+
+    const managedHint =
+        ffmpeg == null
+            ? "—"
+            : ffmpeg.managed != null
+              ? `${ffmpeg.managed.version}${
+                    ffmpeg.managed.installedAt
+                        ? ` · installed ${formatDate(ffmpeg.managed.installedAt)}`
+                        : ""
+                } · ${ffmpeg.managed.dir}`
+              : ffmpeg.downloadable
+                ? "Rerun TV can download its own copy and prefer it over the system one. It lives in the app's data folder and is never added to your PATH."
+                : "No managed build is published for this platform — install ffmpeg yourself and Rerun TV will find it.";
 
     /**
      * The one sentence worth adding under the dropdown: that a selection this
@@ -772,13 +909,29 @@ export default function Settings(): ReactElement {
                         <div>
                             <div className="set-label">ffmpeg</div>
                             <div className="set-hint">
-                                {ffmpegOk
-                                    ? "System binary preferred; bundled fallback if missing"
-                                    : "Install it with pacman -S ffmpeg, then restart Rerun TV"}
+                                {ffmpeg == null
+                                    ? "Locating the binary…"
+                                    : FFMPEG_SOURCE_HINT[ffmpeg.source]}
                             </div>
+                            {ffmpeg?.path != null && (
+                                <div className="set-hint folder-path">
+                                    {ffmpeg.path}
+                                </div>
+                            )}
+                            {/* Only worth a line when it disagrees with the winner —
+                                an env override pinning something else, or a managed
+                                copy that has just been superseded. */}
+                            {ffmpeg?.managed != null &&
+                                ffmpeg.source !== "managed" && (
+                                    <div className="set-hint">
+                                        A managed copy ({ffmpeg.managed.version}
+                                        ) is installed but not in use —
+                                        something else is taking precedence.
+                                    </div>
+                                )}
                         </div>
                         <span className="set-value">
-                            {system == null ? (
+                            {ffmpeg == null ? (
                                 <>
                                     <StatusDot status="warn" />
                                     checking…
@@ -786,13 +939,78 @@ export default function Settings(): ReactElement {
                             ) : ffmpegOk ? (
                                 <>
                                     <StatusDot status="ok" />
-                                    <b>{system.ffmpegVersion ?? "installed"}</b>
-                                    · {system.ffmpegPath}
+                                    <b>{ffmpeg.version ?? "installed"}</b>·{" "}
+                                    {FFMPEG_SOURCE_LABEL[ffmpeg.source]}
                                 </>
                             ) : (
                                 <>
                                     <StatusDot status="bad" />
                                     not found
+                                </>
+                            )}
+                        </span>
+                    </div>
+
+                    <div className="set-row">
+                        <div>
+                            <div className="set-label">
+                                Managed copy of ffmpeg
+                            </div>
+                            <div className="set-hint">{managedHint}</div>
+                            {ffmpegInstall != null && (
+                                <div className="set-hint" role="status">
+                                    {installLabel(ffmpegInstall)}
+                                </div>
+                            )}
+                        </div>
+                        <span className="set-value">
+                            {ffmpegBusy ? (
+                                <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={onCancelFfmpeg}
+                                >
+                                    Cancel
+                                </button>
+                            ) : (
+                                <>
+                                    {ffmpeg?.managed != null && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-ghost btn-sm"
+                                            disabled={locked}
+                                            onClick={onCheckFfmpegUpdate}
+                                        >
+                                            {busy === "ffmpegUpdate"
+                                                ? "Checking…"
+                                                : "Check for updates"}
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm"
+                                        disabled={
+                                            locked ||
+                                            ffmpeg == null ||
+                                            !ffmpeg.downloadable
+                                        }
+                                        onClick={onInstallFfmpeg}
+                                    >
+                                        {ffmpeg?.managed != null
+                                            ? "Reinstall"
+                                            : "Download"}
+                                    </button>
+                                    {ffmpeg?.managed != null && (
+                                        <button
+                                            type="button"
+                                            className="remove"
+                                            aria-label="Remove the managed ffmpeg"
+                                            disabled={locked}
+                                            onClick={onRemoveFfmpeg}
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
                                 </>
                             )}
                         </span>

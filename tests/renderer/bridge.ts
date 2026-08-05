@@ -23,7 +23,7 @@
  */
 
 import { IPC, type RerunApi } from "@shared/ipc.js";
-import type { SystemInfo } from "@shared/types.js";
+import type { FfmpegState, SystemInfo } from "@shared/types.js";
 
 /** What a caller may supply: any subset of any namespace, each still typed. */
 export type BridgeSpec = {
@@ -44,6 +44,7 @@ const EVENT_METHODS = [
     "onScanProgress",
     "onLibraryChanged",
     "onChannelsChanged",
+    "onFfmpegProgress",
 ] as const satisfies readonly (keyof RerunApi["events"])[];
 
 /**
@@ -115,6 +116,7 @@ export const inertEvents: RerunApi["events"] = {
     onScanProgress: () => () => undefined,
     onLibraryChanged: () => () => undefined,
     onChannelsChanged: () => () => undefined,
+    onFfmpegProgress: () => () => undefined,
 };
 
 /**
@@ -140,6 +142,25 @@ export function systemInfo(patch: Partial<SystemInfo> = {}): SystemInfo {
         dbSizeBytes: 1024,
         streamPort: 9,
         lastRestore: null,
+        ...patch,
+    };
+}
+
+/**
+ * A plausible `FfmpegState` — a machine with a system ffmpeg and no managed copy.
+ *
+ * The counterpart to `systemInfo`, and for the same reason: the gate and the
+ * Settings card both branch on five fields here, and a test about one of them
+ * should not have to invent the other four.
+ */
+export function ffmpegState(patch: Partial<FfmpegState> = {}): FfmpegState {
+    return {
+        path: "/usr/bin/ffmpeg",
+        ffprobePath: "/usr/bin/ffprobe",
+        version: "n8.1.2",
+        source: "system",
+        managed: null,
+        downloadable: true,
         ...patch,
     };
 }

@@ -90,7 +90,7 @@ beforeEach(() => {
     const scanner = new Scanner({
         db,
         // Never used: the injected probe never shells out.
-        ffprobePath: "/nonexistent/ffprobe",
+        ffprobePath: () => "/nonexistent/ffprobe",
         onProgress: (status) => progress.push(status),
         onLibraryChanged: () => {
             partial.changes++;
