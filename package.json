@@ -1,6 +1,6 @@
 {
     "name": "rerun-tv",
-    "version": "0.1.2",
+    "version": "0.2.0",
     "description": "Turn a local media library into lean-back TV channels",
     "author": "Nathan Burchill",
     "license": "MIT",
