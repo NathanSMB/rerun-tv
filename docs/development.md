@@ -436,6 +436,47 @@ release. The macOS and Windows artifacts are unsigned — there is no developer
 certificate in the pipeline — so first launch goes through Gatekeeper's
 right-click-Open dance or SmartScreen's "run anyway".
 
+Because `ci.yml` runs only on Ubuntu, this matrix is the first place macOS and
+Windows run anything at all — a release can fail on a platform problem no PR
+ever saw. The 0.1.2 release hit four of them in a row, and their fixes are now
+part of the repo:
+
+- **electron-builder must stay ≥ 26.** Version 25 bundled a node-gyp 9 that
+  cannot find Python's `distutils` on the macOS runners (removed in Python
+  3.12) or detect Visual Studio on the Windows runners, so `npm ci` itself
+  failed. electron-builder 26 ships `@electron/rebuild` 4 with a current
+  node-gyp.
+- **`.gitattributes` pins LF** for everything git considers text. Without it,
+  git's Windows default checks out CRLF and Biome's formatter check fails on
+  every file before the tests even run.
+- **Platform-specific suites skip themselves where they cannot mean anything.**
+  The KWin-rule and desktop-entry suites test code that refuses to act off
+  Linux, so they gate on `describe.runIf(process.platform === "linux")`. The
+  encoder-job suite (`tests/stream-jobs.test.ts`) is excluded on Windows in
+  `vitest.config.ts`: its ffmpeg stand-in is a shebang script, which Windows
+  cannot spawn.
+- **`verify-native-abi.mjs` names the binary per platform.** electron-builder's
+  `packager.executableName` exists only for Linux; the Windows and macOS
+  binaries are named after the product (`Rerun TV.exe`, `Rerun TV.app`).
+
+**Check the release page after the run.** electron-builder's GitHub publisher
+creates the release if it does not exist and otherwise attaches to it — but two
+runners finishing the build at the same moment can *each* create one, and
+GitHub happily holds two releases on the same tag, each with a partial asset
+set. That happened on 0.1.2. `gh release view` shows only one of them, so
+verify with:
+
+```sh
+gh api repos/NathanSMB/rerun-tv/releases \
+    -q '.[] | .tag_name + " assets=" + (.assets|length|tostring)'
+```
+
+A full release has 14 assets: the AppImage, two dmgs, two zips, the installer,
+their blockmaps, and `latest.yml`/`latest-mac.yml`/`latest-linux.yml`. If the
+tag appears twice, download the smaller release's assets, upload them to the
+other via `gh api --input`, and delete the duplicate — the assets are identical
+builds, so which release survives does not matter.
+
 **`verify-native-abi.mjs` is the interesting part of that job.** It is an
 electron-builder `afterPack` hook that `dlopen`s every packed `.node` addon with
 the *packed Electron binary* and fails the build on a `NODE_MODULE_VERSION`
