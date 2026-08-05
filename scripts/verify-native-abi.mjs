@@ -64,8 +64,10 @@ const layouts = {
             path.join(appOutDir, "resources", "app.asar.unpacked"),
     },
     win32: {
+        // `executableName` is LinuxPackager-only; the Windows exe is named
+        // after the product, like the macOS bundle.
         binary: ({ appOutDir, packager }) =>
-            path.join(appOutDir, `${packager.executableName}.exe`),
+            path.join(appOutDir, `${packager.appInfo.productFilename}.exe`),
         unpacked: ({ appOutDir }) =>
             path.join(appOutDir, "resources", "app.asar.unpacked"),
     },
