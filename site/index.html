@@ -197,8 +197,8 @@
   <div class="cta">
     <a class="cta-btn" id="dl-btn" href="https://github.com/NathanSMB/rerun-tv/releases/latest">⏵ <span id="dl-name">Download for Linux</span></a>
     <span class="cta-meta"><span id="dl-meta">.AppImage · x86_64</span> · also
-      <a href="https://github.com/NathanSMB/rerun-tv/releases/latest" id="dl-other1">macOS</a> /
-      <a href="https://github.com/NathanSMB/rerun-tv/releases/latest" id="dl-other2">Windows</a></span>
+      <span id="dl-others"><a href="https://github.com/NathanSMB/rerun-tv/releases/latest">macOS</a> /
+      <a href="https://github.com/NathanSMB/rerun-tv/releases/latest">Windows</a></span></span>
   </div>
 
   <figure style="margin:0">
@@ -260,26 +260,56 @@
 <script>
   // Release asset names carry the version (rerun-tv-0.2.0-x86_64.AppImage),
   // so there is no stable "latest" download URL. Detect the visitor's OS,
-  // label the button, and resolve the real asset URL from the API; on any
-  // failure the button keeps its releases/latest fallback.
+  // label the button, and resolve the real asset URLs from the API; on any
+  // failure every link keeps its releases/latest fallback.
+  //
+  // Browsers can't reliably tell Apple Silicon from Intel (Safari reports an
+  // Intel UA on both), so Mac visitors get the arm64 build on the button and
+  // an explicit Intel link beside it rather than a guess.
   const os = /Windows/i.test(navigator.userAgent) ? "windows"
     : /Mac|iPhone|iPad/i.test(navigator.userAgent) ? "mac"
     : "linux";
   const info = {
-    linux:   { name: "Download for Linux",   meta: ".AppImage · x86_64",            others: ["macOS", "Windows"], match: (n) => n.endsWith(".AppImage") },
-    mac:     { name: "Download for macOS",   meta: ".dmg · Apple Silicon & Intel",  others: ["Linux", "Windows"], match: (n) => n.endsWith(".dmg") },
-    windows: { name: "Download for Windows", meta: ".exe installer",                others: ["Linux", "macOS"],   match: (n) => n.endsWith(".exe") },
+    linux: {
+      name: "Download for Linux", meta: ".AppImage · x86_64",
+      match: (n) => n.endsWith(".AppImage"),
+      others: [{ label: "macOS" }, { label: "Windows" }],
+    },
+    mac: {
+      name: "Download for macOS", meta: ".dmg · Apple Silicon",
+      match: (n) => n.endsWith("arm64.dmg"),
+      others: [
+        { label: "Intel", match: (n) => n.endsWith("x64.dmg") },
+        { label: "Linux" }, { label: "Windows" },
+      ],
+    },
+    windows: {
+      name: "Download for Windows", meta: ".exe installer",
+      match: (n) => n.endsWith(".exe"),
+      others: [{ label: "Linux" }, { label: "macOS" }],
+    },
   }[os];
   document.getElementById("dl-name").textContent = info.name;
   document.getElementById("dl-meta").textContent = info.meta;
-  document.getElementById("dl-other1").textContent = info.others[0];
-  document.getElementById("dl-other2").textContent = info.others[1];
+  const links = info.others.map((o) => {
+    const a = document.createElement("a");
+    a.href = "https://github.com/NathanSMB/rerun-tv/releases/latest";
+    a.textContent = o.label;
+    return a;
+  });
+  document.getElementById("dl-others").replaceChildren(
+    ...links.flatMap((a, i) => (i ? [" / ", a] : [a]))
+  );
 
   fetch("https://api.github.com/repos/NathanSMB/rerun-tv/releases/latest")
     .then((r) => (r.ok ? r.json() : Promise.reject()))
     .then((rel) => {
-      const asset = (rel.assets || []).find((a) => info.match(a.name));
-      if (asset) document.getElementById("dl-btn").href = asset.browser_download_url;
+      const resolve = (match, el) => {
+        const asset = (rel.assets || []).find((a) => match(a.name));
+        if (asset) el.href = asset.browser_download_url;
+      };
+      resolve(info.match, document.getElementById("dl-btn"));
+      info.others.forEach((o, i) => { if (o.match) resolve(o.match, links[i]); });
     })
     .catch(() => {});
 </script>
