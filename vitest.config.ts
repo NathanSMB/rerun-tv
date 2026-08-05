@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
     resolve: {
@@ -18,6 +18,16 @@ export default defineConfig({
     esbuild: { jsx: "automatic" },
     test: {
         include: ["tests/**/*.test.{ts,tsx}"],
+        // The job suite holds encoders open through a shebang-script ffmpeg
+        // stub, which Windows cannot spawn (and Node refuses .cmd wrappers
+        // without a shell). The supervisor it tests is platform-independent
+        // and stays covered by the Linux and macOS runs.
+        exclude: [
+            ...configDefaults.exclude,
+            ...(process.platform === "win32"
+                ? ["tests/stream-jobs.test.ts"]
+                : []),
+        ],
         // Node stays the default. `tests/renderer/` opts itself out per file with a
         // `@vitest-environment happy-dom` docblock, so nothing else pays for a DOM.
         environment: "node",
