@@ -205,4 +205,30 @@ export const MIGRATIONS: string[] = [
     `
   CREATE INDEX IF NOT EXISTS idx_playlog_episode ON play_log(episode_id);
   `,
+    // -- 7 ---------------------------------------------------------------------
+    //
+    // Where each channel left off (docs/playback.md, "Resuming a channel").
+    //
+    // The same split the rest of the channel model insists on, one level down:
+    // `channel_show_state` is *scheduling* progress (which unit comes next),
+    // this is *playback* progress (where inside the current one we are). They
+    // are separate rows because they are reset by different gestures — "reset
+    // progress" rewinds a show's cursor and must not also decide where the
+    // channel resumes, and leaving mid-episode must not touch the cursor.
+    //
+    // Keyed by channel, not by episode: a channel resumes where *it* was, and
+    // one episode may legitimately sit at two different positions on two
+    // channels that both air the show. `ON DELETE CASCADE` on both sides means a
+    // deleted channel takes its resume point with it and a pruned episode
+    // retires the row rather than leaving it pointing at a file that is gone.
+    `
+  CREATE TABLE channel_playback_state (
+    channel_id INTEGER PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+    episode_id INTEGER NOT NULL    REFERENCES episodes(id) ON DELETE CASCADE,
+    position_s REAL    NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX idx_playback_state_episode ON channel_playback_state(episode_id);
+  `,
 ];

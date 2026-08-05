@@ -39,7 +39,7 @@ enough that changing it would be a rewrite rather than a refactor.
 | App shell | **Electron desktop app** | A single-window native app on Arch. Official Electron builds ship the H.264/AAC decoders, and the Node main process can spawn ffmpeg and own the database — one runtime covers both halves. |
 | Playback | **ffmpeg remux / transcode** | Plays anything in the library. Files are probed once at scan time; most MKVs need only a lossless remux, so full re-encodes are the rare path. |
 | Library | **Folder scan + filename parsing** | `Show/Season 01/Show - S01E03.mkv` parses on its own; a fix-up UI handles the oddballs. No network metadata. |
-| Channel model | **Lean-back playlist** | Tuning in starts the next episode from the top and auto-plays forever. Durations and a play log are recorded anyway, so a simulated-live schedule can layer on later without rework. |
+| Channel model | **Lean-back playlist** | Tuning in resumes where that channel left off, or starts the next episode from the top if it has no place saved, and auto-plays forever. Durations and a play log are recorded anyway, so a simulated-live schedule can layer on later without rework. |
 | Storage | **SQLite (`better-sqlite3`)** | One file, a synchronous API in the main process, trivial backup. The synchronous part is what makes every scheduler transition atomic without await points. |
 | UI stack | **React + TypeScript + Vite** | Fast iteration in the renderer, typed IPC through a preload bridge. |
 | Packaging | **AppImage (electron-builder)** | Runs on Arch without a package-manager dance. Never bundles ffmpeg — see below. |
@@ -212,11 +212,16 @@ now:
 - **Interstitials** — bumpers and commercials from a clips folder, between
   episodes.
 - **External metadata** (TVDB/TMDB artwork and titles), movies as channel filler,
-  LAN or TV-browser access, multi-user profiles, and mid-episode resume.
+  LAN or TV-browser access, and multi-user profiles.
 
-Hardware-accelerated transcoding was on this list and has since landed — VAAPI
-and NVENC, probed at startup, off by default
-([playback.md](playback.md#hardware-encode--decode)).
+Two things on this list have since landed. Hardware-accelerated transcoding —
+VAAPI and NVENC, probed at startup, off by default
+([playback.md](playback.md#hardware-encode--decode)). And **mid-episode resume**:
+each channel now remembers the episode and offset it was last watching, so
+leaving and coming back is continuous
+([playback.md](playback.md#resuming-a-channel)). That is per-channel resume, not
+the simulated-live virtual clock above — a channel picks up where *you* left it,
+not where it would have got to had it been broadcasting all night.
 
 ## Further reading
 

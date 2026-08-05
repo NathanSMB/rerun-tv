@@ -94,6 +94,13 @@ const api: RerunApi = {
                 episodeId,
                 completed,
             ),
+        savePosition: (channelId, episodeId, positionS) =>
+            ipcRenderer.invoke(
+                IPC.player.savePosition,
+                channelId,
+                episodeId,
+                positionS,
+            ),
         release: (channelId, episodeId) =>
             ipcRenderer.invoke(
                 IPC.player.release,

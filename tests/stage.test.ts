@@ -22,7 +22,14 @@ import {
 import type { NowPlaying } from "@shared/types.js";
 import { describe, expect, it } from "vitest";
 
-function playing(episodeId: number, channelId = 1): NowPlaying {
+function playing(
+    episodeId: number,
+    channelId = 1,
+    patch: Partial<NowPlaying> & {
+        playbackPath?: NowPlaying["episode"]["playbackPath"];
+    } = {},
+): NowPlaying {
+    const { playbackPath = "remux", ...rest } = patch;
     return {
         channelId,
         channelNumber: 3,
@@ -37,10 +44,12 @@ function playing(episodeId: number, channelId = 1): NowPlaying {
             title: null,
             code: `S01E0${episodeId}`,
             durationS: 1200,
-            playbackPath: "remux",
+            playbackPath,
         },
         streamUrl: `http://127.0.0.1:1/stream/${episodeId}?k=x`,
+        resumeAtS: 0,
         arc: null,
+        ...rest,
     };
 }
 

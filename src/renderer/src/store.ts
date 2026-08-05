@@ -139,6 +139,32 @@ let queue: Promise<unknown> = Promise.resolve();
  */
 let reportError: (message: string) => void = () => {};
 
+/**
+ * Where the store reads the playhead.
+ *
+ * The Player owns the position — it changes four times a second and belongs
+ * nowhere near a store (see this module's header) — but every graceful way out
+ * of a channel runs through a store action, and each of those has to write the
+ * position down *before* it lets go of the channel. So the Player registers a
+ * getter here while it is mounted, and `savePosition` calls it.
+ *
+ * A module-level hook rather than store state, for the same reasons
+ * `reportError` is one: a value updating four times a second would re-render
+ * every subscriber, and the exits need the number as it is right now — a copy
+ * pushed into the store on the last autosave tick could be thirty seconds old,
+ * which is exactly the staleness this feature exists to remove from graceful
+ * exits. Null means nothing is playing, and nothing is written.
+ */
+let readPosition: () => number | null = () => null;
+
+/** Register the Player's playhead; the returned function unregisters it. */
+export function providePosition(read: () => number | null): () => void {
+    readPosition = read;
+    return () => {
+        if (readPosition === read) readPosition = () => null;
+    };
+}
+
 export function errorMessage(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
@@ -304,6 +330,23 @@ interface AppState {
     prewarm(): Promise<void>;
     /** Leave the player (Esc) and log the current episode as incomplete. */
     leavePlayer(): Promise<void>;
+    /**
+     * Write the playhead down, so tuning back in resumes here
+     * (docs/playback.md, "Resuming a channel").
+     *
+     * Called on a thirty-second tick by the Player, and by every exit that means
+     * "I am coming back to this" — which is what bounds an *unexpected* exit to
+     * half a minute of lost position while a deliberate one loses none.
+     *
+     * `positionS` is for the caller that already knows the answer and would
+     * otherwise race the Player's next render: a committed seek has moved the
+     * playhead, but the ref `providePosition` reads is a render behind it.
+     *
+     * Deliberately **not** inside `serialize`. It commits no scheduler state, and
+     * queueing it behind a tune-in would land the flush that matters after the
+     * channel it belongs to had already been released.
+     */
+    savePosition(positionS?: number): Promise<void>;
 
     /**
      * Arm the sleep timer for `minutes` from now, or disarm it with null.
@@ -597,6 +640,11 @@ export const useStore = create<AppState>((set, get) => ({
                     leaving.episode.id,
                     false,
                 );
+                // After `reportEnded`, which clears the channel's resume point:
+                // this is the half that says we mean to come back to this episode
+                // rather than to have finished with it. Each channel therefore
+                // keeps its own place, and flipping between two resumes both.
+                await get().savePosition();
                 await api.player.release(leaving.channelId);
             }
             set({ pendingNext: null });
@@ -714,6 +762,10 @@ export const useStore = create<AppState>((set, get) => ({
                     current.episode.id,
                     false,
                 );
+                // Leaving is not finishing: put the resume point `reportEnded`
+                // just cleared straight back, so the guide's next tune-in returns
+                // to this exact spot rather than to the top of a new episode.
+                await get().savePosition();
                 // Everything on this channel, so a prewarm cannot outlive the screen.
                 await api.player.release(current.channelId);
             }
@@ -742,6 +794,29 @@ export const useStore = create<AppState>((set, get) => ({
             });
             void get().refreshChannels();
         });
+    },
+
+    async savePosition(positionS) {
+        const playing = get().nowPlaying;
+        if (!playing) return;
+        const at = positionS ?? readPosition();
+        if (at === null || !Number.isFinite(at) || at < 0) return;
+        try {
+            await bridge().player.savePosition(
+                playing.channelId,
+                playing.episode.id,
+                at,
+            );
+        } catch (err) {
+            // Deliberately not `reportError`. A save that fails costs the viewer
+            // their place in one episode; painting the shell's error strip over a
+            // working picture every thirty seconds would be the larger failure,
+            // and there is nothing here for them to act on.
+            console.warn(
+                "[store] could not save the playback position:",
+                errorMessage(err),
+            );
+        }
     },
 
     armSleep(minutes) {
@@ -797,6 +872,10 @@ export const useStore = create<AppState>((set, get) => ({
                 current.episode.id,
                 false,
             );
+            // And resumed like one. A viewer who paused and fell asleep is coming
+            // back to this episode, unlike the boundary branch in `advance`, where
+            // the episode genuinely finished and the resume point stays cleared.
+            await get().savePosition();
             await goDark(get, set);
         });
     },

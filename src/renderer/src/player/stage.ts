@@ -49,7 +49,29 @@ export interface StageState {
 
 export const other = (slot: SlotId): SlotId => (slot === "a" ? "b" : "a");
 
-export function slotFor(playing: NowPlaying, offset = 0, url?: string): Slot {
+/**
+ * The display offset a fresh slot for this pick starts at.
+ *
+ * A piped stream carries its resume seek in the URL (`?t=`), so the element's
+ * own clock restarts at zero and this offset is the whole of what puts the
+ * timecode back where the viewer left it. A `direct` file is served with range
+ * requests — the stream server ignores `?t=` on that path — so the Player seeks
+ * the element itself and the offset stays 0, exactly as it does after a direct
+ * seek in `performSeek`.
+ *
+ * Bound to `slotFor`'s default rather than left to callers because the offset
+ * and the URL have to agree: a slot whose offset disagrees with the `t` its
+ * stream was opened at reports the wrong position for the rest of the episode.
+ */
+export function resumeOffsetOf(playing: NowPlaying): number {
+    return playing.episode.playbackPath === "direct" ? 0 : playing.resumeAtS;
+}
+
+export function slotFor(
+    playing: NowPlaying,
+    offset = resumeOffsetOf(playing),
+    url?: string,
+): Slot {
     const streamUrl = url ?? playing.streamUrl;
     return {
         episodeId: playing.episode.id,

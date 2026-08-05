@@ -73,6 +73,13 @@ const SETTLE_QUIET_PASSES = 3;
  */
 const SETTLE_MAX_PASSES = 40;
 
+/**
+ * Long enough for `SEEK_COMMIT_MS` (250 ms, `Player.tsx`) to elapse with room
+ * to spare. Real time, because the coalescing timer is real: fake timers here
+ * would also freeze the macrotask hops `settle` runs on.
+ */
+const SEEK_DEBOUNCE_WAIT_MS = 400;
+
 const macrotask = (): Promise<void> =>
     new Promise((resolve) => {
         setTimeout(resolve, 0);
@@ -501,6 +508,24 @@ export interface Scenario {
     viewerPlay(): Promise<void>;
     /** Move the playhead: how a test enters the up-next window. */
     at(seconds: number): Promise<void>;
+    /**
+     * The window being backgrounded — what makes the autosave trustworthy,
+     * because Chromium throttles the interval exactly then. (`pagehide`, the
+     * other flush the Player listens for, is the same moment one step later and
+     * is not modelled separately.)
+     */
+    hideWindow(): Promise<void>;
+    /** What the OSD's timecode reads, e.g. `07:10`. */
+    timecode(): string;
+    /**
+     * Scrub back to the start with the scrub bar's own <kbd>Home</kbd> key, and
+     * let the seek's coalescing window elapse.
+     *
+     * The debounce is waited out rather than reached past: it is production
+     * behaviour (a held arrow key must not restart ffmpeg per repeat), and a
+     * test that stepped over it would not exercise `commitSeek` at all.
+     */
+    scrubToStart(): Promise<void>;
     /** The `pause` Chromium fires immediately before `ended`. */
     pauseForEnd(): Promise<void>;
     /** The `ended` that follows it, stopping *inside* the promotion window. */
@@ -845,6 +870,49 @@ export async function openPlayer(
                 el.currentTime = seconds;
                 el.dispatchEvent(new Event("timeupdate"));
                 await macrotask();
+            });
+            await settle();
+        },
+
+        /**
+         * happy-dom has no visibility state to change, so it is defined here and
+         * the event fired against it — the pair Chromium delivers together.
+         */
+        hideWindow: async () => {
+            Object.defineProperty(document, "visibilityState", {
+                configurable: true,
+                get: () => "hidden",
+            });
+            await act(async () => {
+                document.dispatchEvent(new Event("visibilitychange"));
+                await macrotask();
+            });
+            await settle();
+        },
+
+        timecode: () => {
+            const el = document.querySelector<HTMLElement>(".timecode b");
+            if (!el) throw new Error("the timecode is not on screen");
+            return el.textContent ?? "";
+        },
+
+        scrubToStart: async () => {
+            const track = document.querySelector<HTMLElement>(".scrub");
+            if (!track) throw new Error("the scrub bar is not on screen");
+            await act(async () => {
+                track.focus();
+                track.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                        key: "Home",
+                        bubbles: true,
+                    }),
+                );
+                await macrotask();
+            });
+            await act(async () => {
+                await new Promise((resolve) => {
+                    setTimeout(resolve, SEEK_DEBOUNCE_WAIT_MS);
+                });
             });
             await settle();
         },

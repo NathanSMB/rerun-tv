@@ -180,6 +180,12 @@ Two behaviours are load-bearing plan decisions:
   `currentTime`; remuxed and transcoded streams are open-ended pipes, so a scrub
   loads a new URL with `?t=` and the player tracks the offset to keep the
   timecode honest.
+- **Tuning in resumes where the channel was.** Leaving mid-episode and coming
+  back returns to the same episode and offset rather than the top of a new one;
+  a channel with no saved place still starts fresh. The two seek mechanisms
+  above are exactly the two ways a resume is applied, and the offset is what
+  keeps the timecode reading the real position on the piped paths. See
+  [playback.md](playback.md#resuming-a-channel).
 
 Auto-advance fires the scheduler on `ended`, shows the banner briefly, and plays
 on. In the last 30 seconds an *up next* toast appears while the next stream
