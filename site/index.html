@@ -3,30 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rerun TV — your library, running like it's Saturday, 1994</title>
-<meta name="description" content="Turn a local media library into lean-back TV channels. You build the lineup, the channel decides what's on. Linux, Electron + ffmpeg, MIT.">
+<title>Rerun TV — stop picking. Start watching.</title>
+<meta name="description" content="Rerun TV turns the shows on your disk into lean-back TV channels. Group them into a lineup, tune in, and the channel decides what's on. Electron + ffmpeg, MIT.">
 <link rel="icon" href="icon.png">
 <meta property="og:title" content="Rerun TV">
-<meta property="og:description" content="Turn a local media library into lean-back TV channels. You build the lineup, the channel decides what's on.">
+<meta property="og:description" content="Rerun TV turns the shows on your disk into lean-back TV channels. Group them into a lineup, tune in, and the channel decides what's on.">
 <meta property="og:image" content="https://nathansmb.github.io/rerun-tv/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  /* The app's own tokens — src/renderer/src/styles/tokens.css, docs/ui.md. */
   :root {
-    --tube:      #0b0e14;
-    --panel:     #141a2e;
-    --panel-2:   #1a2140;
-    --indigo:    #28338f;
-    --indigo-hi: #3a48c4;
+    --tube:      #05060a;
     --amber:     #ffb454;
-    --amber-dim: rgba(255, 180, 84, 0.14);
+    --amber-ink: #201302;
     --white:     #f0efe6;
     --steel:     #8d97b8;
     --steel-dim: #5a6485;
-    --signal:    #59d999;
     --line:      rgba(141, 151, 184, 0.18);
+    --line-soft: rgba(141, 151, 184, 0.12);
 
     --display: "Bricolage Grotesque", system-ui, sans-serif;
     --mono:    "IBM Plex Mono", ui-monospace, monospace;
@@ -37,251 +32,254 @@
   html { color-scheme: dark; }
   body {
     margin: 0; background: var(--tube); color: var(--white);
-    font-family: var(--body); font-size: 15.5px; line-height: 1.6;
+    font-family: var(--body);
     -webkit-font-smoothing: antialiased;
   }
-  a { color: inherit; }
+  a { color: var(--steel); }
+  a:hover { color: var(--amber); }
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
 
-  .page { max-width: 860px; margin: 0 auto; padding: 0 24px 72px; }
+  /* SMPTE color bars across the very top */
+  .bars { display: flex; height: 10px; }
+  .bars div { flex: 1; }
+  .bars div:nth-child(1) { background: #c8c8c8; }
+  .bars div:nth-child(2) { background: #c8c832; }
+  .bars div:nth-child(3) { background: #32c8c8; }
+  .bars div:nth-child(4) { background: #32c832; }
+  .bars div:nth-child(5) { background: #c832c8; }
+  .bars div:nth-child(6) { background: #c83232; }
+  .bars div:nth-child(7) { background: #3232c8; }
+
+  /* CRT scanline overlay */
+  .scanlines {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: repeating-linear-gradient(0deg,
+      rgba(0, 0, 0, 0.22) 0px, rgba(0, 0, 0, 0.22) 1px,
+      transparent 1px, transparent 3px);
+  }
+
+  .page { max-width: 1060px; margin: 0 auto; padding: 0 40px 60px; position: relative; }
 
   /* ---- top bar ---- */
-  header.bar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 20px 0; border-bottom: 1px solid var(--line);
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--steel);
   }
-  .bar img { width: 30px; height: 30px; border-radius: 7px; display: block; }
-  .wordmark { font-family: var(--display); font-weight: 800; font-size: 17px; letter-spacing: 0.01em; }
-  .bar-meta {
-    margin-left: auto; font-family: var(--mono); font-size: 11.5px;
-    letter-spacing: 0.1em; color: var(--steel); text-transform: uppercase;
-    display: flex; gap: 16px;
-  }
-  .bar-meta a { color: var(--steel); text-decoration: none; }
-  .bar-meta a:hover { color: var(--white); }
+  .wordmark { display: flex; align-items: center; gap: 10px; }
+  .wordmark img { width: 26px; height: 26px; border-radius: 6px; display: block; }
+  header a { color: var(--steel); text-decoration: none; }
+  header a:hover { color: var(--amber); }
 
   /* ---- hero ---- */
-  .hero { padding: 76px 0 40px; }
+  .hero { text-align: center; padding: 64px 0 40px; }
   .eyebrow {
-    font-family: var(--mono); font-size: 12px; font-weight: 500;
-    letter-spacing: 0.18em; text-transform: uppercase; color: var(--amber);
-    margin: 0 0 18px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.3em;
+    text-transform: uppercase; color: var(--steel); margin: 0 0 22px;
   }
   h1 {
     font-family: var(--display); font-weight: 800;
-    font-size: clamp(38px, 6.5vw, 66px); line-height: 1.04;
-    letter-spacing: -0.015em; margin: 0 0 22px; max-width: 17ch;
+    font-size: clamp(40px, 6.5vw, 68px); line-height: 1.02;
+    letter-spacing: -0.01em; margin: 0 0 24px; color: var(--amber);
+    text-shadow: 0 0 24px rgba(255, 180, 84, 0.45), 0 0 80px rgba(255, 180, 84, 0.2);
   }
-  h1 em { font-style: normal; color: var(--amber); white-space: nowrap; }
-  .lede { font-size: 17px; color: var(--steel); max-width: 52ch; margin: 0; }
-  .lede strong { color: var(--white); font-weight: 500; }
+  .lede { font-size: 17px; color: var(--steel); line-height: 1.6; max-width: 54ch; margin: 0 auto; }
 
-  /* The channel banner — the app's recurring signature, borrowed as-is. */
-  .banner {
-    margin-top: 44px; display: flex; align-items: center; gap: 18px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 14px 20px; font-family: var(--mono); font-size: 12.5px;
-    letter-spacing: 0.08em; color: var(--steel); overflow: hidden;
+  /* ---- download CTA ---- */
+  .cta {
+    display: flex; justify-content: center; gap: 14px; align-items: center;
+    padding-bottom: 56px; flex-wrap: wrap;
   }
-  .banner .dial {
-    font-family: var(--display); font-weight: 800; font-size: 30px;
-    color: var(--amber); letter-spacing: 0; line-height: 1;
+  .cta-btn {
+    background: var(--amber); color: var(--amber-ink); text-decoration: none;
+    border-radius: 6px; padding: 15px 28px; font-weight: 600; font-size: 14px;
+    letter-spacing: 0.08em; text-transform: uppercase; font-family: var(--mono);
+    box-shadow: 0 0 30px rgba(255, 180, 84, 0.35);
   }
-  .banner .now { color: var(--white); }
-  .banner .live { color: var(--signal); margin-left: auto; white-space: nowrap; }
-  .live::before {
-    content: ""; display: inline-block; width: 7px; height: 7px;
-    border-radius: 50%; background: var(--signal); margin-right: 8px;
-    animation: blink 1.4s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0.15; } }
-  @media (prefers-reduced-motion: reduce) { .live::before { animation: none; } }
+  .cta-btn:hover { color: var(--amber-ink); filter: brightness(1.08); }
+  .cta-meta { font-family: var(--mono); font-size: 11.5px; color: var(--steel-dim); }
+  .cta-meta a { color: var(--steel); }
 
-  /* ---- the guide: every link on this page is a channel row ---- */
-  .guide { margin-top: 64px; }
-  .guide-head {
-    display: flex; justify-content: space-between; align-items: baseline;
-    font-family: var(--mono); font-size: 11.5px; font-weight: 500;
-    letter-spacing: 0.18em; text-transform: uppercase; color: var(--steel-dim);
-    padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  /* ---- screenshots ---- */
+  .shot {
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
   }
-  .row {
-    display: grid; grid-template-columns: 74px 150px 1fr auto;
-    align-items: center; gap: 20px;
-    padding: 20px 16px 20px 8px; margin: 0 -8px;
-    border-bottom: 1px solid var(--line);
-    text-decoration: none; border-radius: 10px;
-  }
-  .row:hover, .row:focus-visible { background: var(--panel-2); border-bottom-color: transparent; }
-  .row:hover .ch, .row:focus-visible .ch { color: var(--amber); }
-  .ch {
-    font-family: var(--display); font-weight: 800; font-size: 40px; line-height: 1;
-    color: var(--steel-dim); transition: color 120ms;
-  }
-  .row-name {
-    font-family: var(--mono); font-size: 13px; font-weight: 600;
-    letter-spacing: 0.14em; text-transform: uppercase; color: var(--white);
-  }
-  .row-desc { font-size: 14px; color: var(--steel); min-width: 0; }
-  .row-desc .file { font-family: var(--mono); font-size: 12.5px; color: var(--amber); overflow-wrap: anywhere; }
-  .row-go {
+  .shot img { display: block; width: 100%; }
+  .shot-caption {
     font-family: var(--mono); font-size: 12px; color: var(--steel-dim);
-    white-space: nowrap;
-  }
-  .row:hover .row-go, .row:focus-visible .row-go { color: var(--amber); }
-
-  .fineprint {
-    margin-top: 22px; font-family: var(--mono); font-size: 12px;
-    color: var(--steel-dim); line-height: 2;
-  }
-  .fineprint code {
-    font-family: var(--mono); font-size: 12px; color: var(--amber);
-    background: var(--amber-dim); border-radius: 5px; padding: 2px 7px;
+    margin: 14px 4px 0; letter-spacing: 0.06em;
   }
 
   /* ---- how a channel runs ---- */
-  .how { margin-top: 76px; }
-  .how h2 {
-    font-family: var(--mono); font-size: 11.5px; font-weight: 500;
-    letter-spacing: 0.18em; text-transform: uppercase; color: var(--steel-dim);
-    margin: 0 0 6px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  .how { margin-top: 72px; }
+  .how-head {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--steel-dim);
+    padding-bottom: 10px; border-bottom: 1px solid var(--line);
   }
-  .how dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 26px 40px; padding-top: 26px; }
-  .how dt {
-    font-family: var(--mono); font-size: 12px; font-weight: 600;
-    letter-spacing: 0.16em; color: var(--amber); margin-bottom: 6px;
+  .how-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .program {
+    display: grid; grid-template-columns: 64px 1fr; gap: 18px;
+    padding: 24px 0; border-bottom: 1px solid var(--line-soft); align-items: start;
   }
-  .how dd { margin: 0; font-size: 14.5px; color: var(--steel); }
-  .how dd strong { color: var(--white); font-weight: 500; }
+  .how-grid .program:nth-last-child(-n+2) { border-bottom: none; }
+  .program .num {
+    font-family: var(--display); font-weight: 800; font-size: 38px;
+    line-height: 1; color: var(--steel-dim);
+  }
+  .program h3 {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber);
+    margin: 0 0 6px;
+  }
+  .program p { margin: 0; font-size: 14.5px; color: var(--steel); line-height: 1.55; }
+
+  /* ---- on air ---- */
+  .onair {
+    display: grid; grid-template-columns: 1fr 1.4fr; gap: 44px;
+    align-items: center; margin-top: 72px;
+  }
+  .onair .kicker {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--amber); margin: 0 0 14px;
+  }
+  .onair h2 {
+    font-family: var(--display); font-weight: 800; font-size: 30px;
+    line-height: 1.1; margin: 0 0 14px;
+  }
+  .onair p { font-size: 15px; color: var(--steel); line-height: 1.6; margin: 0; }
+  .onair .shot { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6); }
 
   footer {
-    margin-top: 84px; padding-top: 20px; border-top: 1px solid var(--line);
+    margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 8px 24px;
     font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em;
-    color: var(--steel-dim); display: flex; flex-wrap: wrap; gap: 8px 24px;
+    color: var(--steel-dim);
   }
   footer a { color: var(--steel-dim); }
-  footer a:hover { color: var(--white); }
+  footer a:hover { color: var(--amber); }
 
-  @media (max-width: 640px) {
-    .hero { padding-top: 52px; }
-    .banner { flex-wrap: wrap; gap: 8px 18px; }
-    .row { grid-template-columns: 52px 1fr auto; }
-    .ch { font-size: 30px; }
-    .row-desc { grid-column: 2 / -1; grid-row: 2; }
-    .how dl { grid-template-columns: 1fr; }
-    .bar-meta span { display: none; }
+  @media (max-width: 720px) {
+    .page { padding: 0 20px 48px; }
+    .hero { padding-top: 44px; }
+    .how-grid { grid-template-columns: 1fr; }
+    .how-grid .program:nth-last-child(2) { border-bottom: 1px solid var(--line-soft); }
+    .onair { grid-template-columns: 1fr; gap: 24px; }
   }
 </style>
 </head>
 <body>
+<div class="bars" aria-hidden="true">
+  <div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+</div>
+<div class="scanlines" aria-hidden="true"></div>
+
 <div class="page">
 
-  <header class="bar">
-    <img src="icon.png" alt="">
-    <span class="wordmark">Rerun TV</span>
-    <nav class="bar-meta">
-      <span id="bar-version">v0.1.1</span>
-      <a href="https://github.com/NathanSMB/rerun-tv">GitHub</a>
-    </nav>
+  <header>
+    <span class="wordmark"><img src="assets/icon.png" alt="">RERUN&nbsp;TV</span>
+    <a href="https://github.com/NathanSMB/rerun-tv">GITHUB ▸</a>
   </header>
 
   <section class="hero">
-    <p class="eyebrow">A media player for Linux · Electron + ffmpeg</p>
-    <h1>Your library, running like it's <em>Saturday, 1994.</em></h1>
+    <p class="eyebrow">— lean-back TV from your own library —</p>
+    <h1>Stop picking. Start watching.</h1>
     <p class="lede">
-      Rerun TV turns a local media library into lean-back TV channels.
-      <strong>You build the lineup, the channel decides what's on</strong> —
-      shows play in order or on shuffle, multipart stories air start-to-finish,
-      and the next episode starts on its own. Nothing to configure in a text file.
+      Rerun TV turns the shows on your disk into channels. Group them into a
+      lineup, tune in, and the channel decides what's on — episode after
+      episode, all night if you let it.
     </p>
-    <div class="banner" aria-hidden="true">
-      <span class="dial">01</span>
-      <span><span class="now">NOW&nbsp;PLAYING</span> · YOUR&nbsp;LIBRARY · EP&nbsp;OF&nbsp;YOUR&nbsp;CHOOSING</span>
-      <span class="live">ON&nbsp;AIR</span>
+  </section>
+
+  <div class="cta">
+    <a class="cta-btn" id="dl-btn" href="https://github.com/NathanSMB/rerun-tv/releases/latest">⏵ <span id="dl-name">Download for Linux</span></a>
+    <span class="cta-meta"><span id="dl-meta">.AppImage · x86_64</span> · also
+      <a href="https://github.com/NathanSMB/rerun-tv/releases/latest" id="dl-other1">macOS</a> /
+      <a href="https://github.com/NathanSMB/rerun-tv/releases/latest" id="dl-other2">Windows</a></span>
+  </div>
+
+  <figure style="margin:0">
+    <div class="shot"><img src="assets/guide.png" alt="The Guide — channel lineup"></div>
+    <figcaption class="shot-caption">THE GUIDE — every channel, and what the scheduler has on deck for each.</figcaption>
+  </figure>
+
+  <section class="how">
+    <div class="how-head"><span>How a channel runs</span><span>04 programs</span></div>
+    <div class="how-grid">
+      <div class="program">
+        <span class="num" aria-hidden="true">01</span>
+        <div>
+          <h3>Scan</h3>
+          <p>Point it at any folder of shows. Filenames are parsed, every file is probed once, and anything unreadable waits in a queue instead of disappearing.</p>
+        </div>
+      </div>
+      <div class="program">
+        <span class="num" aria-hidden="true">02</span>
+        <div>
+          <h3>Schedule</h3>
+          <p>Shows air in order or on shuffle, down to individual seasons. Multipart stories play start-to-finish, and are exactly as likely to air as a single episode.</p>
+        </div>
+      </div>
+      <div class="program">
+        <span class="num" aria-hidden="true">03</span>
+        <div>
+          <h3>Play</h3>
+          <p>Tuning in is instant — the playback path is decided at scan time — and the next episode is buffered before this one ends, so handoffs cut rather than pause.</p>
+        </div>
+      </div>
+      <div class="program">
+        <span class="num" aria-hidden="true">04</span>
+        <div>
+          <h3>Sleep</h3>
+          <p>Press S for a dial from off to five hours. When it expires the episode — or the whole arc — plays to its end, and only then does the channel sign off to black.</p>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="guide" aria-label="Downloads and links">
-    <div class="guide-head"><span>Tonight's lineup</span><span>All channels</span></div>
-
-    <a class="row" id="download-row" href="https://github.com/NathanSMB/rerun-tv/releases/latest">
-      <span class="ch" aria-hidden="true">02</span>
-      <span class="row-name">Download</span>
-      <span class="row-desc"><span class="file" id="dl-file">Latest Linux AppImage</span><br>
-        <span id="dl-meta">from the newest GitHub release</span></span>
-      <span class="row-go">tune in ▸</span>
-    </a>
-
-    <a class="row" href="https://github.com/NathanSMB/rerun-tv">
-      <span class="ch" aria-hidden="true">03</span>
-      <span class="row-name">Source</span>
-      <span class="row-desc">github.com/NathanSMB/rerun-tv<br>MIT-licensed · docs on the scheduler, playback pipeline and data model included</span>
-      <span class="row-go">tune in ▸</span>
-    </a>
-
-    <a class="row" href="https://github.com/NathanSMB/rerun-tv/releases">
-      <span class="ch" aria-hidden="true">04</span>
-      <span class="row-name">Releases</span>
-      <span class="row-desc">Every version, with notes<br>new releases are cut as tagged AppImage builds</span>
-      <span class="row-go">tune in ▸</span>
-    </a>
-
-    <p class="fineprint">
-      Requires <code>ffmpeg</code> on PATH — it is invoked as a separate program, never bundled.<br>
-      After downloading: <code>chmod +x rerun-tv-*.AppImage</code> and run it.<br>
-      Built and tested on Arch (CachyOS) with KDE/Wayland; other distributions should work but are less exercised.
-    </p>
-  </section>
-
-  <section class="how">
-    <h2>How a channel runs</h2>
-    <dl>
-      <div>
-        <dt>Scan</dt>
-        <dd>Point it at <strong>any folder</strong> of shows. Filenames are parsed, every file is probed once, and anything that doesn't parse waits in an Unmatched queue instead of disappearing.</dd>
-      </div>
-      <div>
-        <dt>Schedule</dt>
-        <dd>Each pick draws a show by weight, in order or shuffled — <strong>down to individual seasons</strong> — and a multipart arc is exactly as likely to air as a single episode, then plays uninterrupted.</dd>
-      </div>
-      <div>
-        <dt>Play</dt>
-        <dd>A local ffmpeg pipeline picks the cheapest path that works, decided at scan time, so <strong>tuning in is instant</strong> — and the next episode is buffered before the current one ends, so handoffs cut rather than pause.</dd>
-      </div>
-      <div>
-        <dt>Sleep</dt>
-        <dd>Press <strong>S</strong> for a dial that runs from off to five hours. When it expires, the episode — or the whole arc — plays to its end, and only then does the channel sign off to black.</dd>
-      </div>
-    </dl>
+  <section class="onair">
+    <div>
+      <p class="kicker">On air</p>
+      <h2>A player that behaves like a channel</h2>
+      <p>The banner flashes on every handoff, the next episode starts on its own, and picture-in-picture lets the channel follow you to another workspace. Everything answers to the keyboard.</p>
+    </div>
+    <div class="shot"><img src="assets/player.png" alt="The player, mid-episode"></div>
   </section>
 
   <footer>
     <span>MIT license</span>
-    <a href="https://github.com/NathanSMB/rerun-tv/blob/main/CONTRIBUTING.md">Contributing</a>
-    <a href="https://github.com/NathanSMB/rerun-tv/issues">Issues</a>
-    <span id="foot-note">© NathanSMB</span>
+    <span>Electron + ffmpeg</span>
+    <a href="https://github.com/NathanSMB/rerun-tv">github.com/NathanSMB/rerun-tv</a>
   </footer>
 
 </div>
 
 <script>
-  // Release asset names carry the version (rerun-tv-0.1.1-x86_64.AppImage),
-  // so there is no stable "latest" download URL. Ask the API instead; if it
-  // fails (offline, rate-limited) the row keeps its releases/latest fallback.
+  // Release asset names carry the version (rerun-tv-0.2.0-x86_64.AppImage),
+  // so there is no stable "latest" download URL. Detect the visitor's OS,
+  // label the button, and resolve the real asset URL from the API; on any
+  // failure the button keeps its releases/latest fallback.
+  const os = /Windows/i.test(navigator.userAgent) ? "windows"
+    : /Mac|iPhone|iPad/i.test(navigator.userAgent) ? "mac"
+    : "linux";
+  const info = {
+    linux:   { name: "Download for Linux",   meta: ".AppImage · x86_64",            others: ["macOS", "Windows"], match: (n) => n.endsWith(".AppImage") },
+    mac:     { name: "Download for macOS",   meta: ".dmg · Apple Silicon & Intel",  others: ["Linux", "Windows"], match: (n) => n.endsWith(".dmg") },
+    windows: { name: "Download for Windows", meta: ".exe installer",                others: ["Linux", "macOS"],   match: (n) => n.endsWith(".exe") },
+  }[os];
+  document.getElementById("dl-name").textContent = info.name;
+  document.getElementById("dl-meta").textContent = info.meta;
+  document.getElementById("dl-other1").textContent = info.others[0];
+  document.getElementById("dl-other2").textContent = info.others[1];
+
   fetch("https://api.github.com/repos/NathanSMB/rerun-tv/releases/latest")
     .then((r) => (r.ok ? r.json() : Promise.reject()))
     .then((rel) => {
-      const asset = (rel.assets || []).find((a) => a.name.endsWith(".AppImage"));
-      if (!asset) return;
-      document.getElementById("download-row").href = asset.browser_download_url;
-      document.getElementById("dl-file").textContent = asset.name;
-      const mb = Math.round(asset.size / 1048576);
-      const date = new Date(rel.published_at).toLocaleDateString("en-US", {
-        year: "numeric", month: "short", day: "numeric",
-      });
-      document.getElementById("dl-meta").textContent =
-        `${rel.tag_name} · ${mb} MB · released ${date}`;
-      document.getElementById("bar-version").textContent = rel.tag_name;
+      const asset = (rel.assets || []).find((a) => info.match(a.name));
+      if (asset) document.getElementById("dl-btn").href = asset.browser_download_url;
     })
     .catch(() => {});
 </script>
