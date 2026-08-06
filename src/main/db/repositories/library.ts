@@ -29,8 +29,15 @@ import type {
 } from "@shared/types.js";
 import type { Db } from "../index.js";
 
-/** An episode with no id yet — what the scanner hands to `upsertEpisode`. */
-export type EpisodeInput = Omit<Episode, "id">;
+/**
+ * An episode with no id yet — what the scanner hands to `upsertEpisode`.
+ *
+ * `metadataTitle` is omitted as well as `id`: like the cached loudness columns
+ * it belongs to a different owner (the metadata lookup), and leaving it off the
+ * input is what makes "the scanner has no opinion about it" a compile error
+ * rather than a convention.
+ */
+export type EpisodeInput = Omit<Episode, "id" | "metadataTitle">;
 
 /**
  * SQLite refuses more than 32k bound parameters per statement, and a big
@@ -60,6 +67,9 @@ function keepUnlessFileChanged(column: string): string {
 interface ShowRow {
     id: number;
     title: string;
+    display_title: string | null;
+    metadata_source: string | null;
+    metadata_id: string | null;
     folder_path: string;
     added_at: number;
 }
@@ -71,6 +81,7 @@ interface EpisodeRow {
     episode: number;
     episode_end: number | null;
     title: string | null;
+    metadata_title: string | null;
     path: string;
     duration_s: number;
     container: string;
@@ -103,6 +114,9 @@ function toShow(row: ShowRow): Show {
     return {
         id: row.id,
         title: row.title,
+        displayTitle: row.display_title,
+        metadataSource: row.metadata_source,
+        metadataId: row.metadata_id,
         folderPath: row.folder_path,
         addedAt: row.added_at,
     };
@@ -116,6 +130,7 @@ function toEpisode(row: EpisodeRow): Episode {
         episode: row.episode,
         episodeEnd: row.episode_end,
         title: row.title,
+        metadataTitle: row.metadata_title,
         path: row.path,
         durationS: row.duration_s,
         container: row.container,
@@ -165,7 +180,12 @@ function placeholders(count: number): string {
 /** All shows, alphabetically — the order the Library screen and pickers use. */
 export function listShows(db: Db): Show[] {
     const rows = db
-        .prepare("SELECT * FROM shows ORDER BY title COLLATE NOCASE, id")
+        .prepare(
+            // Ordered by what the UI actually prints, so a linked show sorts
+            // where its display title puts it and not where the folder name did.
+            `SELECT * FROM shows
+              ORDER BY COALESCE(display_title, title) COLLATE NOCASE, id`,
+        )
         .all() as ShowRow[];
     return rows.map(toShow);
 }
@@ -192,6 +212,13 @@ export function getShowByFolder(db: Db, folderPath: string): Show | null {
 /**
  * Insert the show, or refresh the title of the existing row for this folder.
  * Called once per file during a scan, so it must be cheap and idempotent.
+ *
+ * `title` is the only column the scan owns here. `display_title`,
+ * `metadata_source` and `metadata_id` are deliberately absent from the `SET`
+ * list: they belong to the metadata lookup, and a rescan — which re-derives the
+ * title from the folder name on every pass — must not undo a link the user made.
+ * Their absence is the whole mechanism, so it has a regression test
+ * (tests/library-repo.test.ts).
  */
 export function upsertShow(db: Db, title: string, folderPath: string): Show {
     db.prepare(
@@ -286,6 +313,12 @@ export function findEpisodeByPath(db: Db, path: string): Episode | null {
  * here, but only when the stat pair actually moved. A file whose bytes changed
  * has a loudness we no longer know; a *full* rescan, which re-probes files that
  * did not change, must not throw away hours of measuring to learn nothing.
+ *
+ * `metadata_title` is a third owner and the strictest of them: it is missing
+ * from the `SET` list *and* from `EpisodeInput`, so a rescan cannot touch it
+ * even when the file's bytes changed. A provider name is keyed on (season,
+ * episode), not on the file, so re-encoding an episode does not make its title
+ * stale — and losing it would silently undo a lookup the user did by hand.
  */
 export function upsertEpisode(db: Db, row: EpisodeInput): number {
     db.prepare(
@@ -502,6 +535,101 @@ export function countEpisodes(db: Db): number {
         n: number;
     };
     return row.n;
+}
+
+// ---------------------------------------------------------------------------
+// Provider metadata (docs/library.md, "Show metadata lookup")
+// ---------------------------------------------------------------------------
+
+/**
+ * Link a show to a provider series and give it its display title.
+ *
+ * All three columns move together on purpose: a `display_title` with no
+ * `metadata_id` behind it is a title nobody can refresh or explain, and an id
+ * with no title is a link with nothing to show for it. There is no partial
+ * state — `clearShowMetadata` is the only other value these three ever take.
+ */
+export function setShowMetadata(
+    db: Db,
+    showId: number,
+    metadata: { displayTitle: string; source: string; providerId: string },
+): void {
+    db.prepare(
+        `UPDATE shows
+        SET display_title   = @displayTitle,
+            metadata_source = @source,
+            metadata_id     = @providerId
+      WHERE id = @id`,
+    ).run({
+        id: showId,
+        displayTitle: metadata.displayTitle,
+        source: metadata.source,
+        providerId: metadata.providerId,
+    });
+}
+
+/**
+ * Write the provider episode titles, one prepared statement reused across the
+ * whole plan — a linked show is hundreds of rows, and re-preparing per row is
+ * the difference between one fast write and a visible pause.
+ *
+ * Deliberately *not* wrapped in a transaction here: the caller is applying a
+ * plan that also calls `setShowMetadata`, and those writes have to land or fail
+ * as one thing. A transaction in here would nest inside that one and buy
+ * nothing, while making the atomic unit look smaller than it is.
+ *
+ * Ids that no longer exist are a silent no-op (`UPDATE` matching nothing),
+ * which is the right outcome for a plan built before a scan pruned a file — the
+ * handler drops foreign ids before this, so what reaches here is only ever
+ * "this row vanished in the last few seconds".
+ */
+export function setEpisodeMetadataTitles(
+    db: Db,
+    pairs: { episodeId: number; title: string }[],
+): void {
+    const update = db.prepare(
+        "UPDATE episodes SET metadata_title = ? WHERE id = ?",
+    );
+    for (const pair of pairs) update.run(pair.title, pair.episodeId);
+}
+
+/**
+ * Blank every provider title on a show, ahead of writing a plan's.
+ *
+ * An apply is a wholesale replacement, not a merge: the plan is the complete
+ * set of titles the new link produces, so any row it doesn't name has to fall
+ * back to its filename title. Without this, re-linking a show to a different
+ * series (or to the same one after the provider dropped episodes) would leave
+ * the old link's titles stranded on the uncovered rows, and nothing afterwards
+ * would explain where they came from. Like `setEpisodeMetadataTitles` it takes
+ * no transaction of its own — the apply owns one for both halves.
+ */
+export function clearEpisodeMetadataTitles(db: Db, showId: number): void {
+    db.prepare(
+        "UPDATE episodes SET metadata_title = NULL WHERE show_id = ?",
+    ).run(showId);
+}
+
+/**
+ * Unlink: back to exactly what the scanner named.
+ *
+ * Both halves of the link go in one transaction, because the half-states are
+ * each their own bug — a show with no `display_title` whose episodes still carry
+ * provider names looks like a scanner that renamed one row and not the rest.
+ * The episode `UPDATE` is unfiltered on `metadata_title` deliberately; it costs
+ * one indexed sweep of the show and needs no idea of which rows matched.
+ */
+export function clearShowMetadata(db: Db, showId: number): void {
+    db.transaction(() => {
+        db.prepare(
+            `UPDATE shows
+            SET display_title = NULL, metadata_source = NULL, metadata_id = NULL
+          WHERE id = ?`,
+        ).run(showId);
+        db.prepare(
+            "UPDATE episodes SET metadata_title = NULL WHERE show_id = ?",
+        ).run(showId);
+    })();
 }
 
 // ---------------------------------------------------------------------------

@@ -95,7 +95,8 @@ folded in and removed; `git log` has them if you want the archaeology.
 ## Not in the MVP
 
 Simulated live schedules (the duration data and play log already support them),
-interstitials/bumpers, external metadata lookups, LAN access, and mid-episode
+interstitials/bumpers, external metadata beyond titles (artwork, descriptions,
+air dates), LAN access, and mid-episode
 resume. See
 [docs/architecture.md](docs/architecture.md#deliberately-out-of-scope).
 

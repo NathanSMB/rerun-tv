@@ -1,10 +1,11 @@
 /**
  * Filename parsing (docs/library.md).
  *
- * The MVP has no network metadata lookups, so a file's identity is whatever we
- * can read off the path: the show from the top-level folder under the scan root,
- * the season/episode from an `SxxExx`-style code in the filename, and the episode
- * title from whatever trails that code.
+ * Numbering always comes off the path — never the network: the show from the
+ * top-level folder under the scan root, the season/episode from an `SxxExx`-style
+ * code in the filename, and the episode title from whatever trails that code.
+ * Titles parsed here can later be overlaid by the metadata lookup, which writes
+ * its own columns and never touches what this file produces.
  *
  * The grammar is deliberately narrow. Anything it can't read lands in the
  * Unmatched bucket where the user assigns it by hand — a wrong guess is worse

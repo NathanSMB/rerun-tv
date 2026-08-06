@@ -43,6 +43,14 @@ const api: RerunApi = {
         createArc: (input) => ipcRenderer.invoke(IPC.library.createArc, input),
         deleteArc: (groupId) =>
             ipcRenderer.invoke(IPC.library.deleteArc, groupId),
+        searchMetadata: (query) =>
+            ipcRenderer.invoke(IPC.library.searchMetadata, query),
+        previewMetadata: (input) =>
+            ipcRenderer.invoke(IPC.library.previewMetadata, input),
+        applyMetadata: (plan) =>
+            ipcRenderer.invoke(IPC.library.applyMetadata, plan),
+        unlinkMetadata: (showId) =>
+            ipcRenderer.invoke(IPC.library.unlinkMetadata, showId),
     },
     channels: {
         list: () => ipcRenderer.invoke(IPC.channels.list),

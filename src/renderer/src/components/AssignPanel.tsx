@@ -15,7 +15,7 @@
 
 import type { Show, UnmatchedFile } from "@shared/types.js";
 import { type FormEvent, type ReactElement, useState } from "react";
-import { errorText } from "../utils.js";
+import { errorText, showLabel } from "../utils.js";
 
 export default function AssignPanel({
     file,
@@ -106,7 +106,7 @@ export default function AssignPanel({
                     )}
                     {shows.map((show) => (
                         <option key={show.id} value={String(show.id)}>
-                            {show.title}
+                            {showLabel(show)}
                         </option>
                     ))}
                 </select>

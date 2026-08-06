@@ -38,7 +38,7 @@ enough that changing it would be a rewrite rather than a refactor.
 | --- | --- | --- |
 | App shell | **Electron desktop app** | A single-window native app on Arch. Official Electron builds ship the H.264/AAC decoders, and the Node main process can spawn ffmpeg and own the database — one runtime covers both halves. |
 | Playback | **ffmpeg remux / transcode** | Plays anything in the library. Files are probed once at scan time; most MKVs need only a lossless remux, so full re-encodes are the rare path. |
-| Library | **Folder scan + filename parsing** | `Show/Season 01/Show - S01E03.mkv` parses on its own; a fix-up UI handles the oddballs. No network metadata. |
+| Library | **Folder scan + filename parsing** | `Show/Season 01/Show - S01E03.mkv` parses on its own; a fix-up UI handles the oddballs. Numbering always comes from the filename; titles can be overlaid from a provider afterwards, on request. |
 | Channel model | **Lean-back playlist** | Tuning in resumes where that channel left off, or starts the next episode from the top if it has no place saved, and auto-plays forever. Durations and a play log are recorded anyway, so a simulated-live schedule can layer on later without rework. |
 | Storage | **SQLite (`better-sqlite3`)** | One file, a synchronous API in the main process, trivial backup. The synchronous part is what makes every scheduler transition atomic without await points. |
 | UI stack | **React + TypeScript + Vite** | Fast iteration in the renderer, typed IPC through a preload bridge. |
@@ -123,6 +123,13 @@ light source and that screen exists to emit nothing.
 for; `IPC` maps each method to a channel name. Adding a capability means editing
 the interface first — after which both the preload bridge and the main-process
 handler map fail to typecheck until they implement it. That's the point.
+
+The seam is also where outbound network access lives. The renderer's CSP allows
+`connect-src` to itself and the loopback stream server only, so the metadata
+lookup's two TVmaze calls are made by a main-process service
+(`services/metadata.ts`, on Electron's `net.fetch`) and reach the Library screen
+as four `library.*` IPC methods — search, preview, apply, unlink. Same rule as
+the filesystem: the renderer asks, the main process goes.
 
 Three push channels go the other way: `scanProgress` (throttled, drives the scan
 pill and the Library progress bar), `libraryChanged` and `channelsChanged`. The
@@ -211,8 +218,9 @@ now:
   you mid-episode rather than at the top of one.
 - **Interstitials** — bumpers and commercials from a clips folder, between
   episodes.
-- **External metadata** (TVDB/TMDB artwork and titles), movies as channel filler,
-  LAN or TV-browser access, and multi-user profiles.
+- **External metadata artwork** (posters, descriptions, air dates), movies as
+  channel filler, LAN or TV-browser access, and multi-user profiles. Metadata
+  *titles* have since come into scope — see below.
 
 Two things on this list have since landed. Hardware-accelerated transcoding —
 VAAPI and NVENC, probed at startup, off by default
@@ -222,6 +230,14 @@ leaving and coming back is continuous
 ([playback.md](playback.md#resuming-a-channel)). That is per-channel resume, not
 the simulated-live virtual clock above — a channel picks up where *you* left it,
 not where it would have got to had it been broadcasting all night.
+
+A third has landed narrowly: **show metadata lookup**. A show can be linked, by
+hand, to a TVmaze series, which gives it a clean display title and gives its
+episodes their real titles ([library.md](library.md#metadata-lookup),
+[metadata-lookup-plan.html](metadata-lookup-plan.html)). That reverses the
+*titles* half of the bullet above and nothing else: artwork, descriptions and
+air dates are still not fetched, and the scanner itself never touches the
+network.
 
 ## Further reading
 

@@ -36,8 +36,46 @@ Case-insensitive. The **show name comes from the top-level folder** under the
 scan root, not the filename — `~/TV/Gargoyles/Season 01/…` is *Gargoyles* — with
 a trailing year stripped. The **episode title** is whatever trails the episode
 code, cleaned of separators and release junk (resolution, codec and group tags),
-or null if nothing meaningful remains. There are no network metadata lookups in
-the MVP.
+or null if nothing meaningful remains. The scanner never goes to the network:
+numbering always comes from the filename, and better titles are a separate,
+manual step (below).
+
+## Metadata lookup
+
+`src/main/services/metadata.ts`. Release-style filenames like
+`Gargoyles.S01E05.DVDRip.mkv` carry no title at all, so a show can be linked by
+hand to a TVmaze series and borrow its titles. **Titles only** — artwork,
+descriptions and air dates stay out of scope.
+
+The flow is three steps, from the metadata card in the Library aside:
+
+1. **Search.** Type a few characters; a debounced, single-flight
+   `library.searchMetadata` returns candidates with year, network and status,
+   which is what tells *Gargoyles* (1994) from *The Goliath Chronicles* (1996).
+2. **Preview.** Picking a candidate calls `library.previewMetadata`, which
+   fetches the provider's episode list and joins it against the local episodes
+   on `(season, episode)` — the numbers the scanner already parsed. It returns a
+   plan and **writes nothing**: the new display title, the title each episode
+   would get, and counts of matched / multi-episode / unmatched files. A file
+   spanning `S01E05-E06` takes both names joined with `" / "`; a file with no
+   provider entry at its number is simply left alone.
+3. **Apply.** `library.applyMetadata` writes back the plan the user just looked
+   at, in one transaction, and broadcasts `libraryChanged`. No refetch in
+   between, so what was previewed is exactly what lands. Apply needs no network,
+   so a preview already on screen can always be committed.
+
+The link is remembered (`shows.metadata_source` + `metadata_id`), which makes the
+two follow-up actions cheap. **Refresh** re-runs preview + apply against the
+stored id — the way episodes scanned after a lookup get their titles, since
+scans stay offline and never fetch on their own. **Unlink** is total: all four
+metadata columns go null and every title reverts to exactly what the scanner
+named, with no partial states in between.
+
+Because it lands in its own columns, a rescan cannot clobber a lookup and a
+lookup cannot disturb the scanner — including **auto arc detection, which still
+reads the scanner's `episodes.title`** and is therefore provably unaffected by
+any provider title. See [data-model.md](data-model.md#episodes) and
+[metadata-lookup-plan.html](metadata-lookup-plan.html).
 
 ## The Unmatched bucket
 

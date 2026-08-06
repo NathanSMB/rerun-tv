@@ -42,6 +42,7 @@ import {
     stagedImportPath,
 } from "./paths.js";
 import { cleanupManagedFfmpeg } from "./services/ffmpeg-manager.js";
+import { createMetadataService } from "./services/metadata.js";
 import { applyStagedImport, recordRestoreReceipt } from "./services/restore.js";
 import { checkCodecs, resolveFfmpeg } from "./stream/ffmpeg.js";
 import { probeHardwareAccel } from "./stream/hwaccel.js";
@@ -357,6 +358,10 @@ async function bootstrap(): Promise<void> {
         scanner,
         loudness: loudnessScanner,
         stream: streamServer,
+        // Stateless — it holds nothing but the fetch it was built with, so it is
+        // constructed here purely to keep the network behind an injected seam
+        // the handler tests can replace.
+        metadata: createMetadataService(),
         codecCheck: () => codecStatus,
         hwAccel: () => hwAccelStatus,
         // The binary changed under us — a managed copy was installed, updated or

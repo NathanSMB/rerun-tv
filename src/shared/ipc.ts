@@ -24,6 +24,8 @@ import type {
     FfmpegState,
     FfmpegUpdateCheck,
     LibraryOverview,
+    MetadataCandidate,
+    MetadataPlan,
     NowPlaying,
     PlayMode,
     ScanRoot,
@@ -51,6 +53,24 @@ export interface RerunApi {
         listArcs(showId: number): Promise<ArcView[]>;
         createArc(input: CreateArcInput): Promise<ArcView>;
         deleteArc(groupId: number): Promise<void>;
+
+        // Show metadata lookup (docs/library.md). The first two reach the
+        // network and write nothing; the last two write and never reach the
+        // network — which is why a preview already on screen can always be
+        // applied, offline.
+        searchMetadata(query: string): Promise<MetadataCandidate[]>;
+        /**
+         * Join the provider's episode list onto this show's files and return
+         * everything an apply would write. Nothing is written yet.
+         */
+        previewMetadata(input: {
+            showId: number;
+            providerShowId: string;
+        }): Promise<MetadataPlan>;
+        /** Commit a plan verbatim, in one transaction. */
+        applyMetadata(plan: MetadataPlan): Promise<void>;
+        /** The full undo: every metadata column back to NULL. */
+        unlinkMetadata(showId: number): Promise<void>;
     };
 
     channels: {
@@ -240,6 +260,10 @@ export const IPC = {
         listArcs: "library:listArcs",
         createArc: "library:createArc",
         deleteArc: "library:deleteArc",
+        searchMetadata: "library:searchMetadata",
+        previewMetadata: "library:previewMetadata",
+        applyMetadata: "library:applyMetadata",
+        unlinkMetadata: "library:unlinkMetadata",
     },
     channels: {
         list: "channels:list",

@@ -64,7 +64,10 @@ export function getLibraryOverview(db: Db): LibraryOverview {
         .prepare(
             `SELECT
          s.id,
-         s.title,
+         -- Display resolution happens here rather than in the renderer: the
+         -- Library screen renders a title, and which column it came from is not
+         -- its business (docs/library.md, "Show metadata lookup").
+         COALESCE(s.display_title, s.title)                             AS title,
          COUNT(e.id)                                                   AS episode_count,
          COUNT(DISTINCT e.season)                                      AS season_count,
          COALESCE(SUM(e.playback_path = 'direct'), 0)                  AS direct,
@@ -75,7 +78,9 @@ export function getLibraryOverview(db: Db): LibraryOverview {
        FROM shows s
        LEFT JOIN episodes e ON e.show_id = s.id
        GROUP BY s.id
-       ORDER BY s.title COLLATE NOCASE, s.id`,
+       -- Sorted on the same expression that was selected as the title: a linked
+       -- show has to sort where the user reads it, not where its folder name is.
+       ORDER BY COALESCE(s.display_title, s.title) COLLATE NOCASE, s.id`,
         )
         .all() as ShowAggregateRow[];
 

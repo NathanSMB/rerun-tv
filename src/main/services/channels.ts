@@ -53,11 +53,14 @@ interface EpisodeViewRow {
 const EPISODE_VIEW_SQL = `
   SELECT e.id            AS id,
          e.show_id       AS showId,
-         s.title         AS showTitle,
+         -- COALESCE here and in every other read of a name: a linked show is
+         -- shown by its provider title, and the OSD has no idea a metadata
+         -- feature exists (docs/library.md, "Show metadata lookup").
+         COALESCE(s.display_title, s.title) AS showTitle,
          e.season        AS season,
          e.episode       AS episode,
          e.episode_end   AS episodeEnd,
-         e.title         AS title,
+         COALESCE(e.metadata_title, e.title) AS title,
          e.duration_s    AS durationS,
          e.playback_path AS playbackPath,
          e.acodec        AS acodec
@@ -112,7 +115,7 @@ export function listChannelSummaries(db: Db): ChannelSummary[] {
         const showTitles = (
             db
                 .prepare(
-                    `SELECT s.title AS title
+                    `SELECT COALESCE(s.display_title, s.title) AS title
              FROM channel_shows cs
              JOIN shows s ON s.id = cs.show_id
             WHERE cs.channel_id = ?
@@ -145,7 +148,9 @@ function buildLineupEntry(
     entry: ChannelShow,
 ): LineupEntry {
     const show = db
-        .prepare(`SELECT title FROM shows WHERE id = ?`)
+        .prepare(
+            `SELECT COALESCE(display_title, title) AS title FROM shows WHERE id = ?`,
+        )
         .get(entry.showId) as { title: string } | undefined;
     const { count: episodeCount } = db
         .prepare(`SELECT COUNT(*) AS count FROM episodes WHERE show_id = ?`)
