@@ -3,6 +3,7 @@ import {
     addScanRoot,
     addUnmatched,
     clearAutoArcs,
+    clearShowMetadata,
     countEpisodes,
     createArc,
     deleteArc,
@@ -11,6 +12,7 @@ import {
     getEpisode,
     getEpisodesByIds,
     getLoudness,
+    getShow,
     getShowByFolder,
     getUnmatched,
     listArcs,
@@ -23,6 +25,8 @@ import {
     removeScanRoot,
     removeUnmatched,
     saveLoudness,
+    setEpisodeMetadataTitles,
+    setShowMetadata,
     upsertEpisode,
     upsertShow,
 } from "@main/db/repositories/library.js";
@@ -518,5 +522,143 @@ describe("getLibraryOverview", () => {
             paths: { direct: 0, remux: 0, transcode: 0 },
             remuxAudioEncode: 0,
         });
+    });
+});
+
+/**
+ * The load-bearing decision of the metadata lookup, in one suite.
+ *
+ * The whole design rests on the scanner and the lookup owning different
+ * columns: `shows.title`/`episodes.title` are re-derived from the filesystem on
+ * every pass, the four metadata columns are only ever written here. If a
+ * metadata column ever reappears in an upsert `SET` list, a rescan silently
+ * throws away a link the user made by hand — and nothing else in the suite
+ * would notice.
+ */
+describe("provider metadata", () => {
+    /** Link a show and title both of its episodes, as `applyMetadata` will. */
+    function link(): { showId: number; episodeIds: number[] } {
+        const show = upsertShow(db, "Gargoyles", "/tv/Gargoyles");
+        const episodeIds = [1, 2].map((n) =>
+            upsertEpisode(db, episode(show.id, 1, n)),
+        );
+        setShowMetadata(db, show.id, {
+            displayTitle: "Gargoyles (1994)",
+            source: "tvmaze",
+            providerId: "3182",
+        });
+        setEpisodeMetadataTitles(db, [
+            { episodeId: episodeIds[0], title: "Awakening: Part One" },
+            { episodeId: episodeIds[1], title: "Awakening: Part Two" },
+        ]);
+        return { showId: show.id, episodeIds };
+    }
+
+    it("stores the link and the episode titles beside the scanner's own", () => {
+        const { showId, episodeIds } = link();
+
+        expect(getShow(db, showId)).toMatchObject({
+            title: "Gargoyles",
+            displayTitle: "Gargoyles (1994)",
+            metadataSource: "tvmaze",
+            metadataId: "3182",
+        });
+        expect(getEpisode(db, episodeIds[0])).toMatchObject({
+            title: "Episode 1",
+            metadataTitle: "Awakening: Part One",
+        });
+    });
+
+    /**
+     * Every list of shows is sorted on what the user reads, not on the folder
+     * name behind it — otherwise a linked show sits in the alphabet at a letter
+     * that appears nowhere on screen.
+     */
+    it("sorts by the displayed title, not the scanner's", () => {
+        const zed = upsertShow(db, "Zed's Show", "/tv/Zed");
+        upsertShow(db, "Middle", "/tv/Middle");
+        setShowMetadata(db, zed.id, {
+            displayTitle: "Aardvark Hour",
+            source: "tvmaze",
+            providerId: "1",
+        });
+
+        expect(listShows(db).map((s) => s.displayTitle ?? s.title)).toEqual([
+            "Aardvark Hour",
+            "Middle",
+        ]);
+    });
+
+    it("survives a rescan that re-derives every title from the filesystem", () => {
+        const { showId, episodeIds } = link();
+
+        // Exactly what a scan does on the second pass: the same folder and the
+        // same paths, with the titles the parser produces — including a folder
+        // the user renamed, which is the case that rewrites `shows.title`.
+        upsertShow(db, "Gargoyles [1080p]", "/tv/Gargoyles");
+        upsertEpisode(db, episode(showId, 1, 1));
+        upsertEpisode(db, episode(showId, 1, 2));
+
+        expect(getShow(db, showId)).toMatchObject({
+            title: "Gargoyles [1080p]",
+            displayTitle: "Gargoyles (1994)",
+            metadataSource: "tvmaze",
+            metadataId: "3182",
+        });
+        expect(getEpisode(db, episodeIds[0])?.metadataTitle).toBe(
+            "Awakening: Part One",
+        );
+    });
+
+    /**
+     * The stricter half: a *full* rescan re-probes files whose bytes changed,
+     * which is what invalidates the cached loudness. A provider title is keyed
+     * on (season, episode) rather than on the file, so a re-encode must not
+     * touch it.
+     */
+    it("survives a rescan of a file whose bytes changed", () => {
+        const { showId, episodeIds } = link();
+
+        upsertEpisode(db, episode(showId, 1, 1, { mtimeMs: 9999 }));
+
+        expect(getEpisode(db, episodeIds[0])).toMatchObject({
+            mtimeMs: 9999,
+            metadataTitle: "Awakening: Part One",
+        });
+    });
+
+    it("shows the provider titles through the read models, not the scanner's", () => {
+        const { showId } = link();
+        expect(getLibraryOverview(db).shows[0].title).toBe("Gargoyles (1994)");
+        expect(listShows(db)[0]).toMatchObject({
+            title: "Gargoyles",
+            displayTitle: "Gargoyles (1994)",
+        });
+        expect(showId).toBeGreaterThan(0);
+    });
+
+    it("unlinks totally — every column back to what the scanner named", () => {
+        const { showId, episodeIds } = link();
+
+        clearShowMetadata(db, showId);
+
+        expect(getShow(db, showId)).toMatchObject({
+            title: "Gargoyles",
+            displayTitle: null,
+            metadataSource: null,
+            metadataId: null,
+        });
+        for (const id of episodeIds) {
+            expect(getEpisode(db, id)?.metadataTitle).toBeNull();
+        }
+        expect(getLibraryOverview(db).shows[0].title).toBe("Gargoyles");
+    });
+
+    it("ignores a title for an episode id that no longer exists", () => {
+        const show = upsertShow(db, "Show", "/tv/Show");
+        expect(() =>
+            setEpisodeMetadataTitles(db, [{ episodeId: 4242, title: "Gone" }]),
+        ).not.toThrow();
+        expect(listEpisodes(db, show.id)).toHaveLength(0);
     });
 });

@@ -213,6 +213,124 @@
     margin-top: 12px;
 }
 
+/* ---- show metadata card ---- */
+
+/* Same box as .arc-card — it sits directly above one, and the aside reads as a
+   stack of cards about the selected show. */
+.meta-card {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 18px;
+}
+
+.meta-card .side-caption {
+    margin: 0 0 8px;
+}
+
+.meta-card .m-title {
+    font-weight: 600;
+    font-size: 13.5px;
+}
+
+.meta-card .m-meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--amber);
+    margin: 3px 0 8px;
+}
+
+.meta-card .m-counts {
+    font-size: 12.5px;
+    color: var(--steel);
+    margin-bottom: 2px;
+}
+
+.meta-card .m-counts b {
+    color: var(--white);
+    font-weight: 600;
+}
+
+.meta-card .m-counts.sub {
+    color: var(--steel-dim);
+    margin-bottom: 8px;
+}
+
+.meta-card .m-sample {
+    list-style: none;
+    margin: 0 0 10px;
+    padding: 0;
+    font-size: 12px;
+    color: var(--steel-dim);
+}
+
+.meta-card .m-sample .m-ep {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--steel);
+}
+
+/* The results list keeps a floor so "Searching…" and the first rows occupy the
+   same space — a slow answer must not shift the buttons under the pointer. */
+.meta-card .m-results {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    min-height: 96px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.meta-card .m-status {
+    font-size: 12.5px;
+    color: var(--steel-dim);
+    padding: 6px 2px;
+}
+
+.meta-card .m-pick {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    font: inherit;
+    padding: 6px 8px;
+    cursor: pointer;
+}
+
+.meta-card .m-pick:hover,
+.meta-card .m-pick.sel {
+    border-color: var(--line);
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+
+.meta-card .m-pick-name {
+    display: block;
+    font-size: 13px;
+}
+
+.meta-card .m-pick-facts {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--steel-dim);
+}
+
+.meta-card .m-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+/* CC BY-SA asks for attribution; the key hints ride along on the same line. */
+.meta-card .m-attrib {
+    font-size: 11px;
+    color: var(--steel-dim);
+    margin: 10px 0 0;
+}
+
 /* ---- arc panel ---- */
 
 .lib-side {

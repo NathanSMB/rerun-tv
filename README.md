@@ -1,7 +1,7 @@
 # Rerun TV
 
 [![CI](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml/badge.svg)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
-[![Test coverage](https://img.shields.io/badge/coverage-82.0%25-green)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
+[![Test coverage](https://img.shields.io/badge/coverage-82.7%25-green)](https://github.com/NathanSMB/rerun-tv/actions/workflows/ci.yml)
 
 Turn a local media library into lean-back TV channels — you build the lineup,
 the channel decides what's on. Linux-first (Arch), Electron + ffmpeg.
@@ -95,7 +95,8 @@ folded in and removed; `git log` has them if you want the archaeology.
 ## Not in the MVP
 
 Simulated live schedules (the duration data and play log already support them),
-interstitials/bumpers, external metadata lookups, LAN access, and mid-episode
+interstitials/bumpers, external metadata beyond titles (artwork, descriptions,
+air dates), LAN access, and mid-episode
 resume. See
 [docs/architecture.md](docs/architecture.md#deliberately-out-of-scope).
 

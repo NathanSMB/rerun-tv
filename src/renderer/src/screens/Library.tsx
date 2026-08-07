@@ -14,7 +14,12 @@
  *    set of episodes the heuristic missed.
  */
 
-import type { ArcView, LibraryShow, UnmatchedFile } from "@shared/types.js";
+import type {
+    ArcView,
+    LibraryShow,
+    Show,
+    UnmatchedFile,
+} from "@shared/types.js";
 import {
     type ReactElement,
     useCallback,
@@ -24,8 +29,9 @@ import {
 } from "react";
 import ArcBuilder from "../components/ArcBuilder.js";
 import AssignPanel from "../components/AssignPanel.js";
+import MetadataCard from "../components/MetadataCard.js";
 import { useStore } from "../store.js";
-import { errorText, plural } from "../utils.js";
+import { errorText, plural, showLabel } from "../utils.js";
 import "./Library.css";
 
 /**
@@ -104,6 +110,18 @@ export default function Library(): ReactElement {
         () => library?.shows.find((show) => show.id === selectedShowId) ?? null,
         [library, selectedShowId],
     );
+
+    /** The entity behind each row — where the metadata link state lives. */
+    const showsById = useMemo(
+        () => new Map(shows.map((show) => [show.id, show])),
+        [shows],
+    );
+    const selectedEntity: Show | null =
+        selectedShowId == null ? null : (showsById.get(selectedShowId) ?? null);
+    const selectedTitle =
+        selectedEntity != null
+            ? showLabel(selectedEntity)
+            : selectedShow?.title;
 
     // ---- scan strip ---------------------------------------------------------
 
@@ -279,7 +297,14 @@ export default function Library(): ReactElement {
                                 >
                                     <span className="s-block">
                                         <span className="s-name">
-                                            {show.title}
+                                            {(() => {
+                                                const entity = showsById.get(
+                                                    show.id,
+                                                );
+                                                return entity != null
+                                                    ? showLabel(entity)
+                                                    : show.title;
+                                            })()}
                                         </span>
                                         <span className="s-facts">
                                             {plural(
@@ -391,9 +416,18 @@ export default function Library(): ReactElement {
                 </div>
 
                 <aside className="lib-side">
+                    {/* Metadata first: naming the show is the thing you do
+                        before reasoning about its arcs. */}
+                    {selectedEntity != null && (
+                        <MetadataCard
+                            key={selectedEntity.id}
+                            show={selectedEntity}
+                            onChanged={refreshLibrary}
+                        />
+                    )}
+
                     <div className="caption side-caption">
-                        Detected arcs ·{" "}
-                        {selectedShow?.title ?? "no show selected"}
+                        Detected arcs · {selectedTitle ?? "no show selected"}
                     </div>
 
                     {arcsError != null && (
@@ -414,8 +448,8 @@ export default function Library(): ReactElement {
                             )}
                             {!arcsBusy && arcs.length === 0 && (
                                 <p className="lib-note">
-                                    No arcs in {selectedShow.title}. Every
-                                    episode is drawn on its own.
+                                    No arcs in {selectedTitle}. Every episode is
+                                    drawn on its own.
                                 </p>
                             )}
                             {arcs.map((arc) => (

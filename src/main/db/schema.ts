@@ -231,4 +231,33 @@ export const MIGRATIONS: string[] = [
 
   CREATE INDEX idx_playback_state_episode ON channel_playback_state(episode_id);
   `,
+    // -- 8 ---------------------------------------------------------------------
+    //
+    // Provider metadata for show and episode *titles* (docs/library.md, "Show
+    // metadata lookup"). A user picks a series on TVmaze and the provider's names
+    // are stored here, joined to local files on (season, episode).
+    //
+    // New columns rather than overwrites of `shows.title`/`episodes.title`,
+    // because those two are the scanner's: it rewrites them from the filename on
+    // every pass, and the auto-arc heuristic reads `episodes.title` to find
+    // `Part N` runs. Writing provider names into them would be clobbered by the
+    // next rescan *and* would let "Awakening: Part One" invent an arc. So the
+    // scanner keeps its columns, these are the lookup feature's, and the read
+    // layer does `COALESCE(display_title, title)` — which is also why they are
+    // excluded from both upsert `SET` lists in `repositories/library.ts`.
+    //
+    // All nullable with no backfill: every existing row is already in the "never
+    // looked up" state, which is exactly what all-NULL means. `metadata_source`
+    // exists so a second provider is a value rather than another migration, and
+    // `metadata_id` is what makes Refresh a re-join instead of a re-search.
+    //
+    // `metadata_id` is TEXT even though TVmaze ids are integers — provider ids
+    // are opaque strings as far as this app is concerned, and the next provider
+    // may well not use numbers.
+    `
+  ALTER TABLE shows    ADD COLUMN display_title   TEXT;
+  ALTER TABLE shows    ADD COLUMN metadata_source TEXT;
+  ALTER TABLE shows    ADD COLUMN metadata_id     TEXT;
+  ALTER TABLE episodes ADD COLUMN metadata_title  TEXT;
+  `,
 ];

@@ -24,6 +24,7 @@ import type {
     EpisodeView,
     FfmpegState,
     FfmpegUpdateCheck,
+    MetadataPlan,
     NowPlaying,
     PlayMode,
     ScanStatus,
@@ -64,6 +65,7 @@ import {
     removeManagedFfmpeg,
 } from "../services/ffmpeg-manager.js";
 import { assignUnmatched, getLibraryOverview } from "../services/library.js";
+import { buildPlan, type MetadataService } from "../services/metadata.js";
 import { advanceChannel, notePromoted, tuneIn } from "../services/playback.js";
 import {
     discardStagedImport,
@@ -84,6 +86,8 @@ export interface HandlerContext {
     /** The background loudness measuring job, started/stopped with its setting. */
     loudness: LoudnessScanner;
     stream: StreamServer;
+    /** The TVmaze client behind the show metadata lookup — the app's only other network user. */
+    metadata: MetadataService;
     /** Resolved once at startup; `pending` until the check finishes. */
     codecCheck: () => SystemInfo["codecCheck"];
     /** Likewise for the GPU probe — `pending` reads as "use software for now". */
@@ -238,6 +242,95 @@ export function registerHandlers(ctx: HandlerContext): void {
 
     handle(IPC.library.deleteArc, (groupId: number) => {
         libraryRepo.deleteArc(db, groupId);
+        broadcast(EVENTS.libraryChanged);
+    });
+
+    // ---- show metadata lookup (docs/library.md) ------------------------------
+    //
+    // Search and preview are the only handlers in the app that touch the
+    // network, and neither writes anything: the renderer's CSP forbids reaching
+    // TVmaze directly, so the lookup lives here and comes back as data. Apply is
+    // the mirror image — one transaction, no network at all, so a preview left
+    // on screen can still be committed after the connection drops.
+
+    handle(IPC.library.searchMetadata, (query: string) =>
+        ctx.metadata.search(query),
+    );
+
+    handle(
+        IPC.library.previewMetadata,
+        async (input: { showId: number; providerShowId: string }) => {
+            const show = libraryRepo.getShow(db, input.showId);
+            // Checked before the fetch, not after: a show deleted out from under
+            // an open panel should cost the provider nothing.
+            if (!show) throw new Error("that show is no longer in the library");
+
+            // Both provider calls in flight at once — they are independent, and
+            // the name comes from the provider rather than from whatever the
+            // renderer echoed back so that Refresh (which re-previews from the
+            // stored id, with no candidate in hand) behaves identically.
+            //
+            // Only the episode list is load-bearing, so the name lookup is
+            // caught and not awaited into a rejection: a preview that has every
+            // title in hand must not be thrown away because the second, smaller
+            // request 503'd. A failed name reads as no name and falls through to
+            // the title the show already carries, below.
+            const [providerEpisodes, name] = await Promise.all([
+                ctx.metadata.fetchEpisodes(input.providerShowId),
+                ctx.metadata
+                    .fetchShowName(input.providerShowId)
+                    .catch(() => null),
+            ]);
+            return buildPlan(
+                {
+                    showId: show.id,
+                    providerShowId: input.providerShowId,
+                    // A provider that answered without a name leaves the show
+                    // named exactly as the scanner named it — never blank.
+                    name: name ?? show.displayTitle ?? show.title,
+                },
+                providerEpisodes,
+                libraryRepo.listEpisodes(db, show.id),
+            );
+        },
+    );
+
+    handle(IPC.library.applyMetadata, (plan: MetadataPlan) => {
+        // A scan may have run between preview and apply, so every id in the plan
+        // is re-checked against the show it claims to belong to. Rows that
+        // vanished or moved are dropped — a stale plan can shrink, never write
+        // into the wrong show.
+        const mine = new Set(
+            libraryRepo.listEpisodes(db, plan.showId).map((ep) => ep.id),
+        );
+        const pairs = plan.episodes
+            .filter((ep) => mine.has(ep.episodeId))
+            .map((ep) => ({ episodeId: ep.episodeId, title: ep.title }));
+
+        // One transaction for all three writes: a show pointing at a provider
+        // whose episode titles never landed is a state the Refresh button can't
+        // explain, and `setEpisodeMetadataTitles` deliberately has no txn of its
+        // own so this caller can supply it.
+        //
+        // The clear comes first because an apply *replaces* the link rather than
+        // merging into it — re-linking to a series with fewer episodes has to
+        // leave the uncovered rows back on their filename titles, not wearing
+        // the previous provider's.
+        db.transaction(() => {
+            libraryRepo.setShowMetadata(db, plan.showId, {
+                displayTitle: plan.displayTitle,
+                source: plan.provider,
+                providerId: plan.providerShowId,
+            });
+            libraryRepo.clearEpisodeMetadataTitles(db, plan.showId);
+            libraryRepo.setEpisodeMetadataTitles(db, pairs);
+        })();
+
+        broadcast(EVENTS.libraryChanged);
+    });
+
+    handle(IPC.library.unlinkMetadata, (showId: number) => {
+        libraryRepo.clearShowMetadata(db, showId);
         broadcast(EVENTS.libraryChanged);
     });
 

@@ -41,6 +41,8 @@ edit would take a different path through it than one that migrated before).
 | 4 | The five `loudness_*` columns on `episodes` |
 | 5 | Delete the dead `hardwareEncode` settings row, replaced by `hardwareAccel` |
 | 6 | An index on `play_log(episode_id)` |
+| 7 | `channel_playback_state` — the per-channel resume point |
+| 8 | The four metadata columns: `shows.display_title`, `shows.metadata_source`, `shows.metadata_id`, `episodes.metadata_title` |
 
 Note what 5 does *not* do: nothing is migrated *into* the new key. `getSettings`
 merges stored rows over `DEFAULT_SETTINGS`, so an absent key already reads as the
@@ -51,17 +53,30 @@ needs a migration roughly never.
 ## The tables
 
 ### `shows`
-`id · title · folder_path (unique) · added_at`
+`id · title · folder_path (unique) · added_at · display_title · metadata_source ·
+metadata_id`
 
 One row per top-level folder under a scan root. `folder_path` is the identity —
 renaming the folder creates a new show, which is the behaviour you want, since
-the folder name *is* the show name.
+the folder name *is* the show name. A display title is presentation and never
+identity, so linking a show to a provider changes nothing about how it is found
+on disk.
+
+- `title` is the scanner's, derived from the folder name.
+- `display_title` is the title the user approved from a metadata lookup, null
+  until one is applied. Everything user-facing reads
+  `COALESCE(display_title, title)`, resolved in the repository so no caller has
+  to know which column won.
+- `metadata_source` / `metadata_id` are the link itself — `'tvmaze'` plus that
+  provider's show id. Storing the source means a second provider is a value
+  rather than another migration; storing the id is what makes *Refresh* a
+  re-join instead of a re-search. All three are cleared together by *Unlink*.
 
 ### `episodes`
 `id · show_id · season · episode · episode_end · title · path (unique) ·
 duration_s · container · vcodec · acodec · width · height · part_group_id ·
 part_index · playback_path · mtime_ms · size_bytes · loudness_i · loudness_tp ·
-loudness_lra · loudness_thresh · loudness_scanned_at`
+loudness_lra · loudness_thresh · loudness_scanned_at · metadata_title`
 
 - `episode_end` is non-null only for a file holding a double episode
   (`S01E03-E04`), so `episodeCode()` can render `S01E03-E04`.
@@ -84,6 +99,31 @@ loudness_lra · loudness_thresh · loudness_scanned_at`
   invalidated only when the mtime/size pair actually moved, so a full rescan
   doesn't throw away hours of measuring to learn nothing. See
   [playback.md](playback.md#loudness-equalization).
+- `metadata_title` is the provider's episode name, joined with `" / "` when one
+  file holds a span. Null means no lookup has matched this file, and the player
+  and the guide fall back through `COALESCE(metadata_title, title)` to the
+  filename-derived title exactly as before.
+
+#### Who owns which columns
+
+The scanner owns `title` and rewrites it on every pass — `upsertShow` and
+`upsertEpisode` both `SET title = excluded.title` unconditionally — so anything
+a lookup wrote into it would die at the next rescan. The four metadata columns
+are therefore **excluded from both upsert `SET` lists**, the same treatment
+`part_group_id` / `part_index` and the loudness columns get: the scanner has no
+opinion about them, so it does not touch them. A rescan after a lookup changes
+nothing about the titles on screen, and it is the one property here with a
+dedicated regression test.
+
+That the scanner keeps sole ownership of `episodes.title` has a second payoff:
+arc detection reads arc structure (`Part 2`, `(1)`…) off that column and re-runs
+on every scan. Because provider titles land elsewhere, applying or unlinking a
+lookup can never create or dissolve an arc. See
+[library.md](library.md#metadata-lookup) and
+[metadata-lookup-plan.html](metadata-lookup-plan.html).
+
+The `settings` table needed no change: the provider is fixed and there is no key
+to store.
 
 ### `part_groups` (arcs)
 `id · show_id · title · source`

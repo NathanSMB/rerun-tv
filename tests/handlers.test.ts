@@ -21,9 +21,18 @@ import { getSettings } from "@main/db/repositories/settings.js";
 import { type HandlerContext, registerHandlers } from "@main/ipc/handlers.js";
 import type { LoudnessScanner } from "@main/library/loudness.js";
 import type { Scanner } from "@main/library/scanner.js";
+import type {
+    MetadataService,
+    ProviderEpisode,
+} from "@main/services/metadata.js";
 import type { StreamServer } from "@main/stream/server.js";
 import { EVENTS, IPC } from "@shared/ipc.js";
-import type { ChannelDetail, FfmpegState, NowPlaying } from "@shared/types.js";
+import type {
+    ChannelDetail,
+    FfmpegState,
+    MetadataPlan,
+    NowPlaying,
+} from "@shared/types.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { seedFlatShow } from "./helpers/db.js";
 import {
@@ -35,6 +44,12 @@ import {
 
 /** Everything the handlers did to a subsystem, in order. */
 let calls: string[] = [];
+
+/** What the fake provider answers `fetchEpisodes` with; per-test. */
+let providerEpisodes: ProviderEpisode[] = [];
+
+/** Set by the test for the second, non-load-bearing provider call failing. */
+let providerNameFails = false;
 
 let db: Db;
 
@@ -99,11 +114,42 @@ function makeContext(): HandlerContext {
         close: async () => undefined,
     } as unknown as StreamServer;
 
+    // The TVmaze client, replaced by a fixture. The handlers' own suite is about
+    // wiring, so what matters here is that preview reaches the provider at all
+    // and that apply reaches it never — the client's behaviour is
+    // tests/metadata.test.ts.
+    const metadata = {
+        search: async (query: string) => {
+            calls.push(`metadata.search:${query}`);
+            return [
+                {
+                    providerShowId: "3182",
+                    name: "Gargoyles",
+                    premiered: "1994-10-24",
+                    year: 1994,
+                    network: "Syndication",
+                    status: "Ended",
+                },
+            ];
+        },
+        fetchEpisodes: async (providerShowId: string) => {
+            calls.push(`metadata.fetchEpisodes:${providerShowId}`);
+            return providerEpisodes;
+        },
+        fetchShowName: async (providerShowId: string) => {
+            calls.push(`metadata.fetchShowName:${providerShowId}`);
+            if (providerNameFails)
+                throw new Error("TVmaze returned HTTP 503 — try again");
+            return "Gargoyles";
+        },
+    } satisfies MetadataService;
+
     return {
         db,
         scanner,
         loudness,
         stream,
+        metadata,
         codecCheck: () => "ok",
         hwAccel: () => ({
             vaapi: "failed",
@@ -127,6 +173,8 @@ function broadcasts(): string[] {
 beforeEach(() => {
     resetElectronStub();
     calls = [];
+    providerEpisodes = [];
+    providerNameFails = false;
     db = openDatabase(":memory:");
     registerHandlers(makeContext());
 });
@@ -178,6 +226,281 @@ describe("library handlers", () => {
         await invoke(IPC.library.pauseScan);
         await invoke(IPC.library.resumeScan);
         expect(calls).toEqual(["scanner.pause", "scanner.resume"]);
+    });
+});
+
+describe("metadata handlers", () => {
+    /** The show the fake provider knows: 3 episodes in season 1. */
+    function seedLinkable(): { showId: number; episodeIds: number[] } {
+        const showId = seedFlatShow(db, "Gargoyles", 3);
+        providerEpisodes = [
+            { season: 1, number: 1, name: "Awakening" },
+            { season: 1, number: 2, name: "The Thrill of the Hunt" },
+            { season: 1, number: 3, name: "Temptation" },
+        ];
+        const episodeIds = (
+            db
+                .prepare(
+                    "SELECT id FROM episodes WHERE show_id = ? ORDER BY id",
+                )
+                .all(showId) as { id: number }[]
+        ).map((r) => r.id);
+        return { showId, episodeIds };
+    }
+
+    const preview = (showId: number) =>
+        invoke(IPC.library.previewMetadata, {
+            showId,
+            providerShowId: "3182",
+        }) as Promise<MetadataPlan>;
+
+    it("search reaches the provider and writes nothing", async () => {
+        await invoke(IPC.library.searchMetadata, "gargoyles");
+
+        expect(calls).toContain("metadata.search:gargoyles");
+        expect(broadcasts()).toEqual([]);
+    });
+
+    /**
+     * The load-bearing half of the preview/apply split: a preview the user backs
+     * out of must leave the library exactly as it found it.
+     */
+    it("preview computes a plan without writing anything", async () => {
+        const { showId } = seedLinkable();
+
+        const plan = await preview(showId);
+
+        expect(plan.displayTitle).toBe("Gargoyles");
+        expect(plan.episodes).toHaveLength(3);
+        expect(plan.matchedCount).toBe(3);
+        const show = db
+            .prepare(
+                "SELECT display_title, metadata_id FROM shows WHERE id = ?",
+            )
+            .get(showId) as { display_title: string | null };
+        expect(show.display_title).toBeNull();
+        expect(
+            db
+                .prepare(
+                    "SELECT COUNT(*) AS n FROM episodes WHERE metadata_title IS NOT NULL",
+                )
+                .get() as { n: number },
+        ).toEqual({ n: 0 });
+        expect(broadcasts()).toEqual([]);
+    });
+
+    /**
+     * The name is a second, smaller request behind the episode list, and only
+     * the list is load-bearing: a preview holding every title the user asked for
+     * must not be thrown away because `/shows/:id` 503'd. The show keeps the
+     * title it already had.
+     */
+    it("preview survives the show-name lookup failing", async () => {
+        const { showId } = seedLinkable();
+        providerNameFails = true;
+
+        const plan = await preview(showId);
+
+        expect(plan.displayTitle).toBe("Gargoyles");
+        expect(plan.episodes).toHaveLength(3);
+    });
+
+    it("apply writes the plan in one go and tells every screen", async () => {
+        const { showId } = seedLinkable();
+        const plan = await preview(showId);
+
+        await invoke(IPC.library.applyMetadata, plan);
+
+        const show = db
+            .prepare(
+                "SELECT display_title, metadata_source, metadata_id FROM shows WHERE id = ?",
+            )
+            .get(showId);
+        expect(show).toEqual({
+            display_title: "Gargoyles",
+            metadata_source: "tvmaze",
+            metadata_id: "3182",
+        });
+        expect(
+            db
+                .prepare(
+                    "SELECT metadata_title FROM episodes WHERE show_id = ? ORDER BY episode",
+                )
+                .all(showId),
+        ).toEqual([
+            { metadata_title: "Awakening" },
+            { metadata_title: "The Thrill of the Hunt" },
+            { metadata_title: "Temptation" },
+        ]);
+        expect(broadcasts()).toEqual([EVENTS.libraryChanged]);
+        // Apply is offline by contract — a preview on screen stays appliable
+        // after the connection drops.
+        expect(calls.filter((c) => c.startsWith("metadata."))).toEqual([
+            "metadata.fetchEpisodes:3182",
+            "metadata.fetchShowName:3182",
+        ]);
+    });
+
+    /**
+     * A scan can run between preview and apply. The ids that vanished are
+     * dropped and the rest still land: a stale plan shrinks, never corrupts, and
+     * never writes into a show it doesn't name.
+     */
+    it("apply drops episode ids that no longer belong to the show", async () => {
+        const { showId, episodeIds } = seedLinkable();
+        const otherShowId = seedFlatShow(db, "Goliath Chronicles", 1);
+        const strayId = (
+            db
+                .prepare("SELECT id FROM episodes WHERE show_id = ?")
+                .get(otherShowId) as { id: number }
+        ).id;
+        const plan = await preview(showId);
+        db.prepare("DELETE FROM episodes WHERE id = ?").run(episodeIds[1]);
+
+        await invoke(IPC.library.applyMetadata, {
+            ...plan,
+            episodes: [
+                ...plan.episodes,
+                { episodeId: strayId, title: "Not Yours" },
+            ],
+        });
+
+        expect(
+            db
+                .prepare("SELECT metadata_title FROM episodes WHERE id = ?")
+                .get(strayId),
+        ).toEqual({ metadata_title: null });
+        expect(
+            db
+                .prepare(
+                    "SELECT COUNT(*) AS n FROM episodes WHERE show_id = ? AND metadata_title IS NOT NULL",
+                )
+                .get(showId),
+        ).toEqual({ n: 2 });
+    });
+
+    /**
+     * An apply replaces the link outright rather than merging into it. Linking
+     * the same folder to a *different* series — the fix for a mis-picked
+     * candidate — has to leave every row the new plan doesn't name back on its
+     * filename title, or the show ends up wearing two providers' titles at once
+     * with nothing on screen to explain which is which.
+     */
+    it("re-apply clears titles the new plan does not cover", async () => {
+        const { showId, episodeIds } = seedLinkable();
+        await invoke(IPC.library.applyMetadata, await preview(showId));
+
+        // Series B: same show row, a provider that only knows episode one.
+        await invoke(IPC.library.applyMetadata, {
+            showId,
+            provider: "tvmaze",
+            providerShowId: "999",
+            displayTitle: "Gargoyles: The Goliath Chronicles",
+            episodes: [{ episodeId: episodeIds[0], title: "The Journey" }],
+            matchedCount: 1,
+            multiCount: 0,
+            unmatchedCount: 2,
+        } satisfies MetadataPlan);
+
+        expect(
+            db
+                .prepare(
+                    "SELECT metadata_title FROM episodes WHERE show_id = ? ORDER BY id",
+                )
+                .all(showId),
+        ).toEqual([
+            { metadata_title: "The Journey" },
+            { metadata_title: null },
+            { metadata_title: null },
+        ]);
+        expect(
+            db
+                .prepare("SELECT display_title FROM shows WHERE id = ?")
+                .get(showId),
+        ).toEqual({ display_title: "Gargoyles: The Goliath Chronicles" });
+    });
+
+    /**
+     * The transaction, actually exercised rather than asserted about.
+     *
+     * A title of the wrong *type* is the cheapest real mid-apply failure: the
+     * show row and the clear have already been written when better-sqlite3
+     * refuses to bind the second pair, so if the two halves were not one unit
+     * the show would be left pointing at a provider whose titles never landed —
+     * exactly the state Refresh cannot explain. Nothing may survive.
+     */
+    it("a failure mid-apply rolls back the show row too", async () => {
+        const { showId, episodeIds } = seedLinkable();
+        await invoke(IPC.library.applyMetadata, await preview(showId));
+
+        await expect(
+            invoke(IPC.library.applyMetadata, {
+                showId,
+                provider: "tvmaze",
+                providerShowId: "999",
+                displayTitle: "Never Written",
+                episodes: [
+                    { episodeId: episodeIds[0], title: "The Journey" },
+                    // Not a string: the bind throws part-way through the loop.
+                    {
+                        episodeId: episodeIds[1],
+                        title: {} as unknown as string,
+                    },
+                ],
+                matchedCount: 2,
+                multiCount: 0,
+                unmatchedCount: 1,
+            } satisfies MetadataPlan),
+        ).rejects.toThrow();
+
+        // Both halves are as the first apply left them — no new display title,
+        // and the old provider's episode titles still in place.
+        expect(
+            db
+                .prepare(
+                    "SELECT display_title, metadata_id FROM shows WHERE id = ?",
+                )
+                .get(showId),
+        ).toEqual({ display_title: "Gargoyles", metadata_id: "3182" });
+        expect(
+            db
+                .prepare(
+                    "SELECT metadata_title FROM episodes WHERE show_id = ? ORDER BY id",
+                )
+                .all(showId),
+        ).toEqual([
+            { metadata_title: "Awakening" },
+            { metadata_title: "The Thrill of the Hunt" },
+            { metadata_title: "Temptation" },
+        ]);
+    });
+
+    it("unlink puts everything back and tells every screen", async () => {
+        const { showId } = seedLinkable();
+        await invoke(IPC.library.applyMetadata, await preview(showId));
+        sentEvents.length = 0; // the apply's own broadcast, out of the way
+
+        await invoke(IPC.library.unlinkMetadata, showId);
+
+        expect(
+            db
+                .prepare(
+                    "SELECT display_title, metadata_source, metadata_id FROM shows WHERE id = ?",
+                )
+                .get(showId),
+        ).toEqual({
+            display_title: null,
+            metadata_source: null,
+            metadata_id: null,
+        });
+        expect(
+            db
+                .prepare(
+                    "SELECT COUNT(*) AS n FROM episodes WHERE show_id = ? AND metadata_title IS NOT NULL",
+                )
+                .get(showId),
+        ).toEqual({ n: 0 });
+        expect(broadcasts()).toContain(EVENTS.libraryChanged);
     });
 });
 

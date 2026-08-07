@@ -8,7 +8,22 @@
  * component; this file is only for text and control flow.
  */
 
+import type { Show } from "@shared/types.js";
 import { useCallback, useState } from "react";
+
+/**
+ * The title to print for a show: the provider's if the show is linked, the
+ * scanner's folder-derived one otherwise.
+ *
+ * Here rather than in a screen because every list that names a show has to make
+ * the same choice — the Library, the channel fold's picker, the assign form —
+ * and a copy that forgot `displayTitle` shows the folder name next to the
+ * linked title for the same series. `LibraryOverview` resolves this in SQL; this
+ * is the same rule for the paths that carry `Show` entities.
+ */
+export function showLabel(show: Pick<Show, "title" | "displayTitle">): string {
+    return show.displayTitle ?? show.title;
+}
 
 /** The message out of an unknown throw — what every catch in the UI wants. */
 export function errorText(err: unknown): string {

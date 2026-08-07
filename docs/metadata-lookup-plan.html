@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Show metadata lookup — implementation plan</title>
+<style>
+  :root { color-scheme: light dark; }
+
+  .plan-root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11, 11, 11, 0.10);
+    --series-1:       #2a78d6;   /* matched by season × episode */
+    --series-2:       #eb6834;   /* callouts / flow accents */
+    --series-3:       #1baf7a;   /* multi-episode files */
+    --deemph:         #c3c2b7;   /* no provider match — nothing written */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .plan-root {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255, 255, 255, 0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --deemph:         #383835;
+    }
+  }
+  :root[data-theme="dark"] .plan-root {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255, 255, 255, 0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --deemph:         #383835;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  .plan-root {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    min-height: 100vh;
+    padding: 40px 24px 72px;
+  }
+  main { max-width: 1020px; margin: 0 auto; }
+
+  header.doc-head { margin-bottom: 28px; position: relative; }
+  .doc-head h1 { font-size: 27px; font-weight: 650; letter-spacing: -0.015em; margin: 0 0 6px; }
+  .doc-head .sub { color: var(--text-secondary); max-width: 72ch; margin: 0; }
+  .doc-head .meta { color: var(--text-muted); font-size: 13px; margin-top: 10px; }
+  .theme-toggle {
+    position: absolute; top: 2px; right: 0;
+    background: var(--surface-1); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 8px;
+    font: inherit; font-size: 13px; padding: 5px 12px; cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--text-primary); }
+
+  h2 { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin: 44px 0 12px; }
+  h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
+  p  { margin: 0 0 12px; max-width: 78ch; }
+  section > p, section > ol, section > ul { color: var(--text-primary); }
+  code, pre {
+    font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.875em;
+  }
+  code {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  pre {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code { background: none; border: none; padding: 0; white-space: pre; }
+
+  /* ---------- KPI row ---------- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 24px 0 8px;
+  }
+  .stat-tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px 14px;
+  }
+  .stat-tile .label { color: var(--text-secondary); font-size: 13px; margin: 0 0 6px; }
+  .stat-tile .value { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; }
+  .stat-tile .detail { color: var(--text-muted); font-size: 12.5px; margin-top: 6px; }
+
+  /* ---------- Cards & figures ---------- */
+  figure.chart-card, .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin: 16px 0;
+  }
+  figure.chart-card figcaption {
+    color: var(--text-muted); font-size: 12.5px; margin-top: 10px; max-width: 80ch;
+  }
+  .fig-title { font-size: 14px; font-weight: 650; margin: 0 0 2px; }
+  .fig-sub   { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 12px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 0 10px; }
+  .legend .item { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .ax-label { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .mk-label { fill: var(--text-secondary); font-size: 11.5px; }
+  .mk-label.strong { fill: var(--text-primary); font-weight: 600; }
+
+  .viz-tooltip {
+    position: fixed; z-index: 10; pointer-events: none;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+    font-size: 12.5px; line-height: 1.45;
+    padding: 7px 10px; max-width: 280px;
+    opacity: 0; transition: opacity 80ms;
+  }
+  .viz-tooltip.show { opacity: 1; }
+  .viz-tooltip .tt-n { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  .hit { cursor: default; }
+
+  /* ---------- Tables ---------- */
+  table.data {
+    border-collapse: collapse; width: 100%;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    font-size: 13.5px;
+    margin: 12px 0 4px;
+  }
+  table.data th, table.data td {
+    text-align: left; padding: 9px 14px;
+    border-bottom: 1px solid var(--grid);
+    vertical-align: top;
+  }
+  table.data th { color: var(--text-secondary); font-weight: 600; font-size: 12.5px; }
+  table.data tr:last-child td { border-bottom: none; }
+  table.data td:first-child { white-space: nowrap; }
+  table.data code { white-space: normal; overflow-wrap: anywhere; }
+
+  /* ---------- Flow diagram ---------- */
+  .flow { margin: 16px 0; }
+  .flow .node {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .flow .node .t { font-weight: 600; font-size: 13.5px; }
+  .flow .node .d { color: var(--text-secondary); font-size: 12.5px; margin-top: 3px; }
+  .flow .connector { width: 1.5px; height: 20px; background: var(--baseline); margin: 0 auto; }
+  .flow .branches {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    max-width: 860px; margin: 0 auto;
+  }
+  .flow .branches .node { max-width: none; margin: 0; height: 100%; }
+  .flow .branch-apply  { border-left: 3px solid var(--series-1); }
+  .flow .branch-redo   { border-left: 3px solid var(--series-2); }
+  .flow .branch-label {
+    text-align: center; font-size: 12px; color: var(--text-muted); margin: 4px 0;
+  }
+  .flow .boundary {
+    text-align: center; font-size: 11.5px; color: var(--text-muted);
+    letter-spacing: 0.04em; text-transform: uppercase;
+    margin: 2px 0;
+  }
+
+  .callout {
+    border-left: 3px solid var(--series-2);
+    background: var(--surface-1);
+    border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 18px; margin: 16px 0;
+  }
+  .callout .t { font-weight: 650; margin-bottom: 4px; }
+  .callout p { margin: 0 0 8px; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  ol.steps { padding-left: 22px; }
+  ol.steps > li { margin-bottom: 14px; max-width: 80ch; }
+  ol.steps > li strong { font-weight: 650; }
+  ul.tight { margin: 6px 0 0; padding-left: 20px; }
+  ul.tight li { margin-bottom: 5px; }
+  .filepath { color: var(--text-secondary); }
+
+  /* ---------- UI state mock ---------- */
+  .mock-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 14px; margin: 4px 0 8px;
+  }
+  .mock {
+    background: var(--page);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13px;
+  }
+  .mock .m-cap { color: var(--text-muted); font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 10px; }
+  .mock .m-input {
+    background: var(--surface-1); border: 1px solid var(--baseline); border-radius: 7px;
+    padding: 6px 10px; color: var(--text-primary);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .mock .m-input .caret { color: var(--text-muted); }
+  .mock .m-list { border: 1px solid var(--border); border-top: none; border-radius: 0 0 7px 7px; background: var(--surface-1); }
+  .mock .m-row { padding: 6px 10px; border-bottom: 1px solid var(--grid); display: flex; justify-content: space-between; gap: 10px; }
+  .mock .m-row:last-child { border-bottom: none; }
+  .mock .m-row.sel { box-shadow: inset 3px 0 0 var(--series-1); }
+  .mock .m-row .m-meta { color: var(--text-muted); white-space: nowrap; }
+  .mock .m-line { margin: 8px 0 0; color: var(--text-secondary); }
+  .mock .m-line strong { color: var(--text-primary); font-weight: 650; }
+  .mock .m-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .mock .m-btn {
+    border: 1px solid var(--border); border-radius: 7px; background: var(--surface-1);
+    padding: 4px 12px; font-size: 12.5px; color: var(--text-secondary);
+  }
+  .mock .m-btn.primary { border-color: var(--series-1); color: var(--text-primary); font-weight: 600; }
+
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 1px 8px; color: var(--text-secondary); background: var(--page);
+    vertical-align: 1px;
+  }
+</style>
+</head>
+<body>
+<div class="plan-root" data-palette="#2a78d6,#eb6834,#1baf7a">
+<main>
+
+<header class="doc-head">
+  <button class="theme-toggle" id="themeToggle" type="button">Dark mode</button>
+  <h1>Show metadata lookup</h1>
+  <p class="sub">Select a show, type its name into a network-backed autocomplete, pick the match — the show gets a
+  proper display title and every episode the provider knows gets its real title, joined on season&nbsp;×&nbsp;episode
+  number. The first deliberate step past "the MVP has no network metadata lookups".</p>
+  <p class="meta">Rerun TV · plan drafted 2026-08-06 · companion to <code>docs/channel-resume-plan.html</code></p>
+</header>
+
+<div class="kpi-row">
+  <div class="stat-tile">
+    <p class="label">New columns</p>
+    <div class="value">4</div>
+    <div class="detail">3 on <code>shows</code>, 1 on <code>episodes</code> · one appended migration</div>
+  </div>
+  <div class="stat-tile">
+    <p class="label">New IPC methods</p>
+    <div class="value">4</div>
+    <div class="detail">search · preview · apply · unlink, all under <code>library.*</code></div>
+  </div>
+  <div class="stat-tile">
+    <p class="label">Network calls per lookup</p>
+    <div class="value">2</div>
+    <div class="detail">one show search, one episode list — both from the main process</div>
+  </div>
+  <div class="stat-tile">
+    <p class="label">API keys required</p>
+    <div class="value">0</div>
+    <div class="detail">TVmaze — free, keyless, CC&nbsp;BY-SA attribution</div>
+  </div>
+</div>
+
+<section>
+  <h2>What the user gets</h2>
+  <p>Today a show is titled by its folder (<code>deriveShowTitle</code>,
+  <span class="filepath">src/main/library/parse.ts:133</span>) and an episode by whatever trailing text survives
+  <code>cleanTitle</code> (<span class="filepath">parse.ts:189</span>) — often nothing, since release-style filenames
+  like <code>Gargoyles.S01E05.DVDRip.mkv</code> carry no title at all. With this feature, the user selects a show in
+  the Library, clicks <em>Look&nbsp;up…</em>, types a few characters into an autocomplete backed by TVmaze, and picks
+  the right series from the candidate list. Applying the match sets a clean display title on the show
+  (<code>Gargoyles</code>, not <code>Gargoyles.1994.DVDRip</code>) and fills in the real title of every episode the
+  provider can pair with a local file by season and episode number — visible immediately in the Library, the Guide,
+  and the Player overlay. The link is remembered, so newly scanned episodes can be titled later with one
+  <em>Refresh</em> click, and <em>Unlink</em> puts everything back exactly as the scanner named it.</p>
+  <p>This reverses a documented non-goal — <code>docs/architecture.md:214</code> lists external metadata as
+  deliberately out of scope, and <code>parse.ts:4</code> says the MVP has no network lookups. The reversal is
+  intentional and narrow: <strong>titles only</strong>. Artwork, descriptions, and air dates stay out of scope.</p>
+</section>
+
+<section>
+  <h2>The two constraints that shape the design</h2>
+  <div class="callout">
+    <div class="t">The scanner owns <code>title</code> and clobbers it on every rescan — so metadata gets its own columns.</div>
+    <p><code>upsertShow</code> runs <code>ON CONFLICT(folder_path) DO UPDATE SET title = excluded.title</code>
+    (<span class="filepath">src/main/db/repositories/library.ts:196</span>) once per file per scan, and
+    <code>upsertEpisode</code> sets <code>title = excluded.title</code> unconditionally
+    (<span class="filepath">library.ts:301-306</span>). Anything written into those columns dies on the next scan.
+    The codebase already has the answer: <code>part_group_id</code>/<code>part_index</code> and the loudness columns
+    are deliberately excluded from the upsert's <code>SET</code> list because the scanner "has no opinion" about them
+    (doc comment at <span class="filepath">library.ts:276</span>). Metadata follows the same pattern —
+    <code>shows.display_title</code> and <code>episodes.metadata_title</code> are new columns the scanner never
+    touches, and display falls back through <code>COALESCE</code>.</p>
+    <p>Keeping <code>episodes.title</code> untouched has a second payoff: auto-arc detection reads arc structure
+    (<code>Part 2</code>, <code>(1)</code>…) straight off the scanner's stored title and re-runs on every scan
+    (<span class="filepath">src/main/library/scanner.ts:475</span>). Overwriting <code>title</code> with provider
+    titles would silently change which arcs get detected. With a separate column, arcs are provably unaffected.</p>
+  </div>
+  <div class="callout">
+    <div class="t">The renderer cannot call TVmaze — the lookup lives in the main process.</div>
+    <p>The renderer's CSP is <code>connect-src 'self' http://127.0.0.1:*</code>
+    (<span class="filepath">src/renderer/index.html:20</span>), so a <code>fetch</code> from the Library screen is a
+    dead end by design. Both network calls go over IPC to a new main-process service modelled on the ffmpeg manifest
+    client (<span class="filepath">src/main/services/ffmpeg-manager.ts:177-226</span>): Electron's
+    <code>net.fetch</code> (follows the app's proxy settings), <code>AbortSignal.timeout</code>, a deps seam so tests
+    inject a fake network, and network errors surfaced as readable messages rather than retried silently.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Provider: TVmaze</h2>
+  <p>TVmaze is the only mainstream TV metadata API that needs no API key, no account, and no OAuth — the right fit
+  for a single-user desktop app that should work the moment it's installed. Licensing is CC&nbsp;BY-SA (an
+  attribution line in the lookup panel covers it). TMDB and TVDB both gate episode data behind per-user API keys and
+  are listed as future providers, not alternatives worth the setup friction now. The
+  <code>metadata_source</code> column exists so a second provider can be added without a migration.</p>
+  <table class="data">
+    <thead><tr><th>Call</th><th>Endpoint</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Show search</td>
+        <td><code>GET api.tvmaze.com/search/shows?q=&lt;query&gt;</code></td>
+        <td>Autocomplete candidates. Response is scored fuzzy matches; the service maps each to
+        <code>{ providerShowId, name, premiered, network, status }</code> — year and network are what lets the user
+        tell <em>Gargoyles</em> (1994) from <em>The Goliath Chronicles</em> (1996).</td>
+      </tr>
+      <tr>
+        <td>Episode list</td>
+        <td><code>GET api.tvmaze.com/shows/:id/episodes?specials=1</code></td>
+        <td>The full episode list for the chosen series: <code>{ season, number, name }</code> per entry. Fetched once
+        at preview time; entries whose <code>season</code> or <code>number</code> is null (unnumbered specials) are
+        dropped before the join.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="margin-top:10px;">TVmaze rate-limits at roughly 20 requests per 10&nbsp;seconds. A 300&nbsp;ms typeahead
+  debounce with single-flight (a new keystroke aborts the in-flight search) keeps one user far under that; a 429
+  surfaces as an inline "TVmaze is rate-limiting — try again in a moment", never a retry loop.</p>
+</section>
+
+<section>
+  <h2>The lookup flow</h2>
+  <p>Preview and apply are split so that <strong>what the user saw is exactly what gets written</strong>: preview
+  computes a <code>MetadataPlan</code> (every episode id and the title it would receive) and returns it without
+  writing; apply takes that plan back and writes it in one transaction. No refetch between look and commit, so the
+  provider changing under us can never make the apply differ from the preview.</p>
+
+  <div class="flow" role="img" aria-label="Flow: the user opens Look up on a selected show and types; after a 300 millisecond debounce the renderer calls library.searchMetadata over IPC; the main process fetches TVmaze show search and returns candidates; the user picks one; library.previewMetadata fetches the episode list, joins it against local episodes on season and episode number, and returns a MetadataPlan without writing; the user reviews the preview and either applies — one transaction writing display title, source link, and episode metadata titles, then a libraryChanged broadcast — or searches again, which writes nothing.">
+    <div class="node"><div class="t">Library → select a show → <em>Look up…</em> in the metadata card</div>
+      <div class="d">new card in the <code>.lib-side</code> aside (<span class="filepath">src/renderer/src/screens/Library.tsx:393</span>) · typeahead input per <span class="filepath">src/renderer/src/components/AddShowPanel.tsx:30-39</span>, plus a 300 ms debounce</div></div>
+    <div class="connector"></div>
+    <div class="boundary">renderer → ipc → main (CSP blocks direct fetch)</div>
+    <div class="connector"></div>
+    <div class="node"><div class="t"><code>library.searchMetadata(query)</code> → <code>net.fetch /search/shows</code></div>
+      <div class="d">main-process metadata service · single-flight, <code>AbortSignal.timeout(8 s)</code> · returns <code>MetadataCandidate[]</code> (name · year · network · status)</div></div>
+    <div class="connector"></div>
+    <div class="node"><div class="t">User picks a candidate → <code>library.previewMetadata({ showId, providerShowId })</code></div>
+      <div class="d">main fetches <code>/shows/:id/episodes?specials=1</code>, joins on <code>(season, episode)</code> against <code>listEpisodes(showId)</code>, returns a <code>MetadataPlan</code> — <strong>writes nothing</strong></div></div>
+    <div class="connector"></div>
+    <div class="node"><div class="t">Preview: display title + "196 of 214 episodes get titles"</div>
+      <div class="d">counts of matched / multi-episode / unmatched, with the first few retitles shown concretely</div></div>
+    <div class="branch-label">apply ↙&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↘ wrong series</div>
+    <div class="branches">
+      <div class="node branch-apply"><div class="t"><code>library.applyMetadata(plan)</code></div>
+        <div class="d">One transaction: <code>shows.display_title</code> + <code>metadata_source</code> +
+        <code>metadata_id</code>, and <code>episodes.metadata_title</code> for every pair in the plan. Then
+        <code>broadcast(EVENTS.libraryChanged)</code> → every screen re-renders via <code>refreshLibrary()</code>
+        (<span class="filepath">src/renderer/src/store.ts:583</span>).</div></div>
+      <div class="node branch-redo"><div class="t">Back to the candidate list</div>
+        <div class="d">Nothing was written; pick another candidate or refine the query. Escape closes the panel
+        (stopPropagation, per the <span class="filepath">ChannelFold.tsx:338-410</span> inline-edit precedent).</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Join semantics — what happens to each file</h2>
+  <p>The join is deliberately dumb: a local episode pairs with the provider entry at the same
+  <code>(season, episode)</code>, using the numbers the scanner already parsed
+  (<code>parseEpisodeFilename</code>, <span class="filepath">src/main/library/parse.ts:100</span>) and the existing
+  <code>idx_episodes_show(show_id, season, episode)</code> index. No fuzzy title matching, no air-date heuristics —
+  files whose numbering doesn't line up are simply left alone, and the preview says so before anything is written.</p>
+
+  <figure class="chart-card">
+    <p class="fig-title">Where a show's files land in the join</p>
+    <p class="fig-sub">Illustrative: a long-running show, 214 files on disk, after picking the right TVmaze series.</p>
+    <div class="legend" role="list">
+      <span class="item" role="listitem"><span class="dot" style="background: var(--series-1)"></span>Matched by season × episode — 196</span>
+      <span class="item" role="listitem"><span class="dot" style="background: var(--series-3)"></span>Multi-episode file, titles joined — 6</span>
+      <span class="item" role="listitem"><span class="dot" style="background: var(--deemph)"></span>No provider episode, keeps filename title — 12</span>
+    </div>
+    <svg viewBox="0 0 920 92" width="100%" role="img"
+         aria-label="Single stacked bar of 214 files: 196 matched one-to-one by season and episode number, 6 are multi-episode files whose provider titles are joined, and 12 have no provider episode at that number and keep their filename-derived titles.">
+      <g class="hit" data-tip="<strong>196 files — matched</strong><br>A provider episode exists at the same season × episode; its name is written to <code>episodes.metadata_title</code>.">
+        <rect x="40" y="28" width="770" height="58" fill="transparent"/>
+        <path d="M 44 40 H 806 V 62 H 44 A 4 4 0 0 1 40 58 V 44 A 4 4 0 0 1 44 40 Z" fill="var(--series-1)"/>
+      </g>
+      <g class="hit" data-tip="<strong>6 files — multi-episode</strong><br>The file spans a range (<code>episode_end</code> set, e.g. E05–E06); both provider titles are joined with “ / ”.">
+        <rect x="806" y="28" width="29" height="58" fill="transparent"/>
+        <rect x="808" y="40" width="23" height="22" fill="var(--series-3)"/>
+      </g>
+      <g class="hit" data-tip="<strong>12 files — no match</strong><br>No provider episode at that number (numbering drift, extras). <code>metadata_title</code> stays NULL, so the filename-derived title keeps showing.">
+        <rect x="833" y="28" width="49" height="58" fill="transparent"/>
+        <path d="M 833 40 H 876 A 4 4 0 0 1 880 44 V 58 A 4 4 0 0 1 876 62 H 833 Z" fill="var(--deemph)"/>
+      </g>
+      <g class="ax-label" text-anchor="middle">
+        <text x="423" y="78">196</text>
+        <text x="819" y="78">6</text>
+        <text x="857" y="78">12</text>
+      </g>
+    </svg>
+    <figcaption>Hover a segment for the rule it represents. The counts come back from
+    <code>previewMetadata</code> before anything is written — the numbers here are illustrative.</figcaption>
+  </figure>
+
+  <table class="data">
+    <thead><tr><th>Local file</th><th>Provider side</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Plain <code>S02E07</code></td><td>Episode exists at 2×7</td><td><code>metadata_title = name</code>. The scanner's <code>title</code> is untouched.</td></tr>
+      <tr><td>Span <code>S01E05-E06</code> (<code>episode_end</code> set)</td><td>Episodes at 1×5 and 1×6</td><td>Titles joined: <code>"Title A / Title B"</code>. Whatever part of the span exists is joined; a fully missing span falls through to "no match".</td></tr>
+      <tr><td>Any numbered file</td><td>No entry at that <code>(season, episode)</code></td><td>Untouched — <code>metadata_title</code> stays NULL and the <code>COALESCE</code> fallback keeps showing the filename title.</td></tr>
+      <tr><td><code>Season 0</code> / specials</td><td>Provider special with real season+number</td><td>Matched like any other. Unnumbered specials (<code>number: null</code>) are dropped from the provider list before the join.</td></tr>
+      <tr><td>Unparseable filename</td><td>—</td><td>Already in <code>unmatched_files</code> with no season/episode (<span class="filepath">scanner.ts:406-410</span>) — outside the join by construction. Assign it first, then Refresh.</td></tr>
+      <tr><td>—</td><td>Provider episode with no local file</td><td>Ignored. The plan only ever references episode ids that exist locally.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Where the new titles show up</h2>
+  <p>Display resolution is two <code>COALESCE</code> chains, applied at the read layer so no caller needs to know
+  which column won:</p>
+  <table class="data">
+    <thead><tr><th>Surface</th><th>Reads today</th><th>Becomes</th></tr></thead>
+    <tbody>
+      <tr><td>Library shows list</td><td><code>shows.title</code> via <code>listShows</code> (<span class="filepath">library.ts:166</span>)</td><td><code>COALESCE(display_title, title)</code>, exposed as <code>Show.displayTitle</code> alongside the raw <code>title</code></td></tr>
+      <tr><td>Overview / Guide / channel lineups</td><td><code>shows.title</code> aggregates (<span class="filepath">src/main/services/library.ts:63</span>), <code>EpisodeView.showTitle</code></td><td>same chain — one change per read site, threaded through the existing aggregates</td></tr>
+      <tr><td>Player overlay episode title</td><td><code>episodes.title</code></td><td><code>COALESCE(metadata_title, title)</code>; both NULL keeps today's "S02E07"-style fallback</td></tr>
+      <tr><td>Auto-arc detection</td><td><code>episodes.title</code> (<span class="filepath">arcs.ts</span>)</td><td><strong>unchanged, deliberately</strong> — arcs keep reading the scanner's title</td></tr>
+      <tr><td>Show identity</td><td><code>folder_path</code> (<span class="filepath">library.ts:185</span>)</td><td>unchanged — a display title is presentation, never identity</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Data model</h2>
+  <p>Four nullable columns, appended as migration&nbsp;8 to <code>MIGRATIONS</code>
+  (<span class="filepath">src/main/db/schema.ts:30</span> — append-only per the file's header). All NULL means
+  "never looked up", which is exactly the state every existing row is in, so the migration needs no backfill.
+  The columns are then <em>excluded</em> from the <code>SET</code> lists in <code>upsertShow</code> and
+  <code>upsertEpisode</code> so a rescan cannot clobber them.</p>
+  <table class="data">
+    <thead><tr><th>Column</th><th>Type</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>shows.display_title</code></td><td>TEXT NULL</td><td>User-approved title from the provider. NULL → fall back to the scanner's <code>title</code>.</td></tr>
+      <tr><td><code>shows.metadata_source</code></td><td>TEXT NULL</td><td><code>'tvmaze'</code> for now; exists so a second provider is a value, not a migration.</td></tr>
+      <tr><td><code>shows.metadata_id</code></td><td>TEXT NULL</td><td>The provider's show id. Together with source, this is what makes <em>Refresh</em> a one-click re-join instead of a re-search.</td></tr>
+      <tr><td><code>episodes.metadata_title</code></td><td>TEXT NULL</td><td>Provider episode name (joined with <code>" / "</code> for spans). NULL → fall back to the scanner's <code>title</code>.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:10px;">Repository additions (SQL stays in <span class="filepath">src/main/db/repositories/library.ts</span>):
+  <code>setShowMetadata</code>, <code>setEpisodeMetadataTitles</code> (batch, inside the apply transaction),
+  <code>clearShowMetadata</code> (nulls all four columns for a show and its episodes — the whole of Unlink).
+  <code>toShow</code>/<code>toEpisode</code> (<span class="filepath">library.ts:102</span>) grow the new fields.
+  No new settings: the provider is fixed, and there is no key to store.</p>
+</section>
+
+<section>
+  <h2>IPC surface</h2>
+  <p>Four methods in the <code>library</code> namespace, moving the three contract files in lockstep
+  (<span class="filepath">src/shared/ipc.ts:36</span> → <span class="filepath">src/preload/index.ts:22</span> →
+  <span class="filepath">src/main/ipc/handlers.ts:176</span>) so typecheck failures walk the implementation to every
+  site:</p>
+  <ul class="tight">
+    <li><code>searchMetadata(query: string): Promise&lt;MetadataCandidate[]&gt;</code> — read-only, network.</li>
+    <li><code>previewMetadata(input: { showId, providerShowId }): Promise&lt;MetadataPlan&gt;</code> — read-only,
+      network. The plan carries <code>displayTitle</code>, <code>episodes: { episodeId, title }[]</code>, and the
+      matched / multi / unmatched counts the preview UI shows.</li>
+    <li><code>applyMetadata(plan: MetadataPlan): Promise&lt;void&gt;</code> — one transaction, no network. The handler
+      validates the plan's episode ids still belong to <code>plan.showId</code> (a scan may have run since preview),
+      drops any that don't, then <code>broadcast(EVENTS.libraryChanged)</code> <span class="badge">push</span>.</li>
+    <li><code>unlinkMetadata(showId: number): Promise&lt;void&gt;</code> — <code>clearShowMetadata</code> +
+      broadcast. Restores the scanner's naming completely.</li>
+  </ul>
+  <p style="margin-top:10px;"><em>Refresh</em> needs no fifth method — it is <code>previewMetadata</code> with the
+  stored <code>metadata_id</code> followed by <code>applyMetadata</code>, driven from the UI. New types
+  (<code>MetadataCandidate</code>, <code>MetadataPlan</code>) live in <span class="filepath">src/shared/types.ts</span>;
+  stale test fakes surface automatically via <code>makeBridge</code>
+  (<span class="filepath">tests/renderer/bridge.ts:26</span>).</p>
+</section>
+
+<section>
+  <h2>UI — the metadata card</h2>
+  <p>The affordance lives in the selected show's aside (<span class="filepath">Library.tsx:393</span>), as a card
+  above the arcs panel — the aside is already the "everything about the selected show" surface, and a lookup panel
+  needs more room than an inline row fold-out. Assembly is from existing precedents: the typeahead input is
+  <span class="filepath">AddShowPanel.tsx:30-39</span> plus a debounce; commit/cancel keys follow
+  <span class="filepath">ChannelFold.tsx:338-410</span>; errors from main render inline and verbatim, per
+  <span class="filepath">AssignPanel.tsx:76-89</span>.</p>
+
+  <div class="card">
+    <div class="mock-grid">
+      <div class="mock" aria-label="Mock of the unlinked state: a search input with three TVmaze candidates">
+        <div class="m-cap">Unlinked · searching</div>
+        <div class="m-input"><span>gargoyles</span><span class="caret">▌</span></div>
+        <div class="m-list">
+          <div class="m-row sel"><span><strong>Gargoyles</strong></span><span class="m-meta">1994 · Syndication</span></div>
+          <div class="m-row"><span>Gargoyles: The Goliath Chronicles</span><span class="m-meta">1996 · ABC</span></div>
+          <div class="m-row"><span>Gargoyle Gals</span><span class="m-meta">2021 · Web</span></div>
+        </div>
+        <p class="m-line" style="font-size:11.5px; color: var(--text-muted);">↑↓ choose · Enter previews · Esc closes — data from TVmaze</p>
+      </div>
+      <div class="mock" aria-label="Mock of the preview state: chosen series, match counts, apply and cancel buttons">
+        <div class="m-cap">Preview · nothing written yet</div>
+        <p class="m-line"><strong>Gargoyles</strong> <span class="m-meta">· TVmaze, 1994</span></p>
+        <p class="m-line">62 of 65 files get episode titles<br><span style="color: var(--text-muted);">1 multi-episode file · 3 keep filename titles</span></p>
+        <p class="m-line" style="font-size:12px; color: var(--text-muted);">S01E01 → "Awakening: Part One" · S01E02 → "Awakening: Part Two" · …</p>
+        <div class="m-actions"><span class="m-btn primary">Apply</span><span class="m-btn">Back</span></div>
+      </div>
+      <div class="mock" aria-label="Mock of the linked state: source line with refresh and unlink actions">
+        <div class="m-cap">Linked</div>
+        <p class="m-line"><strong>Gargoyles</strong></p>
+        <p class="m-line" style="color: var(--text-muted);">Linked to TVmaze · applied 2026-08-06<br>62 titled · 3 filename-titled</p>
+        <div class="m-actions"><span class="m-btn">Refresh</span><span class="m-btn">Unlink</span></div>
+      </div>
+    </div>
+    <p style="font-size:12.5px; color: var(--text-muted); margin: 8px 0 0;">The card's three states. Search is
+    debounced 300&nbsp;ms with single-flight; a slow response renders "Searching…" in place, never a layout jump.
+    Network failures print the main-process message inline; the panel stays open so the query isn't lost.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Edge cases, decided</h2>
+  <table class="data">
+    <thead><tr><th>Scenario</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Rescan after linking</td><td>Nothing changes: all four columns are excluded from the upsert <code>SET</code> lists, mirroring the arc/loudness precedent (<span class="filepath">library.ts:276</span>). This is the load-bearing decision — it gets a dedicated regression test.</td></tr>
+      <tr><td>New episodes scanned after linking</td><td>They arrive with <code>metadata_title = NULL</code> and show filename titles. The linked card offers <em>Refresh</em>; the scanner itself never touches the network, so scans stay offline and fast.</td></tr>
+      <tr><td>Show folder renamed on disk</td><td>A new <code>folder_path</code> is a new show row (identity rule, <span class="filepath">library.ts:180-184</span>), so the link is gone — re-run the lookup. Accepted; folder renames already orphan channel lineups the same way.</td></tr>
+      <tr><td>Offline / TVmaze down / 429</td><td>Search and preview fail with a readable inline error; nothing is written, the library is untouched. Apply needs no network at all, so a preview already on screen can always be applied.</td></tr>
+      <tr><td>Scan runs between preview and apply</td><td>The apply handler re-validates every episode id in the plan against <code>plan.showId</code> and drops rows that vanished — a stale plan can shrink, never corrupt.</td></tr>
+      <tr><td>Wrong series applied</td><td>Re-run the lookup — the new apply overwrites the old titles wholesale. <em>Unlink</em> is the full undo: all four columns NULL, scanner naming back everywhere.</td></tr>
+      <tr><td>Provider title collides with arc naming</td><td>Impossible by construction: arcs read <code>episodes.title</code>, which metadata never writes. A provider title like "Awakening: Part One" appears in the Player but cannot create or dissolve an arc.</td></tr>
+      <tr><td>Anime / absolute numbering</td><td>Out of scope. Files the parser couldn't number are in <code>unmatched_files</code> already; a provider-side absolute-order join is a future provider feature, not this one.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Implementation steps</h2>
+  <ol class="steps">
+    <li><strong>Migration + repository.</strong> Append migration&nbsp;8 in
+      <span class="filepath">src/main/db/schema.ts</span> (four <code>ALTER TABLE … ADD COLUMN</code> statements with
+      the customary why-comment); exclude the columns from both upsert <code>SET</code> lists in
+      <span class="filepath">library.ts:196</span> and <span class="filepath">library.ts:301</span>; add
+      <code>setShowMetadata</code> / <code>setEpisodeMetadataTitles</code> / <code>clearShowMetadata</code>; extend
+      <code>toShow</code> / <code>toEpisode</code>.</li>
+    <li><strong>Shared contract.</strong> <code>MetadataCandidate</code> and <code>MetadataPlan</code> in
+      <span class="filepath">src/shared/types.ts</span>; the four methods in <code>RerunApi</code> +
+      <code>IPC.library</code> (<span class="filepath">src/shared/ipc.ts</span>); one-line bridges in
+      <span class="filepath">src/preload/index.ts</span>.</li>
+    <li><strong>Metadata service.</strong> New <span class="filepath">src/main/services/metadata.ts</span>: TVmaze
+      client on <code>net.fetch</code> with a deps seam and <code>AbortSignal.timeout</code>
+      (template: <span class="filepath">ffmpeg-manager.ts:177-226</span>), plus the join as a pure function
+      <code>buildPlan(providerEpisodes, localEpisodes)</code> so span-joining and null-dropping are unit-testable
+      without a database or network.</li>
+    <li><strong>Handlers.</strong> Four <code>handle(IPC.library.*)</code> registrations in
+      <span class="filepath">src/main/ipc/handlers.ts:176</span>; apply validates episode ownership, runs one
+      transaction, and broadcasts <code>libraryChanged</code>; the service joins <code>HandlerContext</code>
+      (<span class="filepath">handlers.ts:81</span>).</li>
+    <li><strong>UI.</strong> The metadata card in the Library aside with its three states; debounced single-flight
+      typeahead; keyboard nav (↑↓ / Enter / Esc); TVmaze attribution line; show list and aside render
+      <code>displayTitle ?? title</code>.</li>
+    <li><strong>Tests.</strong> <span class="filepath">tests/metadata.test.ts</span>: join semantics (spans, missing
+      entries, null-numbered specials) and client behavior against a fake fetch (per
+      <span class="filepath">tests/ffmpeg-manager.test.ts</span>). Migration shape in
+      <span class="filepath">tests/migrations.test.ts</span>. <strong>The rescan-preserves-metadata regression test.</strong>
+      Handler validation of stale plans. Renderer card states via <code>makeBridge</code> in
+      <span class="filepath">tests/renderer/</span>.</li>
+    <li><strong>Docs.</strong> <code>docs/architecture.md:214</code> (strike titles from the out-of-scope list — artwork
+      stays out), <code>docs/data-model.md</code> (four columns + ownership rule), <code>docs/library.md:39</code>,
+      and the stale "no network metadata lookups" comment at <span class="filepath">parse.ts:4</span>. Then this file
+      folds into the .md docs and is deleted, per <code>README.md:91</code>.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Explicitly out of scope</h2>
+  <p>Artwork and posters, episode descriptions and air dates, movie metadata, additional providers (TMDB/TVDB — the
+  <code>metadata_source</code> column leaves the door open), automatic lookup during scans (the scanner stays
+  offline), title-based fuzzy matching for unparseable files (that's the <code>unmatched_files</code> assign flow),
+  and absolute-order numbering. Auto-arc detection semantics are deliberately unchanged.</p>
+</section>
+
+<section>
+  <h2>Decisions taken (flag if you disagree)</h2>
+  <table class="data">
+    <thead><tr><th>Decision</th><th>Why · the road not taken</th></tr></thead>
+    <tbody>
+      <tr><td>TVmaze, single provider</td><td>Keyless and instant for a personal app. TMDB/TVDB would each make the user register for an API key before the feature does anything. <code>metadata_source</code> keeps them possible later.</td></tr>
+      <tr><td>New columns, not overwriting <code>title</code></td><td>Overwriting is what the scanner clobbers and what arcs read. Separate columns make rescans safe and arcs provably untouched — at the cost of one <code>COALESCE</code> per read site.</td></tr>
+      <tr><td>Preview returns the plan; apply writes the plan</td><td>WYSIWYG commit, offline-safe apply, and the join becomes a pure function. The alternative (apply refetches) can write something the user never saw.</td></tr>
+      <tr><td>Refresh is manual</td><td>The scanner stays a filesystem-only, offline operation — a scan can never stall on the network or surprise-overwrite titles. One click after a scan is the trade.</td></tr>
+      <tr><td>Span titles joined with <code>" / "</code></td><td>A two-episode file gets both names. Storing only the first hides real information; the join marker matches how such files are commonly labeled.</td></tr>
+      <tr><td>Unlink is total</td><td>All four columns NULL, one action, no partial states — the mental model is "back to exactly what the scanner named".</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+</div>
+
+<div class="viz-tooltip" id="tooltip" role="status"></div>
+
+<script>
+  // Theme toggle — stamps data-theme on :root; the :not() guard in CSS lets it beat the OS setting.
+  const btn = document.getElementById("themeToggle");
+  const root = document.documentElement;
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+  function currentMode() {
+    return root.dataset.theme || (prefersDark.matches ? "dark" : "light");
+  }
+  function paintButton() {
+    btn.textContent = currentMode() === "dark" ? "Light mode" : "Dark mode";
+  }
+  btn.addEventListener("click", () => {
+    root.dataset.theme = currentMode() === "dark" ? "light" : "dark";
+    paintButton();
+  });
+  prefersDark.addEventListener("change", paintButton);
+  paintButton();
+
+  // Per-segment hover tooltips on the join chart.
+  const tip = document.getElementById("tooltip");
+  document.querySelectorAll(".hit").forEach((g) => {
+    g.addEventListener("pointerenter", () => {
+      tip.innerHTML = g.dataset.tip;
+      tip.classList.add("show");
+    });
+    g.addEventListener("pointermove", (e) => {
+      const pad = 14;
+      const w = tip.offsetWidth, h = tip.offsetHeight;
+      let x = e.clientX + pad, y = e.clientY - h - pad;
+      if (x + w > window.innerWidth - 8) x = e.clientX - w - pad;
+      if (y < 8) y = e.clientY + pad;
+      tip.style.left = x + "px";
+      tip.style.top = y + "px";
+    });
+    g.addEventListener("pointerleave", () => tip.classList.remove("show"));
+  });
+</script>
+</body>
+</html>

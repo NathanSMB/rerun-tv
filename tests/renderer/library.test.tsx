@@ -87,6 +87,9 @@ function bridge(): RerunApi {
                 {
                     id: 10,
                     title: "Cheers",
+                    displayTitle: null,
+                    metadataSource: null,
+                    metadataId: null,
                     folderPath: "/tv/Cheers",
                     addedAt: 0,
                 },
@@ -171,7 +174,15 @@ async function mount(
     useStore.setState({
         library: overview(),
         shows: [
-            { id: 10, title: "Cheers", folderPath: "/tv/Cheers", addedAt: 0 },
+            {
+                id: 10,
+                title: "Cheers",
+                displayTitle: null,
+                metadataSource: null,
+                metadataId: null,
+                folderPath: "/tv/Cheers",
+                addedAt: 0,
+            },
         ],
         roots: [ROOT],
         scan: IDLE_SCAN,
@@ -269,6 +280,9 @@ describe("assigning an unmatched file", () => {
                     {
                         id: 10,
                         title: "Cheers",
+                        displayTitle: null,
+                        metadataSource: null,
+                        metadataId: null,
                         folderPath: "/tv/Cheers",
                         addedAt: 0,
                     },

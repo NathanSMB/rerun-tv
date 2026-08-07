@@ -388,6 +388,93 @@ describe("migration 5 — the hardware acceleration setting", () => {
     });
 });
 
+/**
+ * Migration 8 adds the metadata columns for the show lookup
+ * (docs/library.md, "Show metadata lookup").
+ *
+ * Four nullable columns and no backfill, because all-NULL already means "never
+ * looked up" — which every existing row is. What the test is really pinning is
+ * that an existing library survives the upgrade untouched: the scanner's
+ * `title` columns keep their values, and the new ones arrive empty.
+ */
+describe("migration 8 — provider metadata columns", () => {
+    function columnsOf(db: Db, table: string): string[] {
+        return (
+            db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table) as {
+                name: string;
+            }[]
+        ).map((row) => row.name);
+    }
+
+    function seed(db: Db): void {
+        db.prepare(
+            `INSERT INTO shows (title, folder_path, added_at) VALUES (?, ?, 0)`,
+        ).run("Gargoyles", "/tv/Gargoyles");
+        db.prepare(
+            `INSERT INTO episodes (show_id, season, episode, title, path)
+       VALUES (1, 1, 1, ?, ?)`,
+        ).run("Awakening Part 1", "/tv/Gargoyles/S01E01.mkv");
+    }
+
+    it("adds four nullable columns and backfills nothing", () => {
+        const db = openAtVersion(7);
+        seed(db);
+
+        migrate(db);
+
+        expect(columnsOf(db, "shows")).toEqual(
+            expect.arrayContaining([
+                "display_title",
+                "metadata_source",
+                "metadata_id",
+            ]),
+        );
+        expect(columnsOf(db, "episodes")).toContain("metadata_title");
+
+        const show = db.prepare("SELECT * FROM shows").get() as {
+            title: string;
+            display_title: string | null;
+            metadata_source: string | null;
+            metadata_id: string | null;
+        };
+        // The scanner's title is untouched, and the row reads as "never looked
+        // up" — the state the read layer's COALESCE already handles.
+        expect(show.title).toBe("Gargoyles");
+        expect(show.display_title).toBeNull();
+        expect(show.metadata_source).toBeNull();
+        expect(show.metadata_id).toBeNull();
+
+        const ep = db.prepare("SELECT * FROM episodes").get() as {
+            title: string | null;
+            metadata_title: string | null;
+        };
+        expect(ep.title).toBe("Awakening Part 1");
+        expect(ep.metadata_title).toBeNull();
+        expect(db.pragma("user_version", { simple: true })).toBe(
+            MIGRATIONS.length,
+        );
+        db.close();
+    });
+
+    it("appends rather than rebuilding — the CHECK constraint is still there", () => {
+        const db = openAtVersion(7);
+        migrate(db);
+        expect(episodesDdl(db)).toContain(
+            `CHECK (playback_path IN ('direct','remux','transcode'))`,
+        );
+        db.close();
+    });
+
+    it("is idempotent — a second run adds nothing", () => {
+        const db = openAtVersion(7);
+        migrate(db);
+        const after = columnsOf(db, "shows");
+        migrate(db);
+        expect(columnsOf(db, "shows")).toEqual(after);
+        db.close();
+    });
+});
+
 function episodesDdl(db: Db): string {
     const row = db
         .prepare(

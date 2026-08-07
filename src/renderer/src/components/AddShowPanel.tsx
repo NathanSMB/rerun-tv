@@ -1,5 +1,6 @@
 import type { Show } from "@shared/types.js";
 import { type ReactElement, useMemo, useState } from "react";
+import { showLabel } from "../utils.js";
 
 /**
  * The fold's right-hand column: search the library, add a show to this channel.
@@ -34,7 +35,12 @@ export default function AddShowPanel({
         return shows.filter(
             (show) =>
                 !lineupShowIds.has(show.id) &&
-                (q === "" || show.title.toLowerCase().includes(q)),
+                // Both titles, not just the displayed one: after a metadata
+                // link the folder name is still what the user has in their head
+                // (and on disk), so typing either has to find the show.
+                (q === "" ||
+                    showLabel(show).toLowerCase().includes(q) ||
+                    show.title.toLowerCase().includes(q)),
         );
     }, [shows, lineupShowIds, query]);
 
@@ -81,14 +87,16 @@ export default function AddShowPanel({
                     ) : (
                         candidates.map((show) => (
                             <div className="pick" key={show.id}>
-                                <span className="p-name">{show.title}</span>
+                                <span className="p-name">
+                                    {showLabel(show)}
+                                </span>
                                 <span className="p-eps">
                                     {episodeCounts.get(show.id) ?? 0} EP
                                 </span>
                                 <button
                                     type="button"
                                     className="add"
-                                    aria-label={`Add ${show.title} to this channel`}
+                                    aria-label={`Add ${showLabel(show)} to this channel`}
                                     disabled={disabled}
                                     onClick={() => onAdd(show.id)}
                                 >

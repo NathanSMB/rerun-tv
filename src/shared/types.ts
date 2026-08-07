@@ -21,7 +21,18 @@ export type ArcSource = "auto" | "manual";
 
 export interface Show {
     id: number;
+    /** The scanner's title, derived from the folder name. Never overwritten. */
     title: string;
+    /**
+     * The provider title the user approved, or null when this show has never
+     * been looked up. Display is `displayTitle ?? title`; view models built in
+     * `services/` do that coalesce in SQL so screens never have to.
+     */
+    displayTitle: string | null;
+    /** `'tvmaze'` — which provider `metadataId` belongs to. */
+    metadataSource: string | null;
+    /** The provider's opaque show id, kept so Refresh can re-join without a search. */
+    metadataId: string | null;
     folderPath: string;
     addedAt: number;
 }
@@ -34,7 +45,13 @@ export interface Episode {
     episode: number;
     /** Last episode number for a multi-episode file, else null. */
     episodeEnd: number | null;
+    /** The scanner's title, parsed out of the filename. Auto-arc detection reads this. */
     title: string | null;
+    /**
+     * The provider episode name (parts of a span joined with `" / "`), or null
+     * when this file matched nothing. Display is `metadataTitle ?? title`.
+     */
+    metadataTitle: string | null;
     path: string;
     durationS: number;
     container: string;
@@ -227,6 +244,12 @@ export interface ChannelDetail {
 
 export interface LibraryShow {
     id: number;
+    /**
+     * What to render: `COALESCE(display_title, title)`, resolved in the
+     * aggregate's SQL. This is a display shape, so it carries the resolved value
+     * rather than both columns — a screen that needs the link state itself reads
+     * `Show.metadataId` from `listShows`.
+     */
     title: string;
     episodeCount: number;
     seasonCount: number;
@@ -574,4 +597,61 @@ export interface CreateArcInput {
     showId: number;
     episodeIds: number[];
     title: string;
+}
+
+// ---------------------------------------------------------------------------
+// Show metadata lookup (docs/library.md, "Show metadata lookup")
+// ---------------------------------------------------------------------------
+
+/**
+ * One series the provider offered for a search query — a row in the picker.
+ *
+ * Everything here is *identification*, not content: the fields exist so a user
+ * can tell `Gargoyles` (1994, Syndication) from `Gargoyles: The Goliath
+ * Chronicles` (1996, ABC) before anything is written. `providerShowId` is what
+ * `previewMetadata` is then called with.
+ *
+ * Optional fields are genuinely optional at the provider: TVmaze returns nulls
+ * for premiere date and network on plenty of entries, and the picker just omits
+ * that half of the line rather than printing "unknown".
+ */
+export interface MetadataCandidate {
+    /** Opaque provider id — a TVmaze integer id, stringified. */
+    providerShowId: string;
+    name: string;
+    /** ISO premiere date as the provider gave it, e.g. `"1994-10-24"`. */
+    premiered: string | null;
+    /** Premiere year pulled off `premiered`, for the compact "1994 · ABC" line. */
+    year: number | null;
+    network: string | null;
+    /** `"Running"`, `"Ended"`, … as the provider labels it. */
+    status: string | null;
+}
+
+/**
+ * The whole of what an apply will write, computed by `previewMetadata` and
+ * handed back to `applyMetadata` unchanged.
+ *
+ * The plan is the commit, not a hint to recompute from: what the preview screen
+ * showed is exactly what gets written, apply needs no network, and the join
+ * stays a pure function of provider episodes and local rows. `episodes` only
+ * ever names episode ids that existed locally at preview time — the apply
+ * handler re-validates them against `showId` in case a scan ran in between, so
+ * a stale plan can shrink but never write into the wrong show.
+ */
+export interface MetadataPlan {
+    showId: number;
+    /** Which provider produced this, stored as `shows.metadata_source`. */
+    provider: string;
+    providerShowId: string;
+    /** The provider's series name, stored as `shows.display_title`. */
+    displayTitle: string;
+    /** Every local episode that got a title, in airing order. */
+    episodes: { episodeId: number; title: string }[];
+    /** Local files paired with exactly one provider episode. */
+    matchedCount: number;
+    /** Multi-episode files whose provider titles were joined with `" / "`. */
+    multiCount: number;
+    /** Local files with no provider episode at their number — left untouched. */
+    unmatchedCount: number;
 }

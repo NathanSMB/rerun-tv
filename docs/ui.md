@@ -438,6 +438,15 @@ Anything the parser couldn't read waits in the **Unmatched** queue for manual
 assignment. Arcs are reviewed and corrected here: ungroup a false positive, or
 group any two or more episodes the heuristic missed, even across gaps or seasons.
 
+The selected show's aside is everything-about-this-show, and the **metadata
+card** sits at the top of it. Unlinked, it is a search box: type, pick the right
+series from the candidates, and read the preview — *62 of 65 files get episode
+titles* — before anything is written. Linked, it collapses to the source line
+plus **Refresh** (title whatever was scanned since) and **Unlink** (back to
+exactly what the scanner named). Errors from the network print inline and the
+panel stays open, so a failed search never costs you the query
+([library.md](library.md#metadata-lookup)).
+
 ### Settings — every knob in one place
 
 Four sections — where the media lives, how it plays, how the interface behaves,
